@@ -67,12 +67,13 @@
 
 ### What's Next (Priority Order)
 
-1. **Frontend: bulk import UI** — Upload JSON or paste config to bulk-create monitors from the web UI
+1. **Dashboard overview** — Summary page showing aggregate stats across all monitors (total monitors, overall uptime %, active incidents, charts)
 2. **Multi-region checks** — Check from multiple locations, consensus-based status
-3. **Dashboard overview** — Summary page showing aggregate stats across all monitors
+3. **Email notifications** — SMTP config for sending email alerts on incidents
 
 ### ✅ Completed (most recent)
 
+- **Bulk import UI** (commit aa3d850) — New "📦 Bulk Import" page in nav bar. Paste JSON array or upload .json file to create up to 50 monitors at once. Client-side validation (name, url, method, interval, limit). Preview table before submission. Results view with manage keys table and "Copy All Keys as JSON" button. Handles partial failures (shows created + failed). Accepts both `[...]` and `{monitors: [...]}` formats. Uses existing bulk create API endpoint.
 - **Maintenance window UI** (commit df53871) — New "🔧 Maintenance" tab on monitor detail page. Lists windows categorized as Active Now (warning badge), Upcoming (accent badge), and Completed (muted badge). Create form with datetime-local inputs that auto-convert to UTC for the API. Delete button with manage key auth. Tab bar now wraps on mobile (flexWrap). API functions added to frontend: getMaintenanceWindows, createMaintenanceWindow, deleteMaintenanceWindow.
 - **Maintenance windows** (commit 7264b30) — `POST /api/v1/monitors/:id/maintenance` creates scheduled downtime windows. During active windows, checker suppresses incident creation and sets monitor status to "maintenance" instead of "down". Heartbeats still recorded. SSE events: `maintenance.started`, `maintenance.ended`. CRUD API with auth. Status page treats maintenance as operational. Cascade delete with monitors. Full validation (ISO-8601 timestamps, ordering). OpenAPI spec + llms.txt updated. 7 new tests (59 total).
 - **Bulk monitor management** (commit 6677b11) — `POST /api/v1/monitors/bulk` creates up to 50 monitors in one request with partial success handling (some may fail while others succeed, each gets its own manage_key). `GET /api/v1/monitors/:id/export` exports config in importable format (requires auth). Full export→reimport roundtrip tested. OpenAPI spec + llms.txt updated. 7 new tests (52 total).
