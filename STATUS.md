@@ -1,6 +1,6 @@
 # Watchpost - Status
 
-## Current State: Frontend + Docker Complete ✅
+## Current State: Deployed to Staging ✅
 
 **Watchpost** is an agent-native monitoring service (Uptime Kuma vibe) designed for AI agents.
 
@@ -45,18 +45,28 @@
   - **SPA fallback** route for hash-based client-side routing
   - **CORS** via rocket_cors for dev mode
   - **Unified serving:** Frontend dist served from Rust binary (STATIC_DIR env configurable)
-- **Dockerfile** ✅ (commit 2b84a32):
-  - Multi-stage: frontend (bun) → backend (rust) → runtime (debian-slim)
+- **Dockerfile** ✅ (commit 75dd595):
+  - Multi-stage: frontend (bun) → backend (rust:1-slim) → runtime (debian-slim)
   - Port 8000 internal, data volume at /app/data
+  - Fixed: uses `rust:1-slim` (tracks latest stable) — `time@0.3.47` requires rustc 1.88+
 - **docker-compose.yml** ✅: Port 3007 external, persistent volume (watchpost-data)
 - **GitHub Actions CI** ✅: test → build → push to ghcr.io (:dev tag on main)
+- **README** ✅ (commit 75dd595): Quick start, API reference, Docker usage, env config, architecture
+- **Staging deploy** ✅:
+  - Docker Compose on 192.168.0.79:3007
+  - Nginx reverse proxy: watch.hnrstage.xyz
+  - Watchtower auto-pull enabled
+  - Added to backup-dbs.sh
+  - Health: `curl http://192.168.0.79:3007/api/v1/health` ✅
 - Test suite: **25 HTTP integration tests passing** (`cargo test -- --test-threads=1`)
 
 ### What's Next (Priority Order)
 
-1. **Staging deploy** — Wait for CI to build Docker image, then deploy to 192.168.0.79 via Watchtower (or manual pull)
-2. **README with setup instructions** — Quick start, API reference, Docker usage
-3. **Polish frontend** — Error states, loading skeleton, manage key integration (pass ?key= for edit operations)
+1. **DNS for watch.hnrstage.xyz** — Needs Cloudflare DNS A record pointing to staging server (Jordan action, or check if wildcard exists)
+2. **Polish frontend** — Error states, loading skeleton, manage key integration (pass ?key= for edit operations)
+3. **Add watchpost to admin links page** — Update hnrstage.xyz/mylinks
+4. **Pagination** — Heartbeats and incidents endpoints should support pagination (seq-based, like other HNR services)
+5. **Heartbeat retention** — Background task to prune heartbeats older than 90 days
 
 ### ⚠️ Gotchas
 
@@ -64,6 +74,7 @@
 - Checker currently uses a single DB connection mutex; fine for MVP, revisit for higher concurrency.
 - CI workflow files may need `workflow` token scope to push — if CI doesn't trigger, manually add workflow via GitHub UI.
 - Frontend uses hash-based routing (#/monitor/:id) — no server-side route matching needed beyond SPA fallback.
+- Nginx on staging not managed by systemd (manual start). Reload via `sudo kill -HUP $(pgrep -f "nginx: master")`.
 
 ## Tech Stack
 
