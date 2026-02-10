@@ -80,3 +80,24 @@ export async function acknowledgeIncident(id, note, actor, key) {
     headers: { Authorization: `Bearer ${key}` },
   });
 }
+
+export async function getNotifications(monitorId, key) {
+  return request(`/monitors/${monitorId}/notifications`, {
+    headers: { Authorization: `Bearer ${key}` },
+  });
+}
+
+export async function createNotification(monitorId, data, key) {
+  return request(`/monitors/${monitorId}/notifications`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+    headers: { Authorization: `Bearer ${key}` },
+  });
+}
+
+export async function deleteNotification(id, key) {
+  return request(`/notifications/${id}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${key}` },
+  });
+}

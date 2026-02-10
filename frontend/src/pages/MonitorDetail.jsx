@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { getMonitor, getHeartbeats, getUptime, getIncidents, pauseMonitor, resumeMonitor, deleteMonitor, updateMonitor, acknowledgeIncident } from '../api'
+import { getMonitor, getHeartbeats, getUptime, getIncidents, pauseMonitor, resumeMonitor, deleteMonitor, updateMonitor, acknowledgeIncident, getNotifications, createNotification, deleteNotification } from '../api'
 
 function formatTime(ts) {
   if (!ts) return 'Never';
@@ -218,6 +218,157 @@ function HeartbeatTable({ heartbeats }) {
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+function NotificationManager({ monitorId, manageKey }) {
+  const [channels, setChannels] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showAdd, setShowAdd] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newType, setNewType] = useState('webhook');
+  const [newUrl, setNewUrl] = useState('');
+  const [adding, setAdding] = useState(false);
+  const [deleting, setDeleting] = useState(null);
+  const [error, setError] = useState(null);
+
+  const loadChannels = async () => {
+    try {
+      const data = await getNotifications(monitorId, manageKey);
+      setChannels(data);
+    } catch (err) {
+      // silent
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { loadChannels(); }, [monitorId]);
+
+  const handleAdd = async () => {
+    if (!newName.trim() || !newUrl.trim()) {
+      setError('Name and URL are required');
+      return;
+    }
+    setAdding(true);
+    setError(null);
+    try {
+      await createNotification(monitorId, {
+        name: newName.trim(),
+        channel_type: newType,
+        config: { url: newUrl.trim() },
+      }, manageKey);
+      setNewName('');
+      setNewUrl('');
+      setShowAdd(false);
+      await loadChannels();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const handleDelete = async (id) => {
+    setDeleting(id);
+    try {
+      await deleteNotification(id, manageKey);
+      await loadChannels();
+    } catch (err) {
+      alert(`Failed to delete: ${err.message}`);
+    } finally {
+      setDeleting(null);
+    }
+  };
+
+  if (loading) {
+    return <div style={{ color: 'var(--text-muted)', padding: '16px 0' }}>Loading notifications...</div>;
+  }
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+          {channels.length === 0 ? 'No notification channels configured' : `${channels.length} channel${channels.length > 1 ? 's' : ''}`}
+        </div>
+        {!showAdd && (
+          <button className="btn btn-primary" style={{ fontSize: '0.8rem', padding: '6px 14px' }} onClick={() => setShowAdd(true)}>
+            + Add Channel
+          </button>
+        )}
+      </div>
+
+      {channels.map((ch) => (
+        <div key={ch.id} className="card" style={{ padding: 14, marginBottom: 8 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>
+                {ch.channel_type === 'webhook' ? '🔔' : '📧'} {ch.name}
+              </div>
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: 2 }}>
+                {ch.channel_type} — {ch.config?.url || 'No URL'}
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <span className={`badge ${ch.is_enabled ? 'up' : 'paused'}`} style={{ fontSize: '0.7rem' }}>
+                {ch.is_enabled ? 'Active' : 'Disabled'}
+              </span>
+              <button
+                className="btn btn-danger"
+                style={{ fontSize: '0.75rem', padding: '4px 10px' }}
+                disabled={deleting === ch.id}
+                onClick={() => handleDelete(ch.id)}
+              >
+                {deleting === ch.id ? '...' : '✕'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ))}
+
+      {showAdd && (
+        <div className="card" style={{ borderColor: 'var(--accent)', marginTop: 8 }}>
+          <h4 style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: 12 }}>Add Notification Channel</h4>
+
+          {error && (
+            <div style={{ background: 'var(--danger-bg)', border: '1px solid var(--danger)', borderRadius: 'var(--radius)', padding: '8px 12px', marginBottom: 12, fontSize: '0.85rem', color: 'var(--danger)' }}>
+              {error}
+            </div>
+          )}
+
+          <div className="form-row">
+            <div className="form-group">
+              <label className="form-label">Name</label>
+              <input className="form-input" value={newName} onChange={e => setNewName(e.target.value)} placeholder="e.g. Slack Alerts" />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Type</label>
+              <select className="form-input" value={newType} onChange={e => setNewType(e.target.value)}>
+                <option value="webhook">Webhook</option>
+                <option value="email">Email</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="form-group">
+            <label className="form-label">{newType === 'webhook' ? 'Webhook URL' : 'Email Address'}</label>
+            <input
+              className="form-input"
+              value={newUrl}
+              onChange={e => setNewUrl(e.target.value)}
+              placeholder={newType === 'webhook' ? 'https://hooks.slack.com/...' : 'alerts@example.com'}
+            />
+          </div>
+
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button className="btn btn-secondary" style={{ fontSize: '0.8rem', padding: '6px 12px' }} onClick={() => { setShowAdd(false); setError(null); }}>Cancel</button>
+            <button className="btn btn-primary" style={{ fontSize: '0.8rem', padding: '6px 12px' }} disabled={adding} onClick={handleAdd}>
+              {adding ? 'Adding...' : 'Add Channel'}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -609,13 +760,13 @@ export default function MonitorDetail({ id, manageKey, onBack }) {
 
       {/* Tabs */}
       <div style={{ display: 'flex', gap: 4, margin: '24px 0 16px', borderBottom: '1px solid var(--border)', paddingBottom: 8 }}>
-        {['overview', 'heartbeats', 'incidents'].map((t) => (
+        {['overview', 'heartbeats', 'incidents', ...(manageKey ? ['notifications'] : [])].map((t) => (
           <button
             key={t}
             className={`nav-btn ${tab === t ? 'active' : ''}`}
             onClick={() => setTab(t)}
           >
-            {t === 'overview' ? '📊 Overview' : t === 'heartbeats' ? '💓 Heartbeats' : `⚡ Incidents (${incidents.length})`}
+            {t === 'overview' ? '📊 Overview' : t === 'heartbeats' ? '💓 Heartbeats' : t === 'incidents' ? `⚡ Incidents (${incidents.length})` : '🔔 Notifications'}
           </button>
         ))}
       </div>
@@ -634,6 +785,8 @@ export default function MonitorDetail({ id, manageKey, onBack }) {
       {tab === 'heartbeats' && <HeartbeatTable heartbeats={heartbeats} />}
 
       {tab === 'incidents' && <IncidentList incidents={incidents} manageKey={manageKey} onAck={reload} />}
+
+      {tab === 'notifications' && manageKey && <NotificationManager monitorId={id} manageKey={manageKey} />}
     </div>
   );
 }
