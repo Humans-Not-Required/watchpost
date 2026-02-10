@@ -63,16 +63,17 @@
   - Monotonic seq column with backfill migration
   - Default (no cursor) = newest first; with cursor = forward scan (ASC)
   - OpenAPI spec updated
-- Test suite: **35 tests passing** (`cargo test -- --test-threads=1`) — includes 3 search/filter tests + 3 heartbeat retention tests + 2 notification toggle tests
+- Test suite: **41 tests passing** (`cargo test -- --test-threads=1`) — includes 6 tag tests + 3 search/filter tests + 3 heartbeat retention tests + 2 notification toggle tests
 
 ### What's Next (Priority Order)
 
-1. **Monitor tags/groups** — Group monitors by tag for multi-service status pages
-2. **Response time alerts** — Notify when response time exceeds threshold (slow but not down)
-3. **Bulk monitor management** — Import/export monitors, batch operations
+1. **Response time alerts** — Notify when response time exceeds threshold (slow but not down)
+2. **Bulk monitor management** — Import/export monitors, batch operations
+3. **Maintenance windows** — Scheduled downtime suppression
 
 ### ✅ Completed (most recent)
 
+- **Monitor tags** (commit ad6f94e) — Backend: `tags` column, create/update with tags array, `?tag=` filter on GET /monitors and GET /status, `GET /tags` endpoint (unique tags from public monitors). Frontend: tag filter chips on status page, tag badges on monitor cards (clickable to filter), tags input on create/edit forms. OpenAPI + llms.txt updated. 6 new tests (41 total).
 - **Monitor search/filter** (commit 201977e) — Backend: `?search=` and `?status=` query params on GET /monitors and GET /status. Frontend: search bar + status filter chips with live counts. 3 new tests (35 total).
 - **Response time chart + notification toggle** (commit e4d7708) — SVG response time chart on Overview tab (last 100 checks, avg line, nice axis ticks, color-coded dots, no external deps). PATCH /notifications/:id endpoint for enable/disable toggle. Toggle button in UI. OpenAPI updated. 32 tests (was 30).
 - **Notification channel management UI** (commit 5239e11) — Add/list/delete webhook/email notification channels from the frontend. New "🔔 Notifications" tab visible when manage key present.
