@@ -1,6 +1,6 @@
 # Watchpost - Status
 
-## Current State: Backend MVP Feature-Complete ✅
+## Current State: Backend MVP + OpenAPI Complete ✅
 
 **Watchpost** is an agent-native monitoring service (Uptime Kuma vibe) designed for AI agents.
 
@@ -37,14 +37,21 @@
   - Event types: `check.completed`, `incident.created`, `incident.resolved`
   - Lag detection for slow subscribers
   - tokio broadcast channel (capacity: 256)
-- Test suite: **22 HTTP integration tests passing** (`cargo test -- --test-threads=1`)
+- **OpenAPI spec** ✅ (commit a63612a):
+  - `GET /api/v1/openapi.json` — full OpenAPI 3.0.3 spec covering all endpoints
+  - All schemas, security schemes, request/response bodies documented
+  - Self-describing API for agent consumption
+- **JSON error catchers** ✅ (commit a63612a):
+  - Catchers for 400, 401, 403, 404, 422, 429, 500
+  - All non-route errors return structured JSON (no HTML fallback)
+  - Each error includes `error` message + `code` field
+- Test suite: **25 HTTP integration tests passing** (`cargo test -- --test-threads=1`)
 
 ### What's Next (Priority Order)
 
-1. **OpenAPI spec** (`/api/v1/openapi.json`) + JSON error catchers for non-route errors (404/422)
-2. **React frontend** (unified serving) — monitors list, create/edit, incident timeline, status page
-3. **Dockerfile + docker-compose** (port 3007 external) + staging deploy via ghcr.io + Watchtower
-4. **GitHub Actions CI** — test + build + push Docker image
+1. **React frontend** (unified serving) — monitors list, create/edit, incident timeline, status page
+2. **Dockerfile + docker-compose** (port 3007 external) + staging deploy via ghcr.io + Watchtower
+3. **GitHub Actions CI** — test + build + push Docker image
 
 ### ⚠️ Gotchas
 
