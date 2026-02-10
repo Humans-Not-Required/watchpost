@@ -5,6 +5,7 @@ mod models;
 mod auth;
 mod routes;
 mod checker;
+mod notifications;
 
 use std::sync::Arc;
 use db::Db;
