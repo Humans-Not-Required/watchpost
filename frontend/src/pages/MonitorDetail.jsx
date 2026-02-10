@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { getMonitor, getHeartbeats, getUptime, getIncidents, pauseMonitor, resumeMonitor, deleteMonitor, updateMonitor, acknowledgeIncident, getNotifications, createNotification, deleteNotification, updateNotification } from '../api'
+import { getMonitor, getHeartbeats, getUptime, getIncidents, pauseMonitor, resumeMonitor, deleteMonitor, updateMonitor, acknowledgeIncident, getNotifications, createNotification, deleteNotification, updateNotification, getMaintenanceWindows, createMaintenanceWindow, deleteMaintenanceWindow } from '../api'
 
 function formatTime(ts) {
   if (!ts) return 'Never';
@@ -529,6 +529,213 @@ function NotificationManager({ monitorId, manageKey }) {
   );
 }
 
+function MaintenanceManager({ monitorId, manageKey }) {
+  const [windows, setWindows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showAdd, setShowAdd] = useState(false);
+  const [newTitle, setNewTitle] = useState('');
+  const [newStartsAt, setNewStartsAt] = useState('');
+  const [newEndsAt, setNewEndsAt] = useState('');
+  const [adding, setAdding] = useState(false);
+  const [deleting, setDeleting] = useState(null);
+  const [error, setError] = useState(null);
+
+  const loadWindows = async () => {
+    try {
+      const data = await getMaintenanceWindows(monitorId);
+      setWindows(data);
+    } catch (err) {
+      // silent
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { loadWindows(); }, [monitorId]);
+
+  // Convert local datetime-local input to ISO-8601 UTC string
+  const toUTC = (localStr) => {
+    if (!localStr) return '';
+    const d = new Date(localStr);
+    return d.toISOString().replace(/\.\d{3}Z$/, 'Z');
+  };
+
+  const handleAdd = async () => {
+    if (!newTitle.trim()) {
+      setError('Title is required');
+      return;
+    }
+    if (!newStartsAt || !newEndsAt) {
+      setError('Start and end times are required');
+      return;
+    }
+    const startsUTC = toUTC(newStartsAt);
+    const endsUTC = toUTC(newEndsAt);
+    if (endsUTC <= startsUTC) {
+      setError('End time must be after start time');
+      return;
+    }
+    setAdding(true);
+    setError(null);
+    try {
+      await createMaintenanceWindow(monitorId, {
+        title: newTitle.trim(),
+        starts_at: startsUTC,
+        ends_at: endsUTC,
+      }, manageKey);
+      setNewTitle('');
+      setNewStartsAt('');
+      setNewEndsAt('');
+      setShowAdd(false);
+      await loadWindows();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const handleDelete = async (id) => {
+    setDeleting(id);
+    try {
+      await deleteMaintenanceWindow(id, manageKey);
+      await loadWindows();
+    } catch (err) {
+      alert(`Failed to delete: ${err.message}`);
+    } finally {
+      setDeleting(null);
+    }
+  };
+
+  const categorize = (w) => {
+    if (w.active) return 'active';
+    const now = new Date();
+    const starts = new Date(w.starts_at.endsWith('Z') ? w.starts_at : w.starts_at + 'Z');
+    return starts > now ? 'upcoming' : 'past';
+  };
+
+  if (loading) {
+    return <div style={{ color: 'var(--text-muted)', padding: '16px 0' }}>Loading maintenance windows...</div>;
+  }
+
+  const active = windows.filter(w => categorize(w) === 'active');
+  const upcoming = windows.filter(w => categorize(w) === 'upcoming');
+  const past = windows.filter(w => categorize(w) === 'past');
+
+  const renderWindow = (w) => {
+    const cat = categorize(w);
+    const badgeColor = cat === 'active' ? 'var(--warning)' : cat === 'upcoming' ? 'var(--accent)' : 'var(--text-muted)';
+    const badgeLabel = cat === 'active' ? '🔧 Active' : cat === 'upcoming' ? '📅 Upcoming' : '✅ Completed';
+    return (
+      <div key={w.id} className="card" style={{ padding: 14, marginBottom: 8 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>{w.title}</span>
+              <span style={{
+                fontSize: '0.7rem',
+                padding: '2px 8px',
+                borderRadius: 12,
+                background: `${badgeColor}20`,
+                color: badgeColor,
+                fontWeight: 600,
+              }}>
+                {badgeLabel}
+              </span>
+            </div>
+            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: 4 }}>
+              {formatTime(w.starts_at.replace('Z', ''))} → {formatTime(w.ends_at.replace('Z', ''))}
+            </div>
+          </div>
+          {manageKey && (
+            <button
+              className="btn btn-danger"
+              style={{ fontSize: '0.75rem', padding: '4px 10px', flexShrink: 0 }}
+              disabled={deleting === w.id}
+              onClick={() => handleDelete(w.id)}
+            >
+              {deleting === w.id ? '...' : '✕'}
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+          {windows.length === 0 ? 'No maintenance windows scheduled' : `${windows.length} window${windows.length > 1 ? 's' : ''}`}
+        </div>
+        {manageKey && !showAdd && (
+          <button className="btn btn-primary" style={{ fontSize: '0.8rem', padding: '6px 14px' }} onClick={() => setShowAdd(true)}>
+            + Schedule Maintenance
+          </button>
+        )}
+      </div>
+
+      {showAdd && manageKey && (
+        <div className="card" style={{ borderColor: 'var(--accent)', marginBottom: 16 }}>
+          <h4 style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: 12 }}>Schedule Maintenance Window</h4>
+
+          {error && (
+            <div style={{ background: 'var(--danger-bg)', border: '1px solid var(--danger)', borderRadius: 'var(--radius)', padding: '8px 12px', marginBottom: 12, fontSize: '0.85rem', color: 'var(--danger)' }}>
+              {error}
+            </div>
+          )}
+
+          <div className="form-group">
+            <label className="form-label">Title</label>
+            <input className="form-input" value={newTitle} onChange={e => setNewTitle(e.target.value)} placeholder="e.g. Server migration" />
+          </div>
+
+          <div className="form-row">
+            <div className="form-group">
+              <label className="form-label">Starts At</label>
+              <input className="form-input" type="datetime-local" value={newStartsAt} onChange={e => setNewStartsAt(e.target.value)} />
+              <div className="form-help">Local time (converted to UTC)</div>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Ends At</label>
+              <input className="form-input" type="datetime-local" value={newEndsAt} onChange={e => setNewEndsAt(e.target.value)} />
+              <div className="form-help">Local time (converted to UTC)</div>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button className="btn btn-secondary" style={{ fontSize: '0.8rem', padding: '6px 12px' }} onClick={() => { setShowAdd(false); setError(null); }}>Cancel</button>
+            <button className="btn btn-primary" style={{ fontSize: '0.8rem', padding: '6px 12px' }} disabled={adding} onClick={handleAdd}>
+              {adding ? 'Scheduling...' : '📅 Schedule'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {active.length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--warning)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Active Now</div>
+          {active.map(renderWindow)}
+        </div>
+      )}
+
+      {upcoming.length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--accent)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Upcoming</div>
+          {upcoming.map(renderWindow)}
+        </div>
+      )}
+
+      {past.length > 0 && (
+        <div>
+          <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Completed</div>
+          {past.map(renderWindow)}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const HTTP_METHODS = ['GET', 'POST', 'HEAD', 'PUT', 'DELETE', 'PATCH'];
 
 function EditMonitorForm({ monitor, manageKey, onSaved, onCancel }) {
@@ -948,14 +1155,14 @@ export default function MonitorDetail({ id, manageKey, onBack }) {
       <UptimeBar heartbeats={heartbeats} />
 
       {/* Tabs */}
-      <div style={{ display: 'flex', gap: 4, margin: '24px 0 16px', borderBottom: '1px solid var(--border)', paddingBottom: 8 }}>
-        {['overview', 'heartbeats', 'incidents', ...(manageKey ? ['notifications'] : [])].map((t) => (
+      <div style={{ display: 'flex', gap: 4, margin: '24px 0 16px', borderBottom: '1px solid var(--border)', paddingBottom: 8, flexWrap: 'wrap' }}>
+        {['overview', 'heartbeats', 'incidents', 'maintenance', ...(manageKey ? ['notifications'] : [])].map((t) => (
           <button
             key={t}
             className={`nav-btn ${tab === t ? 'active' : ''}`}
             onClick={() => setTab(t)}
           >
-            {t === 'overview' ? '📊 Overview' : t === 'heartbeats' ? '💓 Heartbeats' : t === 'incidents' ? `⚡ Incidents (${incidents.length})` : '🔔 Notifications'}
+            {t === 'overview' ? '📊 Overview' : t === 'heartbeats' ? '💓 Heartbeats' : t === 'incidents' ? `⚡ Incidents (${incidents.length})` : t === 'maintenance' ? '🔧 Maintenance' : '🔔 Notifications'}
           </button>
         ))}
       </div>
@@ -975,6 +1182,8 @@ export default function MonitorDetail({ id, manageKey, onBack }) {
       {tab === 'heartbeats' && <HeartbeatTable heartbeats={heartbeats} />}
 
       {tab === 'incidents' && <IncidentList incidents={incidents} manageKey={manageKey} onAck={reload} />}
+
+      {tab === 'maintenance' && <MaintenanceManager monitorId={id} manageKey={manageKey} />}
 
       {tab === 'notifications' && manageKey && <NotificationManager monitorId={id} manageKey={manageKey} />}
     </div>

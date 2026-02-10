@@ -113,3 +113,22 @@ export async function updateNotification(id, data, key) {
 export async function getTags() {
   return request('/tags');
 }
+
+export async function getMaintenanceWindows(monitorId) {
+  return request(`/monitors/${monitorId}/maintenance`);
+}
+
+export async function createMaintenanceWindow(monitorId, data, key) {
+  return request(`/monitors/${monitorId}/maintenance`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+    headers: { Authorization: `Bearer ${key}` },
+  });
+}
+
+export async function deleteMaintenanceWindow(id, key) {
+  return request(`/maintenance/${id}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${key}` },
+  });
+}
