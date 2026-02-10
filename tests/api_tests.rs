@@ -31,6 +31,8 @@ fn test_client() -> Client {
             watchpost::routes::get_incidents,
             watchpost::routes::acknowledge_incident,
             watchpost::routes::dashboard,
+            watchpost::routes::uptime_history,
+            watchpost::routes::monitor_uptime_history,
             watchpost::routes::status_page,
             watchpost::routes::create_notification,
             watchpost::routes::list_notifications,
@@ -1488,4 +1490,95 @@ fn test_dashboard_with_paused_monitor() {
     let body: serde_json::Value = resp.into_json().unwrap();
     assert_eq!(body["total_monitors"], 1);
     assert_eq!(body["paused_monitors"], 1);
+}
+
+// ── Uptime History Tests ──
+
+#[test]
+fn test_uptime_history_empty() {
+    let client = test_client();
+    let resp = client.get("/api/v1/uptime-history").dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert!(body.as_array().unwrap().is_empty());
+}
+
+#[test]
+fn test_uptime_history_with_days_param() {
+    let client = test_client();
+    let resp = client.get("/api/v1/uptime-history?days=7").dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert!(body.as_array().is_some());
+}
+
+#[test]
+fn test_uptime_history_clamps_days() {
+    let client = test_client();
+    // days > 90 should be clamped
+    let resp = client.get("/api/v1/uptime-history?days=365").dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert!(body.as_array().is_some());
+}
+
+#[test]
+fn test_monitor_uptime_history_not_found() {
+    let client = test_client();
+    let resp = client.get("/api/v1/monitors/nonexistent/uptime-history").dispatch();
+    assert_eq!(resp.status(), Status::NotFound);
+}
+
+#[test]
+fn test_monitor_uptime_history_empty() {
+    let client = test_client();
+    let (id, _key) = create_test_monitor(&client);
+    let resp = client.get(format!("/api/v1/monitors/{}/uptime-history", id)).dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    // No heartbeats yet, so empty
+    assert!(body.as_array().unwrap().is_empty());
+}
+
+#[test]
+fn test_uptime_history_with_heartbeats() {
+    let client = test_client();
+    let (id, _key) = create_test_monitor(&client);
+
+    // Manually insert heartbeats via DB
+    {
+        let db_path = std::env::var("DATABASE_PATH").unwrap();
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute(
+            "INSERT INTO heartbeats (id, monitor_id, status, response_time_ms, status_code, checked_at, seq)
+             VALUES (?1, ?2, 'up', 150, 200, datetime('now'), (SELECT COALESCE(MAX(seq),0)+1 FROM heartbeats))",
+            params![uuid::Uuid::new_v4().to_string(), id],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO heartbeats (id, monitor_id, status, response_time_ms, status_code, checked_at, seq)
+             VALUES (?1, ?2, 'down', 0, 500, datetime('now'), (SELECT COALESCE(MAX(seq),0)+1 FROM heartbeats))",
+            params![uuid::Uuid::new_v4().to_string(), id],
+        ).unwrap();
+    }
+
+    // Global history
+    let resp = client.get("/api/v1/uptime-history?days=1").dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let days = body.as_array().unwrap();
+    assert!(!days.is_empty());
+    let day = &days[0];
+    assert_eq!(day["total_checks"], 2);
+    assert_eq!(day["up_checks"], 1);
+    assert_eq!(day["down_checks"], 1);
+    assert!((day["uptime_pct"].as_f64().unwrap() - 50.0).abs() < 0.01);
+    assert!(day["avg_response_ms"].as_f64().is_some());
+
+    // Per-monitor history
+    let resp = client.get(format!("/api/v1/monitors/{}/uptime-history?days=1", id)).dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let days = body.as_array().unwrap();
+    assert!(!days.is_empty());
+    assert_eq!(days[0]["total_checks"], 2);
 }

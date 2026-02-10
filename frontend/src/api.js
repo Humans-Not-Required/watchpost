@@ -137,6 +137,14 @@ export async function deleteMaintenanceWindow(id, key) {
   });
 }
 
+export async function getUptimeHistory(days = 30) {
+  return request(`/uptime-history?days=${days}`);
+}
+
+export async function getMonitorUptimeHistory(id, days = 30) {
+  return request(`/monitors/${id}/uptime-history?days=${days}`);
+}
+
 export async function bulkCreateMonitors(monitors) {
   return request('/monitors/bulk', {
     method: 'POST',

@@ -8,6 +8,7 @@ use crate::models::{
     StatusOverview, StatusMonitor, NotificationChannel, CreateNotification,
     BulkCreateMonitors, BulkCreateResponse, BulkError, ExportedMonitor,
     DashboardOverview, StatusCounts, DashboardIncident, SlowMonitor,
+    UptimeHistoryDay,
 };
 use crate::auth::{ManageToken, ClientIp, hash_key, generate_key};
 use crate::sse::EventBroadcaster;
@@ -773,6 +774,93 @@ pub fn dashboard(db: &State<Arc<Db>>) -> Result<Json<DashboardOverview>, (Status
     }))
 }
 
+// ── Uptime History ──
+
+#[get("/uptime-history?<days>")]
+pub fn uptime_history(
+    days: Option<u32>,
+    db: &State<Arc<Db>>,
+) -> Result<Json<Vec<UptimeHistoryDay>>, (Status, Json<serde_json::Value>)> {
+    let days = days.unwrap_or(30).min(90).max(1);
+    let conn = db.conn.lock().unwrap();
+    let err_map = |e: rusqlite::Error| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()})));
+
+    let mut stmt = conn.prepare(
+        "SELECT date(checked_at) as day, \
+         COUNT(*) as total, \
+         SUM(CASE WHEN status = 'up' THEN 1 ELSE 0 END) as up_count, \
+         SUM(CASE WHEN status = 'down' THEN 1 ELSE 0 END) as down_count, \
+         AVG(CASE WHEN status = 'up' THEN response_time_ms ELSE NULL END) as avg_rt \
+         FROM heartbeats \
+         WHERE checked_at > datetime('now', ?1) \
+         GROUP BY day ORDER BY day ASC"
+    ).map_err(err_map)?;
+
+    let offset_str = format!("-{} days", days);
+    let rows: Vec<UptimeHistoryDay> = stmt.query_map(params![offset_str], |row| {
+        let total: u32 = row.get(1)?;
+        let up: u32 = row.get(2)?;
+        let pct = if total > 0 { (up as f64 / total as f64) * 100.0 } else { 100.0 };
+        Ok(UptimeHistoryDay {
+            date: row.get(0)?,
+            uptime_pct: pct,
+            total_checks: total,
+            up_checks: up,
+            down_checks: row.get(3)?,
+            avg_response_ms: row.get(4)?,
+        })
+    }).map_err(err_map)?
+    .filter_map(|r| r.ok())
+    .collect();
+
+    Ok(Json(rows))
+}
+
+#[get("/monitors/<id>/uptime-history?<days>")]
+pub fn monitor_uptime_history(
+    id: &str,
+    days: Option<u32>,
+    db: &State<Arc<Db>>,
+) -> Result<Json<Vec<UptimeHistoryDay>>, (Status, Json<serde_json::Value>)> {
+    let days = days.unwrap_or(30).min(90).max(1);
+    let conn = db.conn.lock().unwrap();
+    let err_map = |e: rusqlite::Error| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()})));
+
+    // Verify monitor exists
+    get_monitor_from_db(&conn, id)
+        .map_err(|_| (Status::NotFound, Json(serde_json::json!({"error": "Monitor not found", "code": "NOT_FOUND"}))))?;
+
+    let mut stmt = conn.prepare(
+        "SELECT date(checked_at) as day, \
+         COUNT(*) as total, \
+         SUM(CASE WHEN status = 'up' THEN 1 ELSE 0 END) as up_count, \
+         SUM(CASE WHEN status = 'down' THEN 1 ELSE 0 END) as down_count, \
+         AVG(CASE WHEN status = 'up' THEN response_time_ms ELSE NULL END) as avg_rt \
+         FROM heartbeats \
+         WHERE monitor_id = ?1 AND checked_at > datetime('now', ?2) \
+         GROUP BY day ORDER BY day ASC"
+    ).map_err(err_map)?;
+
+    let offset_str = format!("-{} days", days);
+    let rows: Vec<UptimeHistoryDay> = stmt.query_map(params![id, offset_str], |row| {
+        let total: u32 = row.get(1)?;
+        let up: u32 = row.get(2)?;
+        let pct = if total > 0 { (up as f64 / total as f64) * 100.0 } else { 100.0 };
+        Ok(UptimeHistoryDay {
+            date: row.get(0)?,
+            uptime_pct: pct,
+            total_checks: total,
+            up_checks: up,
+            down_checks: row.get(3)?,
+            avg_response_ms: row.get(4)?,
+        })
+    }).map_err(err_map)?
+    .filter_map(|r| r.ok())
+    .collect();
+
+    Ok(Json(rows))
+}
+
 // ── Status Page ──
 
 #[get("/status?<search>&<status>&<tag>")]
@@ -1194,6 +1282,8 @@ GET /api/v1/monitors/:id/uptime — Uptime stats (24h/7d/30d/90d)
 GET /api/v1/monitors/:id/incidents — Incident history
 GET /api/v1/status — Public status page
 GET /api/v1/dashboard — Aggregate dashboard (total monitors, uptime averages, active incidents, recent incidents, slowest monitors)
+GET /api/v1/uptime-history?days=30 — Daily uptime percentages over time (aggregate across all monitors, max 90 days)
+GET /api/v1/monitors/:id/uptime-history?days=30 — Daily uptime percentages for a specific monitor
 
 ## Auth
 - Create monitor: no auth (returns manage_key, save it!)
@@ -1256,6 +1346,8 @@ POST /api/v1/monitors/:id/pause — pause checks (auth)
 POST /api/v1/monitors/:id/resume — resume checks (auth)
 GET /api/v1/monitors/:id/heartbeats — check history
 GET /api/v1/monitors/:id/uptime — uptime stats
+GET /api/v1/monitors/:id/uptime-history — daily uptime history (?days=N, max 90)
+GET /api/v1/uptime-history — aggregate daily uptime history (?days=N, max 90)
 GET /api/v1/monitors/:id/incidents — incidents
 POST /api/v1/incidents/:id/acknowledge — ack incident (auth)
 POST /api/v1/monitors/:id/notifications — add notification (auth)
@@ -1622,6 +1714,76 @@ const OPENAPI_JSON: &str = r##"{
               }
             }
           }
+        }
+      }
+    },
+    "/uptime-history": {
+      "get": {
+        "summary": "Aggregate uptime history by day",
+        "operationId": "uptimeHistory",
+        "tags": ["system"],
+        "description": "Returns daily uptime percentages, check counts, and average response times aggregated across all monitors.",
+        "parameters": [
+          { "name": "days", "in": "query", "schema": { "type": "integer", "default": 30, "minimum": 1, "maximum": 90 }, "description": "Number of days of history" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Daily uptime data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "date": { "type": "string", "format": "date" },
+                      "uptime_pct": { "type": "number" },
+                      "total_checks": { "type": "integer" },
+                      "up_checks": { "type": "integer" },
+                      "down_checks": { "type": "integer" },
+                      "avg_response_ms": { "type": "number", "nullable": true }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/monitors/{id}/uptime-history": {
+      "get": {
+        "summary": "Per-monitor uptime history by day",
+        "operationId": "monitorUptimeHistory",
+        "tags": ["monitors"],
+        "description": "Returns daily uptime percentages, check counts, and average response times for a specific monitor.",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+          { "name": "days", "in": "query", "schema": { "type": "integer", "default": 30, "minimum": 1, "maximum": 90 }, "description": "Number of days of history" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Daily uptime data for the monitor",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "date": { "type": "string", "format": "date" },
+                      "uptime_pct": { "type": "number" },
+                      "total_checks": { "type": "integer" },
+                      "up_checks": { "type": "integer" },
+                      "down_checks": { "type": "integer" },
+                      "avg_response_ms": { "type": "number", "nullable": true }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": { "description": "Monitor not found" }
         }
       }
     },

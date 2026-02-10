@@ -283,3 +283,13 @@ pub struct ExportedMonitor {
     pub response_time_threshold_ms: Option<u32>,
     pub tags: Vec<String>,
 }
+
+#[derive(Debug, Serialize)]
+pub struct UptimeHistoryDay {
+    pub date: String,
+    pub uptime_pct: f64,
+    pub total_checks: u32,
+    pub up_checks: u32,
+    pub down_checks: u32,
+    pub avg_response_ms: Option<f64>,
+}

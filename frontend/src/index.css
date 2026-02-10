@@ -878,6 +878,39 @@ input, select, textarea {
   color: var(--warning);
 }
 
+/* Uptime History Chart */
+.uptime-history-chart {
+  display: block;
+  margin: 0 auto;
+}
+
+.history-range-selector {
+  display: flex;
+  gap: 4px;
+}
+
+.range-btn {
+  padding: 4px 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.range-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.range-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
 .error-box {
   background: var(--danger-bg);
   border: 1px solid var(--danger);

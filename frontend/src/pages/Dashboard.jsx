@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { getDashboard } from '../api'
+import { getDashboard, getUptimeHistory } from '../api'
 
 const STATUS_COLORS = {
   up: '#00d4aa',
@@ -16,6 +16,112 @@ const STATUS_EMOJI = {
   unknown: '⚪',
   maintenance: '🔵',
 };
+
+function UptimeHistoryChart({ data }) {
+  if (!data || data.length === 0) {
+    return <p className="empty-state">No uptime history data yet</p>;
+  }
+
+  const W = 700, H = 200, PAD_L = 48, PAD_R = 12, PAD_T = 16, PAD_B = 36;
+  const chartW = W - PAD_L - PAD_R;
+  const chartH = H - PAD_T - PAD_B;
+
+  // Y range: 90-100% (or lower if data demands)
+  const minUp = Math.min(...data.map(d => d.uptime_pct));
+  const yMin = Math.min(90, Math.floor(minUp));
+  const yMax = 100;
+  const yRange = yMax - yMin || 1;
+
+  const toX = (i) => PAD_L + (i / Math.max(data.length - 1, 1)) * chartW;
+  const toY = (pct) => PAD_T + chartH - ((pct - yMin) / yRange) * chartH;
+
+  // Build path
+  const points = data.map((d, i) => `${toX(i).toFixed(1)},${toY(d.uptime_pct).toFixed(1)}`);
+  const linePath = `M${points.join('L')}`;
+  const areaPath = `${linePath}L${toX(data.length - 1).toFixed(1)},${(PAD_T + chartH).toFixed(1)}L${PAD_L.toFixed(1)},${(PAD_T + chartH).toFixed(1)}Z`;
+
+  // Y-axis ticks
+  const yTicks = [];
+  const step = yRange <= 2 ? 0.5 : yRange <= 5 ? 1 : 2;
+  for (let v = yMin; v <= yMax; v += step) {
+    yTicks.push(v);
+  }
+  if (yTicks[yTicks.length - 1] !== yMax) yTicks.push(yMax);
+
+  // X-axis labels (show ~5-7 dates)
+  const labelInterval = Math.max(1, Math.floor(data.length / 6));
+
+  // Color gradient based on min uptime
+  const lineColor = minUp >= 99.9 ? '#00d4aa' : minUp >= 99 ? '#ffa502' : '#ff4757';
+  const fillColor = minUp >= 99.9 ? 'rgba(0,212,170,0.15)' : minUp >= 99 ? 'rgba(255,165,2,0.15)' : 'rgba(255,71,87,0.15)';
+
+  const [tooltip, setTooltip] = useState(null);
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="uptime-history-chart" style={{ width: '100%', maxWidth: W }}>
+      {/* Grid lines */}
+      {yTicks.map(v => (
+        <g key={v}>
+          <line x1={PAD_L} y1={toY(v)} x2={W - PAD_R} y2={toY(v)}
+            stroke="rgba(255,255,255,0.07)" strokeWidth="1" />
+          <text x={PAD_L - 6} y={toY(v) + 4} textAnchor="end"
+            fill="rgba(255,255,255,0.45)" fontSize="10">
+            {v % 1 === 0 ? `${v}%` : `${v.toFixed(1)}%`}
+          </text>
+        </g>
+      ))}
+
+      {/* Area fill */}
+      <path d={areaPath} fill={fillColor} />
+
+      {/* Line */}
+      <path d={linePath} fill="none" stroke={lineColor} strokeWidth="2" strokeLinejoin="round" />
+
+      {/* Data points + hover targets */}
+      {data.map((d, i) => (
+        <g key={i}>
+          <circle cx={toX(i)} cy={toY(d.uptime_pct)} r="3"
+            fill={d.uptime_pct >= 99.9 ? '#00d4aa' : d.uptime_pct >= 99 ? '#ffa502' : '#ff4757'}
+            stroke="rgba(0,0,0,0.3)" strokeWidth="1" />
+          <rect x={toX(i) - 10} y={PAD_T} width="20" height={chartH}
+            fill="transparent"
+            onMouseEnter={() => setTooltip({ i, d, x: toX(i), y: toY(d.uptime_pct) })}
+            onMouseLeave={() => setTooltip(null)} />
+        </g>
+      ))}
+
+      {/* X-axis labels */}
+      {data.map((d, i) => {
+        if (i % labelInterval !== 0 && i !== data.length - 1) return null;
+        const label = d.date.slice(5); // MM-DD
+        return (
+          <text key={i} x={toX(i)} y={H - 6} textAnchor="middle"
+            fill="rgba(255,255,255,0.45)" fontSize="10">
+            {label}
+          </text>
+        );
+      })}
+
+      {/* Tooltip */}
+      {tooltip && (
+        <g>
+          <line x1={tooltip.x} y1={PAD_T} x2={tooltip.x} y2={PAD_T + chartH}
+            stroke="rgba(255,255,255,0.2)" strokeWidth="1" strokeDasharray="3,3" />
+          <rect x={tooltip.x - 60} y={tooltip.y - 42} width="120" height="36"
+            rx="4" fill="rgba(30,30,40,0.95)" stroke="rgba(255,255,255,0.15)" />
+          <text x={tooltip.x} y={tooltip.y - 26} textAnchor="middle"
+            fill="#fff" fontSize="11" fontWeight="bold">
+            {tooltip.d.uptime_pct.toFixed(2)}% uptime
+          </text>
+          <text x={tooltip.x} y={tooltip.y - 13} textAnchor="middle"
+            fill="rgba(255,255,255,0.6)" fontSize="10">
+            {tooltip.d.date} · {tooltip.d.total_checks} checks
+          </text>
+        </g>
+      )}
+    </svg>
+  );
+}
 
 function StatCard({ label, value, sub, color, icon }) {
   return (
@@ -76,6 +182,8 @@ function timeAgo(iso) {
 
 export default function Dashboard({ onNavigate }) {
   const [data, setData] = useState(null);
+  const [history, setHistory] = useState(null);
+  const [historyDays, setHistoryDays] = useState(30);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -86,11 +194,22 @@ export default function Dashboard({ onNavigate }) {
       .finally(() => setLoading(false));
   };
 
+  const loadHistory = () => {
+    getUptimeHistory(historyDays)
+      .then(h => setHistory(h))
+      .catch(() => {});
+  };
+
   useEffect(() => {
     loadData();
+    loadHistory();
     const interval = setInterval(loadData, 30000);
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    loadHistory();
+  }, [historyDays]);
 
   if (loading && !data) {
     return (
@@ -161,6 +280,23 @@ export default function Dashboard({ onNavigate }) {
       <div className="dashboard-section">
         <h3>Monitor Status</h3>
         <StatusBar counts={data.status_counts} />
+      </div>
+
+      {/* Uptime History Chart */}
+      <div className="dashboard-section">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+          <h3>📈 Uptime History</h3>
+          <div className="history-range-selector">
+            {[7, 14, 30, 90].map(d => (
+              <button key={d}
+                className={`range-btn ${historyDays === d ? 'active' : ''}`}
+                onClick={() => setHistoryDays(d)}>
+                {d}d
+              </button>
+            ))}
+          </div>
+        </div>
+        <UptimeHistoryChart data={history} />
       </div>
 
       {/* Two-column: Recent Incidents + Slowest Monitors */}
