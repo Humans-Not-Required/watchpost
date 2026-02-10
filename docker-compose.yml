@@ -1,0 +1,18 @@
+services:
+  watchpost:
+    image: ghcr.io/humans-not-required/watchpost:dev
+    container_name: watchpost
+    restart: unless-stopped
+    ports:
+      - "3007:8000"
+    volumes:
+      - watchpost-data:/app/data
+    environment:
+      - ROCKET_ADDRESS=0.0.0.0
+      - ROCKET_PORT=8000
+      - STATIC_DIR=/app/frontend/dist
+      - DATABASE_PATH=/app/data/watchpost.db
+      - MONITOR_RATE_LIMIT=20
+
+volumes:
+  watchpost-data:
