@@ -95,11 +95,12 @@ pub fn create_monitor(
     let id = uuid::Uuid::new_v4().to_string();
     let manage_key = generate_key();
     let key_hash = hash_key(&manage_key);
+    let tags_str = tags_to_string(&data.tags);
 
     let conn = db.conn.lock().unwrap();
     conn.execute(
-        "INSERT INTO monitors (id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, manage_key_hash, is_public, confirmation_threshold)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+        "INSERT INTO monitors (id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, manage_key_hash, is_public, confirmation_threshold, tags)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
         params![
             id,
             data.name.trim(),
@@ -113,6 +114,7 @@ pub fn create_monitor(
             key_hash,
             data.is_public as i32,
             confirmation,
+            tags_str,
         ],
     ).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({
         "error": format!("DB error: {}", e), "code": "INTERNAL_ERROR"
@@ -135,12 +137,12 @@ pub fn create_monitor(
 
 // ── List Monitors (public only) ──
 
-#[get("/monitors?<search>&<status>")]
-pub fn list_monitors(search: Option<&str>, status: Option<&str>, db: &State<Arc<Db>>) -> Result<Json<Vec<Monitor>>, (Status, Json<serde_json::Value>)> {
+#[get("/monitors?<search>&<status>&<tag>")]
+pub fn list_monitors(search: Option<&str>, status: Option<&str>, tag: Option<&str>, db: &State<Arc<Db>>) -> Result<Json<Vec<Monitor>>, (Status, Json<serde_json::Value>)> {
     let conn = db.conn.lock().unwrap();
 
     let mut sql = String::from(
-        "SELECT id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, is_public, is_paused, current_status, last_checked_at, confirmation_threshold, created_at, updated_at
+        "SELECT id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, is_public, is_paused, current_status, last_checked_at, confirmation_threshold, created_at, updated_at, tags
          FROM monitors WHERE is_public = 1"
     );
     let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
@@ -157,6 +159,21 @@ pub fn list_monitors(search: Option<&str>, status: Option<&str>, db: &State<Arc<
         if !s.is_empty() && ["up", "down", "degraded", "unknown"].contains(&s.as_str()) {
             param_values.push(Box::new(s));
             sql.push_str(&format!(" AND current_status = ?{}", param_values.len()));
+        }
+    }
+    if let Some(t) = tag {
+        let t = t.trim().to_lowercase();
+        if !t.is_empty() {
+            // Match tag as comma-separated substring: exact match, starts with, ends with, or in middle
+            param_values.push(Box::new(t.clone()));
+            param_values.push(Box::new(format!("{},%", t)));
+            param_values.push(Box::new(format!("%,{}", t)));
+            param_values.push(Box::new(format!("%,{},%", t)));
+            let n = param_values.len();
+            sql.push_str(&format!(
+                " AND (tags = ?{} OR tags LIKE ?{} OR tags LIKE ?{} OR tags LIKE ?{})",
+                n - 3, n - 2, n - 1, n
+            ));
         }
     }
     sql.push_str(" ORDER BY name");
@@ -224,6 +241,11 @@ pub fn update_monitor(
     if let Some(ref headers) = data.headers {
         updates.push(format!("headers = ?{}", values.len() + 1));
         values.push(Box::new(headers.to_string()));
+    }
+
+    if let Some(ref tags) = data.tags {
+        updates.push(format!("tags = ?{}", values.len() + 1));
+        values.push(Box::new(tags_to_string(tags)));
     }
 
     if updates.is_empty() {
@@ -479,11 +501,11 @@ pub fn acknowledge_incident(
 
 // ── Status Page ──
 
-#[get("/status?<search>&<status>")]
-pub fn status_page(search: Option<&str>, status: Option<&str>, db: &State<Arc<Db>>) -> Result<Json<StatusOverview>, (Status, Json<serde_json::Value>)> {
+#[get("/status?<search>&<status>&<tag>")]
+pub fn status_page(search: Option<&str>, status: Option<&str>, tag: Option<&str>, db: &State<Arc<Db>>) -> Result<Json<StatusOverview>, (Status, Json<serde_json::Value>)> {
     let conn = db.conn.lock().unwrap();
 
-    let mut sql = String::from("SELECT id, name, url, current_status, last_checked_at FROM monitors WHERE is_public = 1");
+    let mut sql = String::from("SELECT id, name, url, current_status, last_checked_at, tags FROM monitors WHERE is_public = 1");
     let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
     if let Some(q) = search {
@@ -500,6 +522,20 @@ pub fn status_page(search: Option<&str>, status: Option<&str>, db: &State<Arc<Db
             sql.push_str(&format!(" AND current_status = ?{}", param_values.len()));
         }
     }
+    if let Some(t) = tag {
+        let t = t.trim().to_lowercase();
+        if !t.is_empty() {
+            param_values.push(Box::new(t.clone()));
+            param_values.push(Box::new(format!("{},%", t)));
+            param_values.push(Box::new(format!("%,{}", t)));
+            param_values.push(Box::new(format!("%,{},%", t)));
+            let n = param_values.len();
+            sql.push_str(&format!(
+                " AND (tags = ?{} OR tags LIKE ?{} OR tags LIKE ?{} OR tags LIKE ?{})",
+                n - 3, n - 2, n - 1, n
+            ));
+        }
+    }
     sql.push_str(" ORDER BY name");
 
     let mut stmt = conn.prepare(&sql)
@@ -509,10 +545,11 @@ pub fn status_page(search: Option<&str>, status: Option<&str>, db: &State<Arc<Db
     let monitors: Vec<StatusMonitor> = stmt.query_map(params.as_slice(), |row| {
         let id: String = row.get(0)?;
         let status: String = row.get(3)?;
-        Ok((id, row.get(1)?, row.get(2)?, status, row.get::<_, Option<String>>(4)?))
+        let tags_str: String = row.get::<_, String>(5).unwrap_or_default();
+        Ok((id, row.get(1)?, row.get(2)?, status, row.get::<_, Option<String>>(4)?, tags_str))
     }).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?
     .filter_map(|r| r.ok())
-    .map(|(id, name, url, status, last_checked)| {
+    .map(|(id, name, url, status, last_checked, tags_str)| {
         // Calculate uptime (simplified inline)
         let total_24h: u32 = conn.query_row(
             "SELECT COUNT(*) FROM heartbeats WHERE monitor_id = ?1 AND checked_at > datetime('now', '-24 hours')",
@@ -549,6 +586,7 @@ pub fn status_page(search: Option<&str>, status: Option<&str>, db: &State<Arc<Db
             uptime_7d: if total_7d > 0 { (up_7d as f64 / total_7d as f64) * 100.0 } else { 100.0 },
             avg_response_ms_24h: avg_ms,
             active_incident,
+            tags: parse_tags(&tags_str),
         }
     })
     .collect();
@@ -700,6 +738,30 @@ pub fn update_notification(
     Ok(Json(serde_json::json!({"message": "Notification channel updated"})))
 }
 
+// ── Tags ──
+
+#[get("/tags")]
+pub fn list_tags(db: &State<Arc<Db>>) -> Result<Json<Vec<String>>, (Status, Json<serde_json::Value>)> {
+    let conn = db.conn.lock().unwrap();
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT tags FROM monitors WHERE is_public = 1 AND tags != ''"
+    ).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
+
+    let mut all_tags: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let rows: Vec<String> = stmt.query_map([], |row| row.get(0))
+        .map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    for tags_str in rows {
+        for tag in parse_tags(&tags_str) {
+            all_tags.insert(tag);
+        }
+    }
+
+    Ok(Json(all_tags.into_iter().collect()))
+}
+
 // ── llms.txt ──
 
 #[get("/llms.txt")]
@@ -735,6 +797,13 @@ GET /api/v1/monitors/:id/events — per-monitor event stream
 
 Event types: check.completed, incident.created, incident.resolved
 
+## Tags
+POST /api/v1/monitors with "tags": ["api", "prod"] — tag monitors on creation
+PATCH /api/v1/monitors/:id with "tags": ["api", "staging"] — update tags
+GET /api/v1/tags — list all unique tags across public monitors
+GET /api/v1/monitors?tag=prod — filter monitors by tag
+GET /api/v1/status?tag=prod — filter status page by tag
+
 ## Search & Filter
 GET /api/v1/monitors?search=keyword — filter by name/URL
 GET /api/v1/monitors?status=up — filter by status (up/down/degraded/unknown)
@@ -756,9 +825,10 @@ POST /api/v1/monitors/:id/notifications — add notification (auth)
 GET /api/v1/monitors/:id/notifications — list notifications (auth)
 DELETE /api/v1/notifications/:id — remove notification (auth)
 PATCH /api/v1/notifications/:id — enable/disable notification (auth)
+GET /api/v1/tags — list all unique tags (public monitors)
 GET /api/v1/events — global SSE event stream
 GET /api/v1/monitors/:id/events — per-monitor SSE event stream
-GET /api/v1/status — public status page
+GET /api/v1/status — public status page (supports ?tag= filter)
 GET /api/v1/health — service health
 "#)
 }
@@ -797,7 +867,8 @@ const OPENAPI_JSON: &str = r##"{
         "tags": ["monitors"],
         "parameters": [
           { "name": "search", "in": "query", "schema": { "type": "string" }, "description": "Filter monitors by name or URL (case-insensitive substring match)" },
-          { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["up", "down", "degraded", "unknown"] }, "description": "Filter by current status" }
+          { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["up", "down", "degraded", "unknown"] }, "description": "Filter by current status" },
+          { "name": "tag", "in": "query", "schema": { "type": "string" }, "description": "Filter monitors by tag" }
         ],
         "responses": {
           "200": { "description": "List of public monitors", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Monitor" } } } } }
@@ -1018,10 +1089,22 @@ const OPENAPI_JSON: &str = r##"{
         "tags": ["status"],
         "parameters": [
           { "name": "search", "in": "query", "schema": { "type": "string" }, "description": "Filter monitors by name or URL (case-insensitive substring match)" },
-          { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["up", "down", "degraded", "unknown"] }, "description": "Filter by current status" }
+          { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["up", "down", "degraded", "unknown"] }, "description": "Filter by current status" },
+          { "name": "tag", "in": "query", "schema": { "type": "string" }, "description": "Filter monitors by tag" }
         ],
         "responses": {
           "200": { "description": "Status overview", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/StatusOverview" } } } }
+        }
+      }
+    },
+    "/tags": {
+      "get": {
+        "summary": "List all unique tags",
+        "operationId": "listTags",
+        "tags": ["monitors"],
+        "description": "Returns sorted list of unique tags across all public monitors.",
+        "responses": {
+          "200": { "description": "List of tags", "content": { "application/json": { "schema": { "type": "array", "items": { "type": "string" } } } } }
         }
       }
     },
@@ -1093,6 +1176,7 @@ const OPENAPI_JSON: &str = r##"{
           "current_status": { "type": "string", "enum": ["unknown", "up", "down", "degraded"] },
           "last_checked_at": { "type": "string", "nullable": true },
           "confirmation_threshold": { "type": "integer" },
+          "tags": { "type": "array", "items": { "type": "string" }, "description": "Freeform tags for grouping monitors" },
           "created_at": { "type": "string" },
           "updated_at": { "type": "string" }
         }
@@ -1110,7 +1194,8 @@ const OPENAPI_JSON: &str = r##"{
           "body_contains": { "type": "string" },
           "headers": { "type": "object" },
           "is_public": { "type": "boolean", "default": false },
-          "confirmation_threshold": { "type": "integer", "minimum": 1, "maximum": 10, "default": 2 }
+          "confirmation_threshold": { "type": "integer", "minimum": 1, "maximum": 10, "default": 2 },
+          "tags": { "type": "array", "items": { "type": "string" }, "description": "Freeform tags for grouping" }
         }
       },
       "UpdateMonitor": {
@@ -1125,7 +1210,8 @@ const OPENAPI_JSON: &str = r##"{
           "body_contains": { "type": "string" },
           "headers": { "type": "object" },
           "is_public": { "type": "boolean" },
-          "confirmation_threshold": { "type": "integer" }
+          "confirmation_threshold": { "type": "integer" },
+          "tags": { "type": "array", "items": { "type": "string" } }
         }
       },
       "CreateMonitorResponse": {
@@ -1206,7 +1292,8 @@ const OPENAPI_JSON: &str = r##"{
           "uptime_24h": { "type": "number" },
           "uptime_7d": { "type": "number" },
           "avg_response_ms_24h": { "type": "number", "nullable": true },
-          "active_incident": { "type": "boolean" }
+          "active_incident": { "type": "boolean" },
+          "tags": { "type": "array", "items": { "type": "string" } }
         }
       },
       "NotificationChannel": {
@@ -1275,15 +1362,32 @@ pub fn monitor_events<'a>(id: &'a str, broadcaster: &'a State<Arc<EventBroadcast
 
 fn get_monitor_from_db(conn: &rusqlite::Connection, id: &str) -> rusqlite::Result<Monitor> {
     conn.query_row(
-        "SELECT id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, is_public, is_paused, current_status, last_checked_at, confirmation_threshold, created_at, updated_at
+        "SELECT id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, is_public, is_paused, current_status, last_checked_at, confirmation_threshold, created_at, updated_at, tags
          FROM monitors WHERE id = ?1",
         params![id],
         |row| Ok(row_to_monitor(row)),
     )
 }
 
+fn parse_tags(raw: &str) -> Vec<String> {
+    if raw.is_empty() {
+        Vec::new()
+    } else {
+        raw.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
+    }
+}
+
+fn tags_to_string(tags: &[String]) -> String {
+    tags.iter()
+        .map(|t| t.trim().to_lowercase())
+        .filter(|t| !t.is_empty())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 fn row_to_monitor(row: &rusqlite::Row) -> Monitor {
     let headers_str: Option<String> = row.get(8).unwrap_or(None);
+    let tags_str: String = row.get(16).unwrap_or_default();
     Monitor {
         id: row.get(0).unwrap(),
         name: row.get(1).unwrap(),
@@ -1299,6 +1403,7 @@ fn row_to_monitor(row: &rusqlite::Row) -> Monitor {
         current_status: row.get(11).unwrap(),
         last_checked_at: row.get(12).unwrap_or(None),
         confirmation_threshold: row.get(13).unwrap(),
+        tags: parse_tags(&tags_str),
         created_at: row.get(14).unwrap(),
         updated_at: row.get(15).unwrap(),
     }

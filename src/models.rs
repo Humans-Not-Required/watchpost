@@ -19,6 +19,7 @@ pub struct Monitor {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_checked_at: Option<String>,
     pub confirmation_threshold: u32,
+    pub tags: Vec<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -40,6 +41,8 @@ pub struct CreateMonitor {
     #[serde(default)]
     pub is_public: bool,
     pub confirmation_threshold: Option<u32>,
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 fn default_method() -> String { "GET".into() }
@@ -59,6 +62,7 @@ pub struct UpdateMonitor {
     pub headers: Option<serde_json::Value>,
     pub is_public: Option<bool>,
     pub confirmation_threshold: Option<u32>,
+    pub tags: Option<Vec<String>>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -143,6 +147,7 @@ pub struct StatusMonitor {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub avg_response_ms_24h: Option<f64>,
     pub active_incident: bool,
+    pub tags: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]

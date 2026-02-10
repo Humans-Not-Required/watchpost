@@ -73,6 +73,9 @@ impl Db {
             CREATE INDEX IF NOT EXISTS idx_notifications_monitor ON notification_channels(monitor_id);
         ")?;
 
+        // Add tags column to monitors
+        conn.execute_batch("ALTER TABLE monitors ADD COLUMN tags TEXT NOT NULL DEFAULT '';").ok();
+
         // Add seq columns for cursor-based pagination
         conn.execute_batch("ALTER TABLE heartbeats ADD COLUMN seq INTEGER;").ok();
         conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_heartbeats_seq ON heartbeats(seq);").ok();

@@ -33,6 +33,7 @@ fn test_client() -> Client {
             watchpost::routes::list_notifications,
             watchpost::routes::delete_notification,
             watchpost::routes::update_notification,
+            watchpost::routes::list_tags,
             watchpost::routes::llms_txt,
             watchpost::routes::openapi_spec,
             watchpost::routes::global_events,
@@ -804,4 +805,162 @@ fn test_status_page_search_filter() {
     let body: serde_json::Value = resp.into_json().unwrap();
     assert_eq!(body["monitors"].as_array().unwrap().len(), 1);
     assert_eq!(body["monitors"][0]["name"], "Staging API");
+}
+
+// ── Tags Tests ──
+
+#[test]
+fn test_create_monitor_with_tags() {
+    let client = test_client();
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Tagged API", "url": "https://example.com/api", "is_public": true, "tags": ["prod", "api", "critical"]}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let tags = body["monitor"]["tags"].as_array().unwrap();
+    assert_eq!(tags.len(), 3);
+    // Tags are lowercased and sorted alphabetically in storage
+    assert!(tags.contains(&serde_json::json!("prod")));
+    assert!(tags.contains(&serde_json::json!("api")));
+    assert!(tags.contains(&serde_json::json!("critical")));
+}
+
+#[test]
+fn test_create_monitor_without_tags() {
+    let client = test_client();
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "No Tags", "url": "https://example.com/api", "is_public": true}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let tags = body["monitor"]["tags"].as_array().unwrap();
+    assert!(tags.is_empty());
+}
+
+#[test]
+fn test_update_monitor_tags() {
+    let client = test_client();
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Taggable", "url": "https://example.com", "is_public": true, "tags": ["v1"]}"#)
+        .dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let id = body["monitor"]["id"].as_str().unwrap();
+    let key = body["manage_key"].as_str().unwrap();
+
+    // Update tags
+    let resp = client.patch(format!("/api/v1/monitors/{}", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"tags": ["v2", "backend"]}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+
+    // Verify
+    let resp = client.get(format!("/api/v1/monitors/{}", id)).dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let tags = body["tags"].as_array().unwrap();
+    assert_eq!(tags.len(), 2);
+    assert!(tags.contains(&serde_json::json!("v2")));
+    assert!(tags.contains(&serde_json::json!("backend")));
+}
+
+#[test]
+fn test_filter_monitors_by_tag() {
+    let client = test_client();
+
+    // Create monitors with different tags
+    client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "API Prod", "url": "https://api.example.com", "is_public": true, "tags": ["prod", "api"]}"#)
+        .dispatch();
+    client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "API Staging", "url": "https://staging.example.com", "is_public": true, "tags": ["staging", "api"]}"#)
+        .dispatch();
+    client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Frontend", "url": "https://www.example.com", "is_public": true, "tags": ["prod", "frontend"]}"#)
+        .dispatch();
+
+    // Filter by tag=prod → should get 2
+    let resp = client.get("/api/v1/monitors?tag=prod").dispatch();
+    let body: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert_eq!(body.len(), 2);
+
+    // Filter by tag=api → should get 2
+    let resp = client.get("/api/v1/monitors?tag=api").dispatch();
+    let body: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert_eq!(body.len(), 2);
+
+    // Filter by tag=staging → should get 1
+    let resp = client.get("/api/v1/monitors?tag=staging").dispatch();
+    let body: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert_eq!(body.len(), 1);
+    assert_eq!(body[0]["name"], "API Staging");
+
+    // Filter by tag=nonexistent → should get 0
+    let resp = client.get("/api/v1/monitors?tag=nonexistent").dispatch();
+    let body: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert_eq!(body.len(), 0);
+}
+
+#[test]
+fn test_status_page_tag_filter() {
+    let client = test_client();
+
+    client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Service A", "url": "https://a.example.com", "is_public": true, "tags": ["infra"]}"#)
+        .dispatch();
+    client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Service B", "url": "https://b.example.com", "is_public": true, "tags": ["app"]}"#)
+        .dispatch();
+
+    // Status page with tag filter
+    let resp = client.get("/api/v1/status?tag=infra").dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let monitors = body["monitors"].as_array().unwrap();
+    assert_eq!(monitors.len(), 1);
+    assert_eq!(monitors[0]["name"], "Service A");
+    assert!(monitors[0]["tags"].as_array().unwrap().contains(&serde_json::json!("infra")));
+
+    // No tag filter → all
+    let resp = client.get("/api/v1/status").dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["monitors"].as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn test_list_tags_endpoint() {
+    let client = test_client();
+
+    // Empty at first
+    let resp = client.get("/api/v1/tags").dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: Vec<String> = resp.into_json().unwrap();
+    assert!(body.is_empty());
+
+    // Create monitors with tags
+    client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "M1", "url": "https://m1.example.com", "is_public": true, "tags": ["prod", "api"]}"#)
+        .dispatch();
+    client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "M2", "url": "https://m2.example.com", "is_public": true, "tags": ["staging", "api"]}"#)
+        .dispatch();
+    // Private monitor tags should NOT appear
+    client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "M3", "url": "https://m3.example.com", "is_public": false, "tags": ["secret"]}"#)
+        .dispatch();
+
+    let resp = client.get("/api/v1/tags").dispatch();
+    let body: Vec<String> = resp.into_json().unwrap();
+    // Should have api, prod, staging (sorted), no "secret"
+    assert_eq!(body, vec!["api", "prod", "staging"]);
 }

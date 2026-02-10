@@ -109,3 +109,7 @@ export async function updateNotification(id, data, key) {
     headers: { Authorization: `Bearer ${key}` },
   });
 }
+
+export async function getTags() {
+  return request('/tags');
+}

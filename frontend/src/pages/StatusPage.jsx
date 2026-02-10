@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { getStatus } from '../api'
+import { getStatus, getTags } from '../api'
 
 const STATUS_LABELS = {
   operational: '✅ All Systems Operational',
@@ -42,6 +42,8 @@ export default function StatusPage({ onSelect }) {
   const [error, setError] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState(null);
+  const [allTags, setAllTags] = useState([]);
+  const [tagFilter, setTagFilter] = useState(null);
 
   useEffect(() => {
     let mounted = true;
@@ -63,6 +65,10 @@ export default function StatusPage({ onSelect }) {
     const interval = setInterval(load, 30000);
     return () => { mounted = false; clearInterval(interval); };
   }, []);
+
+  useEffect(() => {
+    getTags().then(setAllTags).catch(() => {});
+  }, [status]);
 
   if (loading) {
     return (
@@ -101,6 +107,7 @@ export default function StatusPage({ onSelect }) {
 
   const filtered = monitors.filter((m) => {
     if (statusFilter && m.current_status !== statusFilter) return false;
+    if (tagFilter && !(m.tags || []).includes(tagFilter)) return false;
     if (searchQuery.trim()) {
       const q = searchQuery.trim().toLowerCase();
       if (!m.name.toLowerCase().includes(q) && !m.url.toLowerCase().includes(q)) return false;
@@ -139,6 +146,23 @@ export default function StatusPage({ onSelect }) {
               </button>
             ))}
           </div>
+          {allTags.length > 0 && (
+            <div className="status-chips" style={{ marginTop: 8 }}>
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginRight: 4 }}>Tags:</span>
+              {allTags.map((t) => (
+                <button
+                  key={t}
+                  className={`chip chip-tag ${tagFilter === t ? 'chip-active' : ''}`}
+                  onClick={() => setTagFilter(tagFilter === t ? null : t)}
+                >
+                  {t}
+                  <span className="chip-count">
+                    {monitors.filter((m) => (m.tags || []).includes(t)).length}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -166,6 +190,15 @@ export default function StatusPage({ onSelect }) {
                 {m.current_status}
               </span>
             </div>
+            {(m.tags || []).length > 0 && (
+              <div className="tag-list">
+                {m.tags.map((t) => (
+                  <span key={t} className="tag-badge" onClick={(e) => { e.stopPropagation(); setTagFilter(tagFilter === t ? null : t); }}>
+                    {t}
+                  </span>
+                ))}
+              </div>
+            )}
             <div className="monitor-stats">
               <div className="monitor-stat">
                 <span className="monitor-stat-label">Uptime (24h)</span>

@@ -542,6 +542,7 @@ function EditMonitorForm({ monitor, manageKey, onSaved, onCancel }) {
     confirmation_threshold: monitor.confirmation_threshold || 3,
     body_contains: monitor.body_contains || '',
     is_public: monitor.is_public ?? true,
+    tagsInput: (monitor.tags || []).join(', '),
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -567,6 +568,9 @@ function EditMonitorForm({ monitor, manageKey, onSaved, onCancel }) {
       if (form.confirmation_threshold !== monitor.confirmation_threshold) patch.confirmation_threshold = Number(form.confirmation_threshold);
       if ((form.body_contains || '') !== (monitor.body_contains || '')) patch.body_contains = form.body_contains || null;
       if (form.is_public !== monitor.is_public) patch.is_public = form.is_public;
+      const newTags = form.tagsInput.split(',').map(t => t.trim()).filter(Boolean);
+      const oldTags = (monitor.tags || []).join(',');
+      if (newTags.join(',') !== oldTags) patch.tags = newTags;
 
       if (Object.keys(patch).length === 0) {
         onCancel();
@@ -639,6 +643,12 @@ function EditMonitorForm({ monitor, manageKey, onSaved, onCancel }) {
           <label className="form-label">Body Contains</label>
           <input className="form-input" value={form.body_contains} onChange={e => set('body_contains', e.target.value)} placeholder="Optional text to match in response" />
         </div>
+      </div>
+
+      <div className="form-group">
+        <label className="form-label">Tags</label>
+        <input className="form-input" value={form.tagsInput} onChange={e => set('tagsInput', e.target.value)} placeholder="prod, api, critical" />
+        <div className="form-help">Comma-separated tags for grouping</div>
       </div>
 
       <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -824,6 +834,14 @@ export default function MonitorDetail({ id, manageKey, onBack }) {
             </span>
           </div>
         </div>
+
+        {(monitor.tags || []).length > 0 && (
+          <div className="tag-list" style={{ marginBottom: 12 }}>
+            {monitor.tags.map((t) => (
+              <span key={t} className="tag-badge">{t}</span>
+            ))}
+          </div>
+        )}
 
         <div className="monitor-stats">
           <div className="monitor-stat">

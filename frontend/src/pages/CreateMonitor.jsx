@@ -12,6 +12,7 @@ export default function CreateMonitor({ onCreated, onCancel }) {
     body_contains: '',
     is_public: true,
     confirmation_threshold: 2,
+    tagsInput: '',
   });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
@@ -37,6 +38,10 @@ export default function CreateMonitor({ onCreated, onCancel }) {
       };
       if (form.body_contains.trim()) {
         payload.body_contains = form.body_contains.trim();
+      }
+      const tags = form.tagsInput.split(',').map(t => t.trim()).filter(Boolean);
+      if (tags.length > 0) {
+        payload.tags = tags;
       }
 
       const data = await createMonitor(payload);
@@ -73,6 +78,13 @@ export default function CreateMonitor({ onCreated, onCancel }) {
               {result.monitor.current_status}
             </span>
           </div>
+          {(result.monitor.tags || []).length > 0 && (
+            <div className="tag-list" style={{ marginBottom: 12 }}>
+              {result.monitor.tags.map((t) => (
+                <span key={t} className="tag-badge">{t}</span>
+              ))}
+            </div>
+          )}
           <div className="monitor-stats">
             <div className="monitor-stat">
               <span className="monitor-stat-label">URL</span>
@@ -218,6 +230,18 @@ export default function CreateMonitor({ onCreated, onCancel }) {
                 <option value="private">Private (API access only)</option>
               </select>
             </div>
+          </div>
+
+          <div className="form-group">
+            <label className="form-label">Tags (optional)</label>
+            <input
+              className="form-input"
+              type="text"
+              placeholder="e.g. prod, api, critical"
+              value={form.tagsInput}
+              onChange={(e) => update('tagsInput', e.target.value)}
+            />
+            <div className="form-help">Comma-separated tags for grouping and filtering monitors</div>
           </div>
 
           <div className="form-group">
