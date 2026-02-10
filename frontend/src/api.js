@@ -101,3 +101,11 @@ export async function deleteNotification(id, key) {
     headers: { Authorization: `Bearer ${key}` },
   });
 }
+
+export async function updateNotification(id, data, key) {
+  return request(`/notifications/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+    headers: { Authorization: `Bearer ${key}` },
+  });
+}

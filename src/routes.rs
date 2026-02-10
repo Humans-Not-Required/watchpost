@@ -618,6 +618,46 @@ pub fn delete_notification(
     Ok(Json(serde_json::json!({"message": "Notification channel deleted"})))
 }
 
+#[derive(serde::Deserialize)]
+pub struct UpdateNotification {
+    pub is_enabled: Option<bool>,
+    pub name: Option<String>,
+}
+
+#[patch("/notifications/<id>", format = "json", data = "<input>")]
+pub fn update_notification(
+    id: &str,
+    input: Json<UpdateNotification>,
+    token: ManageToken,
+    db: &State<Arc<Db>>,
+) -> Result<Json<serde_json::Value>, (Status, Json<serde_json::Value>)> {
+    let conn = db.conn.lock().unwrap();
+
+    let monitor_id: String = conn.query_row(
+        "SELECT monitor_id FROM notification_channels WHERE id = ?1",
+        params![id],
+        |row| row.get(0),
+    ).map_err(|_| (Status::NotFound, Json(serde_json::json!({"error": "Notification not found", "code": "NOT_FOUND"}))))?;
+
+    verify_manage_key(&conn, &monitor_id, &token.0)?;
+
+    let data = input.into_inner();
+    if let Some(enabled) = data.is_enabled {
+        conn.execute(
+            "UPDATE notification_channels SET is_enabled = ?1 WHERE id = ?2",
+            params![enabled, id],
+        ).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
+    }
+    if let Some(name) = &data.name {
+        conn.execute(
+            "UPDATE notification_channels SET name = ?1 WHERE id = ?2",
+            params![name, id],
+        ).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
+    }
+
+    Ok(Json(serde_json::json!({"message": "Notification channel updated"})))
+}
+
 // ── llms.txt ──
 
 #[get("/llms.txt")]
@@ -668,6 +708,7 @@ POST /api/v1/incidents/:id/acknowledge — ack incident (auth)
 POST /api/v1/monitors/:id/notifications — add notification (auth)
 GET /api/v1/monitors/:id/notifications — list notifications (auth)
 DELETE /api/v1/notifications/:id — remove notification (auth)
+PATCH /api/v1/notifications/:id — enable/disable notification (auth)
 GET /api/v1/events — global SSE event stream
 GET /api/v1/monitors/:id/events — per-monitor SSE event stream
 GET /api/v1/status — public status page
@@ -889,6 +930,31 @@ const OPENAPI_JSON: &str = r##"{
         "security": [{ "manageKey": [] }],
         "responses": {
           "200": { "description": "Notification deleted" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "patch": {
+        "summary": "Enable or disable a notification channel",
+        "operationId": "updateNotification",
+        "tags": ["notifications"],
+        "security": [{ "manageKey": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "is_enabled": { "type": "boolean" },
+                  "name": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Notification channel updated" },
           "403": { "$ref": "#/components/responses/Forbidden" },
           "404": { "$ref": "#/components/responses/NotFound" }
         }

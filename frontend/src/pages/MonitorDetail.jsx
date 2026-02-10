@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { getMonitor, getHeartbeats, getUptime, getIncidents, pauseMonitor, resumeMonitor, deleteMonitor, updateMonitor, acknowledgeIncident, getNotifications, createNotification, deleteNotification } from '../api'
+import { getMonitor, getHeartbeats, getUptime, getIncidents, pauseMonitor, resumeMonitor, deleteMonitor, updateMonitor, acknowledgeIncident, getNotifications, createNotification, deleteNotification, updateNotification } from '../api'
 
 function formatTime(ts) {
   if (!ts) return 'Never';
@@ -46,6 +46,143 @@ function UptimeBar({ heartbeats }) {
       </div>
     </div>
   );
+}
+
+function ResponseTimeChart({ heartbeats }) {
+  // SVG line chart of response times - no external dependencies
+  const data = heartbeats
+    .filter(hb => hb.response_time_ms != null && hb.response_time_ms > 0)
+    .slice(0, 100)
+    .reverse(); // oldest first for left-to-right
+
+  if (data.length < 2) {
+    return <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', padding: '16px 0' }}>Not enough data for response time chart</div>;
+  }
+
+  const W = 800, H = 200;
+  const PAD = { top: 20, right: 20, bottom: 40, left: 55 };
+  const plotW = W - PAD.left - PAD.right;
+  const plotH = H - PAD.top - PAD.bottom;
+
+  const times = data.map(hb => hb.response_time_ms);
+  const minT = 0;
+  const maxT = Math.max(...times) * 1.15; // 15% headroom
+  const dates = data.map(hb => new Date(hb.checked_at + 'Z').getTime());
+  const minD = dates[0];
+  const maxD = dates[dates.length - 1];
+  const rangeD = maxD - minD || 1;
+
+  const x = (i) => PAD.left + (dates[i] - minD) / rangeD * plotW;
+  const y = (ms) => PAD.top + plotH - (ms / maxT) * plotH;
+
+  // Build SVG path
+  const pathD = data.map((hb, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(hb.response_time_ms).toFixed(1)}`).join(' ');
+
+  // Area fill path (path + close to bottom)
+  const areaD = pathD + ` L${x(data.length - 1).toFixed(1)},${(PAD.top + plotH).toFixed(1)} L${x(0).toFixed(1)},${(PAD.top + plotH).toFixed(1)} Z`;
+
+  // Y-axis ticks (4-5 ticks)
+  const yTicks = [];
+  const niceStep = niceNum(maxT / 4);
+  for (let v = 0; v <= maxT; v += niceStep) {
+    if (v > maxT) break;
+    yTicks.push(v);
+  }
+
+  // X-axis labels (3-5 labels)
+  const xLabels = [];
+  const labelCount = Math.min(5, data.length);
+  for (let i = 0; i < labelCount; i++) {
+    const idx = Math.round(i * (data.length - 1) / (labelCount - 1));
+    const d = new Date(data[idx].checked_at + 'Z');
+    xLabels.push({ x: x(idx), label: d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) });
+  }
+
+  // Avg line
+  const avg = times.reduce((a, b) => a + b, 0) / times.length;
+  const avgY = y(avg);
+
+  // Tooltip state is handled by CSS :hover on dots
+
+  return (
+    <div className="card" style={{ marginTop: 16, padding: '16px 12px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <h4 style={{ fontSize: '0.9rem', fontWeight: 600 }}>📈 Response Time</h4>
+        <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+          avg {Math.round(avg)}ms · last {data.length} checks
+        </span>
+      </div>
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        style={{ width: '100%', height: 'auto', display: 'block' }}
+      >
+        {/* Grid lines */}
+        {yTicks.map((v, i) => (
+          <g key={i}>
+            <line
+              x1={PAD.left} y1={y(v)} x2={W - PAD.right} y2={y(v)}
+              stroke="var(--border)" strokeWidth="1" strokeDasharray="4,4"
+            />
+            <text
+              x={PAD.left - 8} y={y(v) + 4}
+              textAnchor="end" fontSize="11" fill="var(--text-muted)"
+            >
+              {v >= 1000 ? `${(v / 1000).toFixed(1)}s` : `${Math.round(v)}ms`}
+            </text>
+          </g>
+        ))}
+
+        {/* X-axis labels */}
+        {xLabels.map((lbl, i) => (
+          <text
+            key={i}
+            x={lbl.x} y={H - 8}
+            textAnchor="middle" fontSize="11" fill="var(--text-muted)"
+          >
+            {lbl.label}
+          </text>
+        ))}
+
+        {/* Avg line */}
+        <line
+          x1={PAD.left} y1={avgY} x2={W - PAD.right} y2={avgY}
+          stroke="var(--accent)" strokeWidth="1" strokeDasharray="6,4" opacity="0.5"
+        />
+
+        {/* Area fill */}
+        <path d={areaD} fill="var(--accent)" opacity="0.08" />
+
+        {/* Line */}
+        <path d={pathD} fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+
+        {/* Data points */}
+        {data.map((hb, i) => (
+          <g key={i}>
+            <circle
+              cx={x(i)} cy={y(hb.response_time_ms)} r="3.5"
+              fill={hb.status === 'up' ? 'var(--accent)' : 'var(--danger)'}
+              stroke="var(--bg-card)" strokeWidth="1.5"
+              style={{ cursor: 'pointer' }}
+            >
+              <title>{`${hb.response_time_ms}ms — ${new Date(hb.checked_at + 'Z').toLocaleString()}`}</title>
+            </circle>
+          </g>
+        ))}
+      </svg>
+    </div>
+  );
+}
+
+function niceNum(range) {
+  // Find a "nice" step size for axis ticks
+  const exp = Math.floor(Math.log10(range));
+  const frac = range / Math.pow(10, exp);
+  let nice;
+  if (frac <= 1.5) nice = 1;
+  else if (frac <= 3) nice = 2;
+  else if (frac <= 7) nice = 5;
+  else nice = 10;
+  return nice * Math.pow(10, exp);
 }
 
 function UptimeStats({ stats }) {
@@ -231,6 +368,7 @@ function NotificationManager({ monitorId, manageKey }) {
   const [newUrl, setNewUrl] = useState('');
   const [adding, setAdding] = useState(false);
   const [deleting, setDeleting] = useState(null);
+  const [toggling, setToggling] = useState(null);
   const [error, setError] = useState(null);
 
   const loadChannels = async () => {
@@ -267,6 +405,18 @@ function NotificationManager({ monitorId, manageKey }) {
       setError(err.message);
     } finally {
       setAdding(false);
+    }
+  };
+
+  const handleToggle = async (channelId, currentEnabled) => {
+    setToggling(channelId);
+    try {
+      await updateNotification(channelId, { is_enabled: !currentEnabled }, manageKey);
+      await loadChannels();
+    } catch (err) {
+      alert(`Failed to toggle: ${err.message}`);
+    } finally {
+      setToggling(null);
     }
   };
 
@@ -311,9 +461,15 @@ function NotificationManager({ monitorId, manageKey }) {
               </div>
             </div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <span className={`badge ${ch.is_enabled ? 'up' : 'paused'}`} style={{ fontSize: '0.7rem' }}>
-                {ch.is_enabled ? 'Active' : 'Disabled'}
-              </span>
+              <button
+                className={`btn ${ch.is_enabled ? 'btn-secondary' : 'btn-primary'}`}
+                style={{ fontSize: '0.7rem', padding: '4px 10px' }}
+                disabled={toggling === ch.id}
+                onClick={() => handleToggle(ch.id, ch.is_enabled)}
+                title={ch.is_enabled ? 'Disable notifications' : 'Enable notifications'}
+              >
+                {toggling === ch.id ? '...' : ch.is_enabled ? '⏸ Disable' : '▶ Enable'}
+              </button>
               <button
                 className="btn btn-danger"
                 style={{ fontSize: '0.75rem', padding: '4px 10px' }}
@@ -518,7 +674,7 @@ export default function MonitorDetail({ id, manageKey, onBack }) {
       try {
         const [m, hb, u, inc] = await Promise.all([
           getMonitor(id),
-          getHeartbeats(id, 60),
+          getHeartbeats(id, 100),
           getUptime(id),
           getIncidents(id),
         ]);
@@ -587,7 +743,7 @@ export default function MonitorDetail({ id, manageKey, onBack }) {
     try {
       const [m, hb, u, inc] = await Promise.all([
         getMonitor(id),
-        getHeartbeats(id, 60),
+        getHeartbeats(id, 100),
         getUptime(id),
         getIncidents(id),
       ]);
@@ -774,6 +930,7 @@ export default function MonitorDetail({ id, manageKey, onBack }) {
       {tab === 'overview' && (
         <div>
           <UptimeStats stats={uptime} />
+          <ResponseTimeChart heartbeats={heartbeats} />
           {uptime?.avg_response_ms_24h != null && (
             <div style={{ textAlign: 'center', marginTop: 12, color: 'var(--text-muted)', fontSize: '0.85rem' }}>
               Avg response time (24h): <strong style={{ color: 'var(--text-primary)' }}>{Math.round(uptime.avg_response_ms_24h)}ms</strong>

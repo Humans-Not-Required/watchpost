@@ -64,6 +64,7 @@ fn rocket() -> _ {
             routes::create_notification,
             routes::list_notifications,
             routes::delete_notification,
+            routes::update_notification,
             routes::llms_txt,
             routes::openapi_spec,
             routes::global_events,

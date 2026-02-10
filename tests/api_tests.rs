@@ -32,6 +32,7 @@ fn test_client() -> Client {
             watchpost::routes::create_notification,
             watchpost::routes::list_notifications,
             watchpost::routes::delete_notification,
+            watchpost::routes::update_notification,
             watchpost::routes::llms_txt,
             watchpost::routes::openapi_spec,
             watchpost::routes::global_events,
@@ -636,4 +637,77 @@ fn test_heartbeat_retention_custom_days() {
     let conn = db.conn.lock().unwrap();
     let count: i64 = conn.query_row("SELECT COUNT(*) FROM heartbeats", [], |r| r.get(0)).unwrap();
     assert_eq!(count, 1, "Only the 5-day-old heartbeat should remain");
+}
+
+#[test]
+fn test_notification_toggle() {
+    let client = test_client();
+    let (id, key) = create_test_monitor(&client);
+
+    // Create a notification channel
+    let resp = client.post(format!("/api/v1/monitors/{}/notifications", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"name": "Test Hook", "channel_type": "webhook", "config": {"url": "https://example.com/hook"}}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let notif_id = body["id"].as_str().unwrap().to_string();
+
+    // Verify it's enabled by default
+    assert_eq!(body["is_enabled"].as_bool(), Some(true));
+
+    // Disable it
+    let resp = client.patch(format!("/api/v1/notifications/{}", notif_id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"is_enabled": false}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+
+    // List and verify it's disabled
+    let resp = client.get(format!("/api/v1/monitors/{}/notifications", id))
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .dispatch();
+    let channels: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert_eq!(channels.len(), 1);
+    assert_eq!(channels[0]["is_enabled"].as_bool(), Some(false));
+
+    // Re-enable it
+    let resp = client.patch(format!("/api/v1/notifications/{}", notif_id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"is_enabled": true}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+
+    // List and verify it's enabled again
+    let resp = client.get(format!("/api/v1/monitors/{}/notifications", id))
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .dispatch();
+    let channels: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert_eq!(channels[0]["is_enabled"].as_bool(), Some(true));
+}
+
+#[test]
+fn test_notification_toggle_wrong_key() {
+    let client = test_client();
+    let (id, key) = create_test_monitor(&client);
+
+    // Create a notification channel
+    let resp = client.post(format!("/api/v1/monitors/{}/notifications", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"name": "Hook", "channel_type": "webhook", "config": {"url": "https://example.com"}}"#)
+        .dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let notif_id = body["id"].as_str().unwrap().to_string();
+
+    // Try to toggle with wrong key
+    let resp = client.patch(format!("/api/v1/notifications/{}", notif_id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", "Bearer wrong_key"))
+        .body(r#"{"is_enabled": false}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Forbidden);
 }
