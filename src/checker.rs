@@ -6,6 +6,25 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::time;
 
+/// Heartbeat retention: delete heartbeats older than this many days.
+/// Configurable via HEARTBEAT_RETENTION_DAYS env var. Default: 90.
+fn retention_days() -> u32 {
+    std::env::var("HEARTBEAT_RETENTION_DAYS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(90)
+}
+
+/// Prune old heartbeats. Returns the number of rows deleted.
+pub fn prune_heartbeats(db: &Db, days: u32) -> usize {
+    let conn = db.conn.lock().unwrap();
+    conn.execute(
+        "DELETE FROM heartbeats WHERE checked_at < datetime('now', ?1)",
+        params![format!("-{} days", days)],
+    )
+    .unwrap_or(0)
+}
+
 /// Background check scheduler. Runs in a tokio task.
 pub async fn run_checker(db: Arc<Db>, broadcaster: Arc<EventBroadcaster>, shutdown: rocket::Shutdown) {
     // Wait 30s for server to warm up
@@ -20,7 +39,19 @@ pub async fn run_checker(db: Arc<Db>, broadcaster: Arc<EventBroadcaster>, shutdo
         .build()
         .expect("Failed to build HTTP client");
 
+    // Track last retention run so we only prune once per hour
+    let mut last_retention = std::time::Instant::now() - Duration::from_secs(3600);
+
     loop {
+        // Run heartbeat retention every hour
+        if last_retention.elapsed() >= Duration::from_secs(3600) {
+            let days = retention_days();
+            let deleted = prune_heartbeats(&db, days);
+            if deleted > 0 {
+                println!("🗑️  Retention: pruned {} heartbeats older than {} days", deleted, days);
+            }
+            last_retention = std::time::Instant::now();
+        }
         // Find the next monitor due for a check
         let monitor = {
             let conn = db.conn.lock().unwrap();

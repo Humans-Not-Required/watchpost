@@ -1,5 +1,6 @@
 use rocket::http::{ContentType, Status};
 use rocket::local::blocking::Client;
+use rusqlite::params;
 use std::sync::Arc;
 
 fn test_client() -> Client {
@@ -534,4 +535,105 @@ fn test_cascade_delete() {
     // Monitor should be gone
     let resp = client.get(format!("/api/v1/monitors/{}", id)).dispatch();
     assert_eq!(resp.status(), Status::NotFound);
+}
+
+#[test]
+fn test_heartbeat_retention_prunes_old() {
+    let db_path = format!("/tmp/watchpost_test_{}.db", uuid::Uuid::new_v4());
+    let db = watchpost::db::Db::new(&db_path).expect("DB init failed");
+
+    let conn = db.conn.lock().unwrap();
+
+    // Create a monitor
+    let monitor_id = uuid::Uuid::new_v4().to_string();
+    conn.execute(
+        "INSERT INTO monitors (id, name, url, manage_key_hash) VALUES (?1, 'Test', 'https://example.com', 'hash')",
+        params![monitor_id],
+    ).unwrap();
+
+    // Insert an old heartbeat (100 days ago)
+    conn.execute(
+        "INSERT INTO heartbeats (id, monitor_id, status, response_time_ms, checked_at, seq) VALUES (?1, ?2, 'up', 100, datetime('now', '-100 days'), 1)",
+        params![uuid::Uuid::new_v4().to_string(), monitor_id],
+    ).unwrap();
+
+    // Insert a recent heartbeat (1 day ago)
+    conn.execute(
+        "INSERT INTO heartbeats (id, monitor_id, status, response_time_ms, checked_at, seq) VALUES (?1, ?2, 'up', 50, datetime('now', '-1 day'), 2)",
+        params![uuid::Uuid::new_v4().to_string(), monitor_id],
+    ).unwrap();
+
+    let count_before: i64 = conn.query_row("SELECT COUNT(*) FROM heartbeats", [], |r| r.get(0)).unwrap();
+    assert_eq!(count_before, 2);
+    drop(conn);
+
+    // Prune with 90-day retention
+    let deleted = watchpost::checker::prune_heartbeats(&db, 90);
+    assert_eq!(deleted, 1, "Should prune exactly 1 old heartbeat");
+
+    let conn = db.conn.lock().unwrap();
+    let count_after: i64 = conn.query_row("SELECT COUNT(*) FROM heartbeats", [], |r| r.get(0)).unwrap();
+    assert_eq!(count_after, 1, "Should keep 1 recent heartbeat");
+}
+
+#[test]
+fn test_heartbeat_retention_keeps_recent() {
+    let db_path = format!("/tmp/watchpost_test_{}.db", uuid::Uuid::new_v4());
+    let db = watchpost::db::Db::new(&db_path).expect("DB init failed");
+
+    let conn = db.conn.lock().unwrap();
+
+    let monitor_id = uuid::Uuid::new_v4().to_string();
+    conn.execute(
+        "INSERT INTO monitors (id, name, url, manage_key_hash) VALUES (?1, 'Test', 'https://example.com', 'hash')",
+        params![monitor_id],
+    ).unwrap();
+
+    // Insert 3 recent heartbeats
+    for i in 0..3 {
+        conn.execute(
+            "INSERT INTO heartbeats (id, monitor_id, status, response_time_ms, checked_at, seq) VALUES (?1, ?2, 'up', 50, datetime('now', ?3), ?4)",
+            params![uuid::Uuid::new_v4().to_string(), monitor_id, format!("-{} days", i), i + 1],
+        ).unwrap();
+    }
+    drop(conn);
+
+    // Prune — nothing should be deleted
+    let deleted = watchpost::checker::prune_heartbeats(&db, 90);
+    assert_eq!(deleted, 0, "Should not prune any recent heartbeats");
+}
+
+#[test]
+fn test_heartbeat_retention_custom_days() {
+    let db_path = format!("/tmp/watchpost_test_{}.db", uuid::Uuid::new_v4());
+    let db = watchpost::db::Db::new(&db_path).expect("DB init failed");
+
+    let conn = db.conn.lock().unwrap();
+
+    let monitor_id = uuid::Uuid::new_v4().to_string();
+    conn.execute(
+        "INSERT INTO monitors (id, name, url, manage_key_hash) VALUES (?1, 'Test', 'https://example.com', 'hash')",
+        params![monitor_id],
+    ).unwrap();
+
+    // Insert heartbeats at 5, 15, 25, 35 days ago
+    for (i, days) in [5, 15, 25, 35].iter().enumerate() {
+        conn.execute(
+            "INSERT INTO heartbeats (id, monitor_id, status, response_time_ms, checked_at, seq) VALUES (?1, ?2, 'up', 50, datetime('now', ?3), ?4)",
+            params![uuid::Uuid::new_v4().to_string(), monitor_id, format!("-{} days", days), i + 1],
+        ).unwrap();
+    }
+    drop(conn);
+
+    // Prune with 30-day retention — should delete the 35-day-old one
+    let deleted = watchpost::checker::prune_heartbeats(&db, 30);
+    assert_eq!(deleted, 1);
+
+    // Prune again with 10-day retention — should delete 15 and 25 day old ones
+    let deleted = watchpost::checker::prune_heartbeats(&db, 10);
+    assert_eq!(deleted, 2);
+
+    let conn = db.conn.lock().unwrap();
+    let count: i64 = conn.query_row("SELECT COUNT(*) FROM heartbeats", [], |r| r.get(0)).unwrap();
+    assert_eq!(count, 1, "Only the 5-day-old heartbeat should remain");
 }

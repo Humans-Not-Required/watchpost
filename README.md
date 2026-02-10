@@ -169,6 +169,8 @@ Environment variables:
 | ROCKET_PORT | 8000 | Server port |
 | DATABASE_PATH | watchpost.db | SQLite database path |
 | STATIC_DIR | frontend/dist | Frontend static files |
+| MONITOR_RATE_LIMIT | 10 | Max monitor creates per hour per IP |
+| HEARTBEAT_RETENTION_DAYS | 90 | Auto-prune heartbeats older than N days |
 
 ## Tech Stack
 
