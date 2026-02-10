@@ -67,10 +67,16 @@
 
 ### What's Next (Priority Order)
 
-1. **DNS for watch.hnrstage.xyz** — Needs Cloudflare DNS A record pointing to staging server (Jordan action, or check if wildcard exists)
-2. **Polish frontend** — Error states, loading skeleton, manage key integration (pass ?key= for edit operations)
-3. **Add watchpost to admin links page** — Update hnrstage.xyz/mylinks (file at ~/domains/hnrstage.xyz/public/mylinks.html on staging)
-4. **Heartbeat retention** — Background task to prune heartbeats older than 90 days
+1. **Heartbeat retention** — Background task to prune heartbeats older than 90 days
+2. **Loading skeletons** — Replace spinner with skeleton screens on status page and monitor detail
+3. **Edit monitor settings** — Add inline editing of monitor config (name, URL, interval, etc.) when manage key present
+4. **Notification channel management UI** — Add/remove webhook notification channels from the frontend
+
+### ✅ Completed (most recent)
+
+- **DNS for watch.hnrstage.xyz** — Cloudflare wildcard resolves, HTTPS working
+- **Manage key integration** (commit 6ac08cf) — Pause/Resume, Delete (with confirmation), Incident Acknowledgement from UI when `?key=` present
+- **Admin links page** — Already had Watchpost entry
 
 ### ⚠️ Gotchas
 
