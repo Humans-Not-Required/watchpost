@@ -63,16 +63,17 @@
   - Monotonic seq column with backfill migration
   - Default (no cursor) = newest first; with cursor = forward scan (ASC)
   - OpenAPI spec updated
-- Test suite: **45 tests passing** (`cargo test -- --test-threads=1`) — includes 4 response time alert tests + 6 tag tests + 3 search/filter tests + 3 heartbeat retention tests + 2 notification toggle tests
+- Test suite: **52 tests passing** (`cargo test -- --test-threads=1`) — includes 4 response time alert tests + 6 tag tests + 3 search/filter tests + 3 heartbeat retention tests + 2 notification toggle tests
 
 ### What's Next (Priority Order)
 
-1. **Bulk monitor management** — Import/export monitors, batch operations
-2. **Maintenance windows** — Scheduled downtime suppression
-3. **Multi-region checks** — Check from multiple locations, consensus-based status
+1. **Maintenance windows** — Scheduled downtime suppression
+2. **Multi-region checks** — Check from multiple locations, consensus-based status
+3. **Frontend: bulk import UI** — Upload JSON or paste config to bulk-create monitors from the web UI
 
 ### ✅ Completed (most recent)
 
+- **Bulk monitor management** (commit 6677b11) — `POST /api/v1/monitors/bulk` creates up to 50 monitors in one request with partial success handling (some may fail while others succeed, each gets its own manage_key). `GET /api/v1/monitors/:id/export` exports config in importable format (requires auth). Full export→reimport roundtrip tested. OpenAPI spec + llms.txt updated. 7 new tests (52 total).
 - **Response time alerts** (commit becb703) — Configurable per-monitor `response_time_threshold_ms` (nullable, min 100ms). Replaces hardcoded 5000ms degraded logic. When response time exceeds threshold, status set to "degraded" with descriptive error message. Fires `monitor.degraded` / `monitor.recovered` webhook + SSE events on transitions. Custom serde double-option deserializer for proper null handling (absent vs null vs value). Frontend: threshold field on create + edit forms, "RT Alert" displayed in monitor config. OpenAPI spec + llms.txt updated. 4 new tests (45 total).
 - **Monitor tags** (commit ad6f94e) — Backend: `tags` column, create/update with tags array, `?tag=` filter on GET /monitors and GET /status, `GET /tags` endpoint (unique tags from public monitors). Frontend: tag filter chips on status page, tag badges on monitor cards (clickable to filter), tags input on create/edit forms. OpenAPI + llms.txt updated. 6 new tests (41 total).
 - **Monitor search/filter** (commit 201977e) — Backend: `?search=` and `?status=` query params on GET /monitors and GET /status. Frontend: search bar + status filter chips with live counts. 3 new tests (35 total).
