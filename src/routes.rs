@@ -1358,10 +1358,21 @@ POST /api/v1/monitors/:id/maintenance — create maintenance window (auth)
 GET /api/v1/monitors/:id/maintenance — list maintenance windows
 DELETE /api/v1/maintenance/:id — delete maintenance window (auth)
 GET /api/v1/tags — list all unique tags (public monitors)
+GET /api/v1/monitors/:id/badge/uptime — SVG uptime badge (?period=24h|7d|30d|90d, ?label=)
+GET /api/v1/monitors/:id/badge/status — SVG status badge (?label=)
 GET /api/v1/events — global SSE event stream
 GET /api/v1/monitors/:id/events — per-monitor SSE event stream
 GET /api/v1/status — public status page (supports ?tag= filter)
 GET /api/v1/health — service health
+
+## Status Badges (SVG)
+GET /api/v1/monitors/:id/badge/uptime — SVG uptime badge (shields.io style)
+  ?period=24h|7d|30d|90d (default: 24h)
+  ?label=custom+label (default: "uptime 24h")
+  Returns image/svg+xml — embed in README: ![uptime](https://watch.example.com/api/v1/monitors/:id/badge/uptime?period=7d)
+GET /api/v1/monitors/:id/badge/status — SVG current status badge
+  ?label=custom+label (default: "status")
+  Color-coded: green=up, yellow=degraded, grey=paused/maintenance/unknown, red=down
 
 ## Maintenance Windows
 Schedule downtime so checks still run but incidents are suppressed.
@@ -1834,6 +1845,39 @@ const OPENAPI_JSON: &str = r##"{
         }
       }
     },
+    "/monitors/{id}/badge/uptime": {
+      "parameters": [
+        { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+        { "name": "period", "in": "query", "schema": { "type": "string", "enum": ["24h", "7d", "30d", "90d"], "default": "24h" }, "description": "Time period for uptime calculation" },
+        { "name": "label", "in": "query", "schema": { "type": "string" }, "description": "Custom badge label (default: uptime {period})" }
+      ],
+      "get": {
+        "summary": "SVG uptime badge (shields.io style)",
+        "operationId": "monitorUptimeBadge",
+        "tags": ["badges"],
+        "description": "Returns an SVG badge showing the monitor uptime percentage. Embed in README markdown: ![uptime](url)",
+        "responses": {
+          "200": { "description": "SVG badge image", "content": { "image/svg+xml": { "schema": { "type": "string" } } } },
+          "404": { "$ref": "#/components/responses/NotFoundError" }
+        }
+      }
+    },
+    "/monitors/{id}/badge/status": {
+      "parameters": [
+        { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+        { "name": "label", "in": "query", "schema": { "type": "string" }, "description": "Custom badge label (default: status)" }
+      ],
+      "get": {
+        "summary": "SVG current status badge",
+        "operationId": "monitorStatusBadge",
+        "tags": ["badges"],
+        "description": "Returns an SVG badge showing the monitor current status (up/down/degraded/unknown). Color-coded.",
+        "responses": {
+          "200": { "description": "SVG badge image", "content": { "image/svg+xml": { "schema": { "type": "string" } } } },
+          "404": { "$ref": "#/components/responses/NotFoundError" }
+        }
+      }
+    },
     "/monitors/{id}/maintenance": {
       "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
       "post": {
@@ -2161,6 +2205,139 @@ const OPENAPI_JSON: &str = r##"{
     }
   }
 }"##;
+
+// ── Status Badges ──
+
+/// Generate a shields.io-style SVG badge
+fn render_badge(label: &str, value: &str, color: &str) -> String {
+    // Approximate text widths (6.5px per char for 11px Verdana)
+    let label_width = (label.len() as f64 * 6.5 + 10.0) as u32;
+    let value_width = (value.len() as f64 * 6.5 + 10.0) as u32;
+    let total_width = label_width + value_width;
+    let lx = ((label_width as f64 / 2.0 + 1.0) * 10.0) as u32;
+    let vx = ((label_width as f64 + value_width as f64 / 2.0 - 1.0) * 10.0) as u32;
+    let lt = ((label_width as f64 - 10.0) * 10.0) as u32;
+    let vt = ((value_width as f64 - 10.0) * 10.0) as u32;
+
+    let mut s = String::with_capacity(1200);
+    s.push_str(&format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{}\" height=\"20\" role=\"img\" aria-label=\"{}: {}\">",
+        total_width, label, value
+    ));
+    s.push_str(&format!("<title>{}: {}</title>", label, value));
+    s.push_str("<linearGradient id=\"s\" x2=\"0\" y2=\"100%\"><stop offset=\"0\" stop-color=\"#bbb\" stop-opacity=\".1\"/><stop offset=\"1\" stop-opacity=\".1\"/></linearGradient>");
+    s.push_str(&format!(
+        "<clipPath id=\"r\"><rect width=\"{}\" height=\"20\" rx=\"3\" fill=\"#fff\"/></clipPath>",
+        total_width
+    ));
+    s.push_str(&format!(
+        "<g clip-path=\"url(#r)\"><rect width=\"{}\" height=\"20\" fill=\"#555\"/><rect x=\"{}\" width=\"{}\" height=\"20\" fill=\"{}\"/><rect width=\"{}\" height=\"20\" fill=\"url(#s)\"/></g>",
+        label_width, label_width, value_width, color, total_width
+    ));
+    s.push_str("<g fill=\"#fff\" text-anchor=\"middle\" font-family=\"Verdana,Geneva,DejaVu Sans,sans-serif\" text-rendering=\"geometricPrecision\" font-size=\"11\">");
+    s.push_str(&format!(
+        "<text aria-hidden=\"true\" x=\"{}\" y=\"150\" fill=\"#010101\" fill-opacity=\".3\" transform=\"scale(.1)\" textLength=\"{}\">{}</text>",
+        lx, lt, label
+    ));
+    s.push_str(&format!(
+        "<text x=\"{}\" y=\"140\" transform=\"scale(.1)\" fill=\"#fff\" textLength=\"{}\">{}</text>",
+        lx, lt, label
+    ));
+    s.push_str(&format!(
+        "<text aria-hidden=\"true\" x=\"{}\" y=\"150\" fill=\"#010101\" fill-opacity=\".3\" transform=\"scale(.1)\" textLength=\"{}\">{}</text>",
+        vx, vt, value
+    ));
+    s.push_str(&format!(
+        "<text x=\"{}\" y=\"140\" transform=\"scale(.1)\" fill=\"#fff\" textLength=\"{}\">{}</text>",
+        vx, vt, value
+    ));
+    s.push_str("</g></svg>");
+    s
+}
+
+fn uptime_color(pct: f64) -> &'static str {
+    if pct >= 99.9 { "#4c1" }        // bright green
+    else if pct >= 99.0 { "#97ca00" } // green
+    else if pct >= 95.0 { "#dfb317" } // yellow
+    else if pct >= 90.0 { "#fe7d37" } // orange
+    else { "#e05d44" }                 // red
+}
+
+fn status_color(status: &str) -> &'static str {
+    match status {
+        "up" => "#4c1",
+        "degraded" => "#dfb317",
+        "maintenance" => "#9f9f9f",
+        "paused" => "#9f9f9f",
+        "down" => "#e05d44",
+        _ => "#9f9f9f", // unknown
+    }
+}
+
+/// Badge showing uptime percentage for a monitor.
+/// Query params: ?period=24h|7d|30d|90d (default 24h), ?label=custom+label
+#[get("/monitors/<id>/badge/uptime?<period>&<label>")]
+pub fn monitor_uptime_badge(
+    id: &str,
+    period: Option<&str>,
+    label: Option<&str>,
+    db: &State<Arc<Db>>,
+) -> Result<(ContentType, String), (Status, Json<serde_json::Value>)> {
+    let conn = db.conn.lock().unwrap();
+    get_monitor_from_db(&conn, id)
+        .map_err(|_| (Status::NotFound, Json(serde_json::json!({"error": "Monitor not found", "code": "NOT_FOUND"}))))?;
+
+    let hours = match period.unwrap_or("24h") {
+        "7d" => 168,
+        "30d" => 720,
+        "90d" => 2160,
+        _ => 24, // default 24h
+    };
+
+    let total: u32 = conn.query_row(
+        "SELECT COUNT(*) FROM heartbeats WHERE monitor_id = ?1 AND checked_at > datetime('now', ?2)",
+        params![id, format!("-{} hours", hours)],
+        |row| row.get(0),
+    ).unwrap_or(0);
+
+    let up: u32 = conn.query_row(
+        "SELECT COUNT(*) FROM heartbeats WHERE monitor_id = ?1 AND status = 'up' AND checked_at > datetime('now', ?2)",
+        params![id, format!("-{} hours", hours)],
+        |row| row.get(0),
+    ).unwrap_or(0);
+
+    let pct = if total > 0 { (up as f64 / total as f64) * 100.0 } else { 100.0 };
+    let value = format!("{:.1}%", pct);
+    let color = uptime_color(pct);
+    let period_str = period.unwrap_or("24h");
+    let default_label = format!("uptime {}", period_str);
+    let badge_label = label.unwrap_or(&default_label);
+
+    let svg = render_badge(badge_label, &value, color);
+    let ct = ContentType::new("image", "svg+xml");
+    Ok((ct, svg))
+}
+
+/// Badge showing current status for a monitor.
+/// Query param: ?label=custom+label
+#[get("/monitors/<id>/badge/status?<label>")]
+pub fn monitor_status_badge(
+    id: &str,
+    label: Option<&str>,
+    db: &State<Arc<Db>>,
+) -> Result<(ContentType, String), (Status, Json<serde_json::Value>)> {
+    let conn = db.conn.lock().unwrap();
+    let monitor = get_monitor_from_db(&conn, id)
+        .map_err(|_| (Status::NotFound, Json(serde_json::json!({"error": "Monitor not found", "code": "NOT_FOUND"}))))?;
+
+    let status = &monitor.current_status;
+    let color = status_color(status);
+    let badge_label = label.unwrap_or("status");
+
+    let svg = render_badge(badge_label, status, color);
+    let ct = ContentType::new("image", "svg+xml");
+    Ok((ct, svg))
+}
 
 // ── SSE Event Streams ──
 

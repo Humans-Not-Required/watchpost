@@ -44,6 +44,8 @@ fn test_client() -> Client {
             watchpost::routes::delete_maintenance_window,
             watchpost::routes::llms_txt,
             watchpost::routes::openapi_spec,
+            watchpost::routes::monitor_uptime_badge,
+            watchpost::routes::monitor_status_badge,
             watchpost::routes::global_events,
             watchpost::routes::monitor_events,
         ])
@@ -1581,4 +1583,101 @@ fn test_uptime_history_with_heartbeats() {
     let days = body.as_array().unwrap();
     assert!(!days.is_empty());
     assert_eq!(days[0]["total_checks"], 2);
+}
+
+// ── Badge Tests ──
+
+#[test]
+fn test_uptime_badge_default() {
+    let client = test_client();
+    let (id, _key) = create_test_monitor(&client);
+    let resp = client.get(format!("/api/v1/monitors/{}/badge/uptime", id)).dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let ct = resp.content_type().unwrap();
+    assert_eq!(ct.top().as_str(), "image");
+    assert_eq!(ct.sub().as_str(), "svg+xml");
+    let body = resp.into_string().unwrap();
+    assert!(body.contains("<svg"));
+    assert!(body.contains("100.0%")); // no heartbeats = 100%
+    assert!(body.contains("uptime 24h"));
+}
+
+#[test]
+fn test_uptime_badge_with_period() {
+    let client = test_client();
+    let (id, _key) = create_test_monitor(&client);
+    let resp = client.get(format!("/api/v1/monitors/{}/badge/uptime?period=7d", id)).dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body = resp.into_string().unwrap();
+    assert!(body.contains("uptime 7d"));
+}
+
+#[test]
+fn test_uptime_badge_custom_label() {
+    let client = test_client();
+    let (id, _key) = create_test_monitor(&client);
+    let resp = client.get(format!("/api/v1/monitors/{}/badge/uptime?label=my+api", id)).dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body = resp.into_string().unwrap();
+    assert!(body.contains("my api"));
+}
+
+#[test]
+fn test_uptime_badge_with_heartbeats() {
+    let client = test_client();
+    let (id, _key) = create_test_monitor(&client);
+
+    // Insert heartbeats: 3 up, 1 down = 75% uptime
+    {
+        let db_path = std::env::var("DATABASE_PATH").unwrap();
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        for status in &["up", "up", "up", "down"] {
+            conn.execute(
+                "INSERT INTO heartbeats (id, monitor_id, status, response_time_ms, status_code, checked_at, seq)
+                 VALUES (?1, ?2, ?3, 100, 200, datetime('now'), (SELECT COALESCE(MAX(seq),0)+1 FROM heartbeats))",
+                params![uuid::Uuid::new_v4().to_string(), id, status],
+            ).unwrap();
+        }
+    }
+
+    let resp = client.get(format!("/api/v1/monitors/{}/badge/uptime", id)).dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body = resp.into_string().unwrap();
+    assert!(body.contains("75.0%"));
+    // 75% should be red (<90%)
+    assert!(body.contains("#e05d44"));
+}
+
+#[test]
+fn test_status_badge() {
+    let client = test_client();
+    let (id, _key) = create_test_monitor(&client);
+    let resp = client.get(format!("/api/v1/monitors/{}/badge/status", id)).dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let ct = resp.content_type().unwrap();
+    assert_eq!(ct.top().as_str(), "image");
+    assert_eq!(ct.sub().as_str(), "svg+xml");
+    let body = resp.into_string().unwrap();
+    assert!(body.contains("<svg"));
+    assert!(body.contains("unknown")); // never checked
+    assert!(body.contains("status"));
+}
+
+#[test]
+fn test_status_badge_custom_label() {
+    let client = test_client();
+    let (id, _key) = create_test_monitor(&client);
+    let resp = client.get(format!("/api/v1/monitors/{}/badge/status?label=health", id)).dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body = resp.into_string().unwrap();
+    assert!(body.contains("health"));
+}
+
+#[test]
+fn test_badge_not_found() {
+    let client = test_client();
+    let resp = client.get("/api/v1/monitors/00000000-0000-0000-0000-000000000000/badge/uptime").dispatch();
+    assert_eq!(resp.status(), Status::NotFound);
+    let resp = client.get("/api/v1/monitors/00000000-0000-0000-0000-000000000000/badge/status").dispatch();
+    assert_eq!(resp.status(), Status::NotFound);
 }

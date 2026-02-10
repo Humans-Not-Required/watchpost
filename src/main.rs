@@ -76,6 +76,8 @@ fn rocket() -> _ {
             routes::delete_maintenance_window,
             routes::llms_txt,
             routes::openapi_spec,
+            routes::monitor_uptime_badge,
+            routes::monitor_status_badge,
             routes::global_events,
             routes::monitor_events,
         ])

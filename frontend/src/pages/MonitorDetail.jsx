@@ -1156,13 +1156,13 @@ export default function MonitorDetail({ id, manageKey, onBack }) {
 
       {/* Tabs */}
       <div style={{ display: 'flex', gap: 4, margin: '24px 0 16px', borderBottom: '1px solid var(--border)', paddingBottom: 8, flexWrap: 'wrap' }}>
-        {['overview', 'heartbeats', 'incidents', 'maintenance', ...(manageKey ? ['notifications'] : [])].map((t) => (
+        {['overview', 'heartbeats', 'incidents', 'maintenance', 'badges', ...(manageKey ? ['notifications'] : [])].map((t) => (
           <button
             key={t}
             className={`nav-btn ${tab === t ? 'active' : ''}`}
             onClick={() => setTab(t)}
           >
-            {t === 'overview' ? '📊 Overview' : t === 'heartbeats' ? '💓 Heartbeats' : t === 'incidents' ? `⚡ Incidents (${incidents.length})` : t === 'maintenance' ? '🔧 Maintenance' : '🔔 Notifications'}
+            {t === 'overview' ? '📊 Overview' : t === 'heartbeats' ? '💓 Heartbeats' : t === 'incidents' ? `⚡ Incidents (${incidents.length})` : t === 'maintenance' ? '🔧 Maintenance' : t === 'badges' ? '🏷️ Badges' : '🔔 Notifications'}
           </button>
         ))}
       </div>
@@ -1185,7 +1185,126 @@ export default function MonitorDetail({ id, manageKey, onBack }) {
 
       {tab === 'maintenance' && <MaintenanceManager monitorId={id} manageKey={manageKey} />}
 
+      {tab === 'badges' && <BadgeEmbed monitorId={id} />}
+
       {tab === 'notifications' && manageKey && <NotificationManager monitorId={id} manageKey={manageKey} />}
+    </div>
+  );
+}
+
+function BadgeEmbed({ monitorId }) {
+  const [period, setPeriod] = useState('24h');
+  const [copied, setCopied] = useState(null);
+  const base = window.location.origin;
+
+  const uptimeUrl = `${base}/api/v1/monitors/${monitorId}/badge/uptime?period=${period}`;
+  const statusUrl = `${base}/api/v1/monitors/${monitorId}/badge/status`;
+
+  const uptimeMd = `![uptime](${uptimeUrl})`;
+  const statusMd = `![status](${statusUrl})`;
+  const uptimeHtml = `<img src="${uptimeUrl}" alt="uptime">`;
+  const statusHtml = `<img src="${statusUrl}" alt="status">`;
+
+  const copy = (text, key) => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(key);
+      setTimeout(() => setCopied(null), 2000);
+    });
+  };
+
+  const codeStyle = {
+    background: 'var(--bg-secondary)',
+    padding: '8px 12px',
+    borderRadius: 6,
+    fontSize: '0.85rem',
+    fontFamily: 'monospace',
+    wordBreak: 'break-all',
+    display: 'block',
+    marginBottom: 8,
+    color: 'var(--text-primary)',
+    border: '1px solid var(--border)',
+  };
+
+  const btnStyle = {
+    fontSize: '0.8rem',
+    padding: '4px 10px',
+    cursor: 'pointer',
+    background: 'var(--bg-secondary)',
+    color: 'var(--text-primary)',
+    border: '1px solid var(--border)',
+    borderRadius: 4,
+  };
+
+  return (
+    <div>
+      <h3 style={{ margin: '0 0 16px' }}>Embeddable Badges</h3>
+      <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: 20 }}>
+        Add these badges to your README, status page, or dashboard.
+      </p>
+
+      <div style={{ marginBottom: 24 }}>
+        <h4 style={{ margin: '0 0 8px' }}>Uptime Badge</h4>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 }}>
+          <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Period:</span>
+          {['24h', '7d', '30d', '90d'].map(p => (
+            <button
+              key={p}
+              onClick={() => setPeriod(p)}
+              style={{
+                ...btnStyle,
+                background: period === p ? 'var(--accent)' : 'var(--bg-secondary)',
+                color: period === p ? '#fff' : 'var(--text-primary)',
+              }}
+            >{p}</button>
+          ))}
+        </div>
+        <div style={{ marginBottom: 12 }}>
+          <img src={uptimeUrl} alt="uptime badge" style={{ height: 20 }} />
+        </div>
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Markdown</span>
+            <button style={btnStyle} onClick={() => copy(uptimeMd, 'uptimeMd')}>
+              {copied === 'uptimeMd' ? '✅ Copied' : '📋 Copy'}
+            </button>
+          </div>
+          <code style={codeStyle}>{uptimeMd}</code>
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>HTML</span>
+            <button style={btnStyle} onClick={() => copy(uptimeHtml, 'uptimeHtml')}>
+              {copied === 'uptimeHtml' ? '✅ Copied' : '📋 Copy'}
+            </button>
+          </div>
+          <code style={codeStyle}>{uptimeHtml}</code>
+        </div>
+      </div>
+
+      <div>
+        <h4 style={{ margin: '0 0 12px' }}>Status Badge</h4>
+        <div style={{ marginBottom: 12 }}>
+          <img src={statusUrl} alt="status badge" style={{ height: 20 }} />
+        </div>
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Markdown</span>
+            <button style={btnStyle} onClick={() => copy(statusMd, 'statusMd')}>
+              {copied === 'statusMd' ? '✅ Copied' : '📋 Copy'}
+            </button>
+          </div>
+          <code style={codeStyle}>{statusMd}</code>
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>HTML</span>
+            <button style={btnStyle} onClick={() => copy(statusHtml, 'statusHtml')}>
+              {copied === 'statusHtml' ? '✅ Copied' : '📋 Copy'}
+            </button>
+          </div>
+          <code style={codeStyle}>{statusHtml}</code>
+        </div>
+      </div>
     </div>
   );
 }
