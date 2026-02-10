@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { getMonitor, getHeartbeats, getUptime, getIncidents, pauseMonitor, resumeMonitor, deleteMonitor, acknowledgeIncident } from '../api'
+import { getMonitor, getHeartbeats, getUptime, getIncidents, pauseMonitor, resumeMonitor, deleteMonitor, updateMonitor, acknowledgeIncident } from '../api'
 
 function formatTime(ts) {
   if (!ts) return 'Never';
@@ -222,6 +222,133 @@ function HeartbeatTable({ heartbeats }) {
   );
 }
 
+const HTTP_METHODS = ['GET', 'POST', 'HEAD', 'PUT', 'DELETE', 'PATCH'];
+
+function EditMonitorForm({ monitor, manageKey, onSaved, onCancel }) {
+  const [form, setForm] = useState({
+    name: monitor.name || '',
+    url: monitor.url || '',
+    method: monitor.method || 'GET',
+    interval_seconds: monitor.interval_seconds || 300,
+    timeout_ms: monitor.timeout_ms || 10000,
+    expected_status: monitor.expected_status || 200,
+    confirmation_threshold: monitor.confirmation_threshold || 3,
+    body_contains: monitor.body_contains || '',
+    is_public: monitor.is_public ?? true,
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+
+  const set = (key, value) => setForm(f => ({ ...f, [key]: value }));
+
+  const handleSave = async () => {
+    if (!form.name.trim() || !form.url.trim()) {
+      setError('Name and URL are required');
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      // Only send fields that changed
+      const patch = {};
+      if (form.name !== monitor.name) patch.name = form.name.trim();
+      if (form.url !== monitor.url) patch.url = form.url.trim();
+      if (form.method !== monitor.method) patch.method = form.method;
+      if (form.interval_seconds !== monitor.interval_seconds) patch.interval_seconds = Number(form.interval_seconds);
+      if (form.timeout_ms !== monitor.timeout_ms) patch.timeout_ms = Number(form.timeout_ms);
+      if (form.expected_status !== monitor.expected_status) patch.expected_status = Number(form.expected_status);
+      if (form.confirmation_threshold !== monitor.confirmation_threshold) patch.confirmation_threshold = Number(form.confirmation_threshold);
+      if ((form.body_contains || '') !== (monitor.body_contains || '')) patch.body_contains = form.body_contains || null;
+      if (form.is_public !== monitor.is_public) patch.is_public = form.is_public;
+
+      if (Object.keys(patch).length === 0) {
+        onCancel();
+        return;
+      }
+      await updateMonitor(monitor.id, patch, manageKey);
+      onSaved();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="card" style={{ marginTop: 12, borderColor: 'var(--accent)', borderWidth: 2 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <h3 style={{ fontSize: '1rem', fontWeight: 600 }}>✏️ Edit Monitor</h3>
+        <button className="btn btn-secondary" style={{ fontSize: '0.8rem', padding: '6px 12px' }} onClick={onCancel}>Cancel</button>
+      </div>
+
+      {error && (
+        <div style={{ background: 'var(--danger-bg)', border: '1px solid var(--danger)', borderRadius: 'var(--radius)', padding: '10px 14px', marginBottom: 16, fontSize: '0.85rem', color: 'var(--danger)' }}>
+          {error}
+        </div>
+      )}
+
+      <div className="form-group">
+        <label className="form-label">Name</label>
+        <input className="form-input" value={form.name} onChange={e => set('name', e.target.value)} />
+      </div>
+
+      <div className="form-group">
+        <label className="form-label">URL</label>
+        <input className="form-input" value={form.url} onChange={e => set('url', e.target.value)} placeholder="https://example.com" />
+      </div>
+
+      <div className="form-row">
+        <div className="form-group">
+          <label className="form-label">Method</label>
+          <select className="form-input" value={form.method} onChange={e => set('method', e.target.value)}>
+            {HTTP_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
+          </select>
+        </div>
+        <div className="form-group">
+          <label className="form-label">Expected Status</label>
+          <input className="form-input" type="number" value={form.expected_status} onChange={e => set('expected_status', Number(e.target.value))} />
+        </div>
+      </div>
+
+      <div className="form-row">
+        <div className="form-group">
+          <label className="form-label">Check Interval (seconds)</label>
+          <input className="form-input" type="number" min="30" value={form.interval_seconds} onChange={e => set('interval_seconds', Number(e.target.value))} />
+          <div className="form-help">Minimum 30 seconds</div>
+        </div>
+        <div className="form-group">
+          <label className="form-label">Timeout (ms)</label>
+          <input className="form-input" type="number" min="1000" value={form.timeout_ms} onChange={e => set('timeout_ms', Number(e.target.value))} />
+        </div>
+      </div>
+
+      <div className="form-row">
+        <div className="form-group">
+          <label className="form-label">Confirmation Threshold</label>
+          <input className="form-input" type="number" min="1" max="10" value={form.confirmation_threshold} onChange={e => set('confirmation_threshold', Number(e.target.value))} />
+          <div className="form-help">Consecutive failures before incident</div>
+        </div>
+        <div className="form-group">
+          <label className="form-label">Body Contains</label>
+          <input className="form-input" value={form.body_contains} onChange={e => set('body_contains', e.target.value)} placeholder="Optional text to match in response" />
+        </div>
+      </div>
+
+      <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <input type="checkbox" id="edit-public" checked={form.is_public} onChange={e => set('is_public', e.target.checked)} style={{ width: 18, height: 18, accentColor: 'var(--accent)' }} />
+        <label htmlFor="edit-public" className="form-label" style={{ marginBottom: 0 }}>Public (visible on status page without manage key)</label>
+      </div>
+
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
+        <button className="btn btn-secondary" onClick={onCancel} disabled={saving}>Cancel</button>
+        <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
+          {saving ? 'Saving...' : '💾 Save Changes'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function MonitorDetail({ id, manageKey, onBack }) {
   const [monitor, setMonitor] = useState(null);
   const [heartbeats, setHeartbeats] = useState([]);
@@ -232,6 +359,7 @@ export default function MonitorDetail({ id, manageKey, onBack }) {
   const [tab, setTab] = useState('overview');
   const [actionLoading, setActionLoading] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [editing, setEditing] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -420,6 +548,14 @@ export default function MonitorDetail({ id, manageKey, onBack }) {
               <button
                 className="btn btn-secondary"
                 style={{ fontSize: '0.8rem', padding: '6px 14px' }}
+                onClick={() => { setEditing(true); setConfirmDelete(false); }}
+                disabled={editing}
+              >
+                ✏️ Edit
+              </button>
+              <button
+                className="btn btn-secondary"
+                style={{ fontSize: '0.8rem', padding: '6px 14px' }}
                 disabled={actionLoading === 'pause' || actionLoading === 'resume'}
                 onClick={handlePauseResume}
               >
@@ -457,6 +593,15 @@ export default function MonitorDetail({ id, manageKey, onBack }) {
               )}
             </div>
           </div>
+        )}
+
+        {editing && manageKey && (
+          <EditMonitorForm
+            monitor={monitor}
+            manageKey={manageKey}
+            onSaved={async () => { setEditing(false); await reload(); }}
+            onCancel={() => setEditing(false)}
+          />
         )}
       </div>
 
