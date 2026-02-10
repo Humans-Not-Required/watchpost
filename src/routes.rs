@@ -266,27 +266,21 @@ pub fn resume_monitor(
 
 // ── Heartbeats ──
 
-#[get("/monitors/<id>/heartbeats?<limit>&<offset>")]
+#[get("/monitors/<id>/heartbeats?<limit>&<after>")]
 pub fn get_heartbeats(
     id: &str,
     limit: Option<u32>,
-    offset: Option<u32>,
+    after: Option<i64>,
     db: &State<Arc<Db>>,
 ) -> Result<Json<Vec<Heartbeat>>, (Status, Json<serde_json::Value>)> {
     let conn = db.conn.lock().unwrap();
-    // Verify monitor exists
     get_monitor_from_db(&conn, id)
         .map_err(|_| (Status::NotFound, Json(serde_json::json!({"error": "Monitor not found", "code": "NOT_FOUND"}))))?;
 
     let limit = limit.unwrap_or(50).min(200);
-    let offset = offset.unwrap_or(0);
+    let err_map = |e: rusqlite::Error| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()})));
 
-    let mut stmt = conn.prepare(
-        "SELECT id, monitor_id, status, response_time_ms, status_code, error_message, checked_at
-         FROM heartbeats WHERE monitor_id = ?1 ORDER BY checked_at DESC LIMIT ?2 OFFSET ?3"
-    ).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
-
-    let heartbeats = stmt.query_map(params![id, limit, offset], |row| {
+    let row_to_hb = |row: &rusqlite::Row| -> rusqlite::Result<Heartbeat> {
         Ok(Heartbeat {
             id: row.get(0)?,
             monitor_id: row.get(1)?,
@@ -295,10 +289,33 @@ pub fn get_heartbeats(
             status_code: row.get(4)?,
             error_message: row.get(5)?,
             checked_at: row.get(6)?,
+            seq: row.get(7)?,
         })
-    }).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?
-    .filter_map(|r| r.ok())
-    .collect();
+    };
+
+    let heartbeats: Vec<Heartbeat> = if let Some(after_seq) = after {
+        // Cursor mode: return rows with seq > after, ascending
+        let mut stmt = conn.prepare(
+            "SELECT id, monitor_id, status, response_time_ms, status_code, error_message, checked_at, seq
+             FROM heartbeats WHERE monitor_id = ?1 AND seq > ?2 ORDER BY seq ASC LIMIT ?3"
+        ).map_err(err_map)?;
+        let results: Vec<Heartbeat> = stmt.query_map(params![id, after_seq, limit], row_to_hb)
+            .map_err(err_map)?
+            .filter_map(|r| r.ok())
+            .collect();
+        results
+    } else {
+        // Default: newest first (DESC), no cursor
+        let mut stmt = conn.prepare(
+            "SELECT id, monitor_id, status, response_time_ms, status_code, error_message, checked_at, seq
+             FROM heartbeats WHERE monitor_id = ?1 ORDER BY seq DESC LIMIT ?2"
+        ).map_err(err_map)?;
+        let results: Vec<Heartbeat> = stmt.query_map(params![id, limit], row_to_hb)
+            .map_err(err_map)?
+            .filter_map(|r| r.ok())
+            .collect();
+        results
+    };
 
     Ok(Json(heartbeats))
 }
@@ -356,11 +373,11 @@ pub fn get_uptime(
 
 // ── Incidents ──
 
-#[get("/monitors/<id>/incidents?<limit>&<offset>")]
+#[get("/monitors/<id>/incidents?<limit>&<after>")]
 pub fn get_incidents(
     id: &str,
     limit: Option<u32>,
-    offset: Option<u32>,
+    after: Option<i64>,
     db: &State<Arc<Db>>,
 ) -> Result<Json<Vec<Incident>>, (Status, Json<serde_json::Value>)> {
     let conn = db.conn.lock().unwrap();
@@ -368,14 +385,9 @@ pub fn get_incidents(
         .map_err(|_| (Status::NotFound, Json(serde_json::json!({"error": "Monitor not found", "code": "NOT_FOUND"}))))?;
 
     let limit = limit.unwrap_or(20).min(100);
-    let offset = offset.unwrap_or(0);
+    let err_map = |e: rusqlite::Error| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()})));
 
-    let mut stmt = conn.prepare(
-        "SELECT id, monitor_id, started_at, resolved_at, cause, acknowledgement, acknowledged_by, acknowledged_at
-         FROM incidents WHERE monitor_id = ?1 ORDER BY started_at DESC LIMIT ?2 OFFSET ?3"
-    ).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
-
-    let incidents = stmt.query_map(params![id, limit, offset], |row| {
+    let row_to_inc = |row: &rusqlite::Row| -> rusqlite::Result<Incident> {
         Ok(Incident {
             id: row.get(0)?,
             monitor_id: row.get(1)?,
@@ -385,10 +397,31 @@ pub fn get_incidents(
             acknowledgement: row.get(5)?,
             acknowledged_by: row.get(6)?,
             acknowledged_at: row.get(7)?,
+            seq: row.get(8)?,
         })
-    }).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?
-    .filter_map(|r| r.ok())
-    .collect();
+    };
+
+    let incidents: Vec<Incident> = if let Some(after_seq) = after {
+        let mut stmt = conn.prepare(
+            "SELECT id, monitor_id, started_at, resolved_at, cause, acknowledgement, acknowledged_by, acknowledged_at, seq
+             FROM incidents WHERE monitor_id = ?1 AND seq > ?2 ORDER BY seq ASC LIMIT ?3"
+        ).map_err(err_map)?;
+        let results: Vec<Incident> = stmt.query_map(params![id, after_seq, limit], row_to_inc)
+            .map_err(err_map)?
+            .filter_map(|r| r.ok())
+            .collect();
+        results
+    } else {
+        let mut stmt = conn.prepare(
+            "SELECT id, monitor_id, started_at, resolved_at, cause, acknowledgement, acknowledged_by, acknowledged_at, seq
+             FROM incidents WHERE monitor_id = ?1 ORDER BY seq DESC LIMIT ?2"
+        ).map_err(err_map)?;
+        let results: Vec<Incident> = stmt.query_map(params![id, limit], row_to_inc)
+            .map_err(err_map)?
+            .filter_map(|r| r.ok())
+            .collect();
+        results
+    };
 
     Ok(Json(incidents))
 }
@@ -765,11 +798,11 @@ const OPENAPI_JSON: &str = r##"{
         "operationId": "getHeartbeats",
         "tags": ["heartbeats"],
         "parameters": [
-          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 50, "maximum": 200 } },
-          { "name": "offset", "in": "query", "schema": { "type": "integer", "default": 0 } }
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 50, "maximum": 200 }, "description": "Max results to return" },
+          { "name": "after", "in": "query", "schema": { "type": "integer" }, "description": "Return heartbeats with seq > this value (cursor-based pagination)" }
         ],
         "responses": {
-          "200": { "description": "Check history", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Heartbeat" } } } } },
+          "200": { "description": "Check history (use last item's seq as after= for next page)", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Heartbeat" } } } } },
           "404": { "$ref": "#/components/responses/NotFound" }
         }
       }
@@ -793,11 +826,11 @@ const OPENAPI_JSON: &str = r##"{
         "operationId": "getIncidents",
         "tags": ["incidents"],
         "parameters": [
-          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 20, "maximum": 100 } },
-          { "name": "offset", "in": "query", "schema": { "type": "integer", "default": 0 } }
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 20, "maximum": 100 }, "description": "Max results to return" },
+          { "name": "after", "in": "query", "schema": { "type": "integer" }, "description": "Return incidents with seq > this value (cursor-based pagination)" }
         ],
         "responses": {
-          "200": { "description": "Incident list", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Incident" } } } } },
+          "200": { "description": "Incident list (use last item's seq as after= for next page)", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Incident" } } } } },
           "404": { "$ref": "#/components/responses/NotFound" }
         }
       }
@@ -993,7 +1026,8 @@ const OPENAPI_JSON: &str = r##"{
           "response_time_ms": { "type": "integer" },
           "status_code": { "type": "integer", "nullable": true },
           "error_message": { "type": "string", "nullable": true },
-          "checked_at": { "type": "string" }
+          "checked_at": { "type": "string" },
+          "seq": { "type": "integer", "description": "Monotonic sequence number for cursor-based pagination" }
         }
       },
       "Incident": {
@@ -1006,7 +1040,8 @@ const OPENAPI_JSON: &str = r##"{
           "cause": { "type": "string" },
           "acknowledgement": { "type": "string", "nullable": true },
           "acknowledged_by": { "type": "string", "nullable": true },
-          "acknowledged_at": { "type": "string", "nullable": true }
+          "acknowledged_at": { "type": "string", "nullable": true },
+          "seq": { "type": "integer", "description": "Monotonic sequence number for cursor-based pagination" }
         }
       },
       "AcknowledgeIncident": {

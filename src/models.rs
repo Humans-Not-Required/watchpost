@@ -72,6 +72,7 @@ pub struct Heartbeat {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_message: Option<String>,
     pub checked_at: String,
+    pub seq: i64,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -88,6 +89,7 @@ pub struct Incident {
     pub acknowledged_by: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub acknowledged_at: Option<String>,
+    pub seq: i64,
 }
 
 #[derive(Debug, Deserialize)]

@@ -240,6 +240,92 @@ fn test_heartbeats_empty() {
 }
 
 #[test]
+fn test_heartbeat_seq_pagination() {
+    let client = test_client();
+    let (id, _) = create_test_monitor(&client);
+
+    // Insert heartbeats directly via DB
+    let db_path = std::env::var("DATABASE_PATH").unwrap();
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    for i in 1..=5 {
+        conn.execute(
+            "INSERT INTO heartbeats (id, monitor_id, status, response_time_ms, status_code, checked_at, seq) VALUES (?1, ?2, 'up', ?3, 200, datetime('now'), ?4)",
+            rusqlite::params![format!("hb-{}", i), &id, 100 + i, i],
+        ).unwrap();
+    }
+    drop(conn);
+
+    // Default: newest first (DESC), no cursor
+    let resp = client.get(format!("/api/v1/monitors/{}/heartbeats?limit=3", id)).dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert_eq!(body.len(), 3);
+    // DESC order: seq 5, 4, 3
+    assert_eq!(body[0]["seq"], 5);
+    assert_eq!(body[1]["seq"], 4);
+    assert_eq!(body[2]["seq"], 3);
+
+    // Cursor: after=2 should return seq 3, 4, 5 (ASC)
+    let resp = client.get(format!("/api/v1/monitors/{}/heartbeats?after=2", id)).dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert_eq!(body.len(), 3);
+    assert_eq!(body[0]["seq"], 3);
+    assert_eq!(body[1]["seq"], 4);
+    assert_eq!(body[2]["seq"], 5);
+
+    // Cursor with limit: after=0&limit=2
+    let resp = client.get(format!("/api/v1/monitors/{}/heartbeats?after=0&limit=2", id)).dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert_eq!(body.len(), 2);
+    assert_eq!(body[0]["seq"], 1);
+    assert_eq!(body[1]["seq"], 2);
+
+    // All heartbeats have seq field
+    for hb in &body {
+        assert!(hb["seq"].is_number(), "heartbeat should have seq field");
+    }
+}
+
+#[test]
+fn test_incident_seq_pagination() {
+    let client = test_client();
+    let (id, _) = create_test_monitor(&client);
+
+    // Insert incidents directly via DB
+    let db_path = std::env::var("DATABASE_PATH").unwrap();
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    for i in 1..=3 {
+        conn.execute(
+            "INSERT INTO incidents (id, monitor_id, cause, started_at, seq) VALUES (?1, ?2, ?3, datetime('now'), ?4)",
+            rusqlite::params![format!("inc-{}", i), &id, format!("Test failure {}", i), i],
+        ).unwrap();
+    }
+    drop(conn);
+
+    // Default: newest first
+    let resp = client.get(format!("/api/v1/monitors/{}/incidents", id)).dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert_eq!(body.len(), 3);
+    assert_eq!(body[0]["seq"], 3);
+
+    // Cursor: after=1
+    let resp = client.get(format!("/api/v1/monitors/{}/incidents?after=1", id)).dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert_eq!(body.len(), 2);
+    assert_eq!(body[0]["seq"], 2);
+    assert_eq!(body[1]["seq"], 3);
+
+    // All incidents have seq field
+    for inc in &body {
+        assert!(inc["seq"].is_number(), "incident should have seq field");
+    }
+}
+
+#[test]
 fn test_uptime_no_data() {
     let client = test_client();
     let (id, _) = create_test_monitor(&client);

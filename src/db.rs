@@ -1,4 +1,4 @@
-use rusqlite::{Connection, Result};
+use rusqlite::{Connection, Result, params};
 use std::sync::Mutex;
 
 pub struct Db {
@@ -72,6 +72,42 @@ impl Db {
             );
             CREATE INDEX IF NOT EXISTS idx_notifications_monitor ON notification_channels(monitor_id);
         ")?;
+
+        // Add seq columns for cursor-based pagination
+        conn.execute_batch("ALTER TABLE heartbeats ADD COLUMN seq INTEGER;").ok();
+        conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_heartbeats_seq ON heartbeats(seq);").ok();
+        conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_heartbeats_monitor_seq ON heartbeats(monitor_id, seq);").ok();
+
+        conn.execute_batch("ALTER TABLE incidents ADD COLUMN seq INTEGER;").ok();
+        conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_incidents_seq ON incidents(seq);").ok();
+        conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_incidents_monitor_seq ON incidents(monitor_id, seq);").ok();
+
+        // Backfill seq for existing heartbeats
+        let needs_hb_backfill: i64 = conn
+            .query_row("SELECT COUNT(*) FROM heartbeats WHERE seq IS NULL", [], |r| r.get(0))
+            .unwrap_or(0);
+        if needs_hb_backfill > 0 {
+            let mut stmt = conn.prepare("SELECT id FROM heartbeats WHERE seq IS NULL ORDER BY checked_at ASC, id ASC").unwrap();
+            let ids: Vec<String> = stmt.query_map([], |row| row.get(0)).unwrap().filter_map(|r| r.ok()).collect();
+            let max_seq: i64 = conn.query_row("SELECT COALESCE(MAX(seq), 0) FROM heartbeats", [], |r| r.get(0)).unwrap_or(0);
+            for (i, id) in ids.iter().enumerate() {
+                conn.execute("UPDATE heartbeats SET seq = ?1 WHERE id = ?2", params![max_seq + (i as i64) + 1, &id]).ok();
+            }
+        }
+
+        // Backfill seq for existing incidents
+        let needs_inc_backfill: i64 = conn
+            .query_row("SELECT COUNT(*) FROM incidents WHERE seq IS NULL", [], |r| r.get(0))
+            .unwrap_or(0);
+        if needs_inc_backfill > 0 {
+            let mut stmt = conn.prepare("SELECT id FROM incidents WHERE seq IS NULL ORDER BY started_at ASC, id ASC").unwrap();
+            let ids: Vec<String> = stmt.query_map([], |row| row.get(0)).unwrap().filter_map(|r| r.ok()).collect();
+            let max_seq: i64 = conn.query_row("SELECT COALESCE(MAX(seq), 0) FROM incidents", [], |r| r.get(0)).unwrap_or(0);
+            for (i, id) in ids.iter().enumerate() {
+                conn.execute("UPDATE incidents SET seq = ?1 WHERE id = ?2", params![max_seq + (i as i64) + 1, &id]).ok();
+            }
+        }
+
         Ok(())
     }
 }

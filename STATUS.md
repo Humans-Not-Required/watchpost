@@ -64,7 +64,7 @@
 
 1. **DNS for watch.hnrstage.xyz** — Needs Cloudflare DNS A record pointing to staging server (Jordan action, or check if wildcard exists)
 2. **Polish frontend** — Error states, loading skeleton, manage key integration (pass ?key= for edit operations)
-3. **Add watchpost to admin links page** — Update hnrstage.xyz/mylinks
+3. **Add watchpost to admin links page** — Update hnrstage.xyz/mylinks (file at ~/domains/hnrstage.xyz/public/mylinks.html on staging)
 4. **Pagination** — Heartbeats and incidents endpoints should support pagination (seq-based, like other HNR services)
 5. **Heartbeat retention** — Background task to prune heartbeats older than 90 days
 

@@ -160,9 +160,10 @@ async fn run_check(client: &reqwest::Client, db: &Db, broadcaster: &EventBroadca
         // Scoped DB lock
         let conn = db.conn.lock().unwrap();
         let hb_id = uuid::Uuid::new_v4().to_string();
+        let hb_seq: i64 = conn.query_row("SELECT COALESCE(MAX(seq), 0) + 1 FROM heartbeats", [], |r| r.get(0)).unwrap_or(1);
         let _ = conn.execute(
-            "INSERT INTO heartbeats (id, monitor_id, status, response_time_ms, status_code, error_message) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![hb_id, monitor.id, status, elapsed_ms, status_code, error_message],
+            "INSERT INTO heartbeats (id, monitor_id, status, response_time_ms, status_code, error_message, seq) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![hb_id, monitor.id, status, elapsed_ms, status_code, error_message, hb_seq],
         );
 
         // Update consecutive failures and determine status transition
@@ -190,9 +191,10 @@ async fn run_check(client: &reqwest::Client, db: &Db, broadcaster: &EventBroadca
             // Transition to down — create incident
             let inc_id = uuid::Uuid::new_v4().to_string();
             let cause = error_message.clone().unwrap_or_else(|| "Monitor is down".to_string());
+            let inc_seq: i64 = conn.query_row("SELECT COALESCE(MAX(seq), 0) + 1 FROM incidents", [], |r| r.get(0)).unwrap_or(1);
             let _ = conn.execute(
-                "INSERT INTO incidents (id, monitor_id, cause) VALUES (?1, ?2, ?3)",
-                params![inc_id, monitor.id, cause],
+                "INSERT INTO incidents (id, monitor_id, cause, seq) VALUES (?1, ?2, ?3, ?4)",
+                params![inc_id, monitor.id, cause, inc_seq],
             );
 
             webhook_event = Some(WebhookPayload {
