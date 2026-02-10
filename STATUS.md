@@ -63,16 +63,17 @@
   - Monotonic seq column with backfill migration
   - Default (no cursor) = newest first; with cursor = forward scan (ASC)
   - OpenAPI spec updated
-- Test suite: **30 tests passing** (`cargo test -- --test-threads=1`) — includes 3 heartbeat retention tests
+- Test suite: **32 tests passing** (`cargo test -- --test-threads=1`) — includes 3 heartbeat retention tests + 2 notification toggle tests
 
 ### What's Next (Priority Order)
 
-1. **Response time graph** — Visual chart of response times over time on monitor detail page
-2. **Notification toggle** — Enable/disable individual notification channels without deleting them
-3. **Monitor search/filter** — Filter monitors on status page by name or status
+1. **Monitor search/filter** — Filter monitors on status page by name or status
+2. **Monitor tags/groups** — Group monitors by tag for multi-service status pages
+3. **Response time alerts** — Notify when response time exceeds threshold (slow but not down)
 
 ### ✅ Completed (most recent)
 
+- **Response time chart + notification toggle** (commit e4d7708) — SVG response time chart on Overview tab (last 100 checks, avg line, nice axis ticks, color-coded dots, no external deps). PATCH /notifications/:id endpoint for enable/disable toggle. Toggle button in UI. OpenAPI updated. 32 tests (was 30).
 - **Notification channel management UI** (commit 5239e11) — Add/list/delete webhook/email notification channels from the frontend. New "🔔 Notifications" tab visible when manage key present.
 - **Inline edit monitor settings** (commit ca0a446) — Edit all monitor config fields (name, URL, method, interval, timeout, expected status, confirmation threshold, body contains, public/private) from UI with manage key. Only sends changed fields via PATCH.
 - **Loading skeleton screens** (commit 488bd55) — Shimmer skeleton loading states for status page and monitor detail, replacing plain spinners
