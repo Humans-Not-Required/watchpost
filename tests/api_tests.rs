@@ -1681,3 +1681,255 @@ fn test_badge_not_found() {
     let resp = client.get("/api/v1/monitors/00000000-0000-0000-0000-000000000000/badge/status").dispatch();
     assert_eq!(resp.status(), Status::NotFound);
 }
+
+// ── URL Validation Tests ──
+
+#[test]
+fn test_create_monitor_invalid_url_scheme() {
+    let client = test_client();
+
+    // No scheme
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Bad URL", "url": "example.com/health"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::BadRequest);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert!(body["error"].as_str().unwrap().contains("http://"));
+
+    // FTP scheme
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "FTP", "url": "ftp://files.example.com"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::BadRequest);
+
+    // Random string
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Gibberish", "url": "not-a-url-at-all"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::BadRequest);
+
+    // Valid http:// should succeed
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "HTTP OK", "url": "http://example.com"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+
+    // Valid https:// should succeed
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "HTTPS OK", "url": "https://example.com"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+}
+
+#[test]
+fn test_update_monitor_invalid_url_scheme() {
+    let client = test_client();
+    let (id, key) = create_test_monitor(&client);
+
+    let resp = client.patch(format!("/api/v1/monitors/{}", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"url": "ftp://bad.example.com"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::BadRequest);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert!(body["error"].as_str().unwrap().contains("http://"));
+}
+
+// ── Headers Validation Tests ──
+
+#[test]
+fn test_create_monitor_with_headers() {
+    let client = test_client();
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "With Headers", "url": "https://api.example.com", "headers": {"Authorization": "Bearer token123", "X-Custom": "value"}}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let headers = &body["monitor"]["headers"];
+    assert!(headers.is_object());
+    assert_eq!(headers["Authorization"], "Bearer token123");
+    assert_eq!(headers["X-Custom"], "value");
+}
+
+#[test]
+fn test_create_monitor_headers_must_be_object() {
+    let client = test_client();
+
+    // Array instead of object
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Bad Headers", "url": "https://example.com", "headers": ["not", "an", "object"]}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::BadRequest);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert!(body["error"].as_str().unwrap().contains("JSON object"));
+
+    // String instead of object — serde_json::Value accepts strings, but our validation catches it
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Bad Headers", "url": "https://example.com", "headers": "not-an-object"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::BadRequest);
+}
+
+#[test]
+fn test_update_monitor_headers_must_be_object() {
+    let client = test_client();
+    let (id, key) = create_test_monitor(&client);
+
+    let resp = client.patch(format!("/api/v1/monitors/{}", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"headers": [1, 2, 3]}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::BadRequest);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert!(body["error"].as_str().unwrap().contains("JSON object"));
+}
+
+// ── POST Method + body_contains Tests ──
+
+#[test]
+fn test_create_monitor_post_method() {
+    let client = test_client();
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "POST Monitor", "url": "https://api.example.com/webhook", "method": "POST"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["monitor"]["method"], "POST");
+}
+
+#[test]
+fn test_create_monitor_head_method() {
+    let client = test_client();
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "HEAD Monitor", "url": "https://example.com", "method": "head"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    // Method should be uppercased
+    assert_eq!(body["monitor"]["method"], "HEAD");
+}
+
+#[test]
+fn test_create_monitor_with_body_contains() {
+    let client = test_client();
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Body Check", "url": "https://example.com/health", "body_contains": "\"status\":\"ok\""}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["monitor"]["body_contains"], "\"status\":\"ok\"");
+}
+
+// ── Clamping & Default Tests ──
+
+#[test]
+fn test_create_monitor_interval_clamped() {
+    let client = test_client();
+
+    // Interval below minimum (30s) should be clamped to 30
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Fast Check", "url": "https://example.com", "interval_seconds": 5}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["monitor"]["interval_seconds"], 30);
+}
+
+#[test]
+fn test_create_monitor_timeout_clamped() {
+    let client = test_client();
+
+    // Timeout below minimum (1000ms) should be clamped to 1000
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Quick Timeout", "url": "https://example.com", "timeout_ms": 100}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["monitor"]["timeout_ms"], 1000);
+
+    // Timeout above maximum (60000ms) should be clamped to 60000
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Slow Timeout", "url": "https://example.com", "timeout_ms": 120000}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["monitor"]["timeout_ms"], 60000);
+}
+
+#[test]
+fn test_create_monitor_confirmation_threshold_clamped() {
+    let client = test_client();
+
+    // Below min (1) → clamped to 1
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Low Confirm", "url": "https://example.com", "confirmation_threshold": 0}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["monitor"]["confirmation_threshold"], 1);
+
+    // Above max (10) → clamped to 10
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "High Confirm", "url": "https://example.com", "confirmation_threshold": 99}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["monitor"]["confirmation_threshold"], 10);
+}
+
+// ── Bulk Create Validation Tests ──
+
+#[test]
+fn test_bulk_create_invalid_url_scheme() {
+    let client = test_client();
+    let resp = client.post("/api/v1/monitors/bulk")
+        .header(ContentType::JSON)
+        .body(r#"{"monitors": [
+            {"name": "Good", "url": "https://example.com"},
+            {"name": "Bad", "url": "ftp://files.example.com"},
+            {"name": "Also Good", "url": "http://example.org"}
+        ]}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["succeeded"], 2);
+    assert_eq!(body["failed"], 1);
+    // The error should be for index 1
+    assert_eq!(body["errors"][0]["index"], 1);
+    assert!(body["errors"][0]["error"].as_str().unwrap().contains("http://"));
+}
+
+#[test]
+fn test_bulk_create_invalid_headers() {
+    let client = test_client();
+    let resp = client.post("/api/v1/monitors/bulk")
+        .header(ContentType::JSON)
+        .body(r#"{"monitors": [
+            {"name": "Good", "url": "https://example.com", "headers": {"X-Key": "val"}},
+            {"name": "Bad", "url": "https://example.com", "headers": ["not", "object"]}
+        ]}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["succeeded"], 1);
+    assert_eq!(body["failed"], 1);
+    assert!(body["errors"][0]["error"].as_str().unwrap().contains("JSON object"));
+}

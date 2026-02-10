@@ -88,6 +88,19 @@ pub fn create_monitor(
             "error": "URL is required", "code": "VALIDATION_ERROR"
         }))));
     }
+    let url_trimmed = data.url.trim().to_lowercase();
+    if !url_trimmed.starts_with("http://") && !url_trimmed.starts_with("https://") {
+        return Err((Status::BadRequest, Json(serde_json::json!({
+            "error": "URL must start with http:// or https://", "code": "VALIDATION_ERROR"
+        }))));
+    }
+    if let Some(ref headers) = data.headers {
+        if !headers.is_object() {
+            return Err((Status::BadRequest, Json(serde_json::json!({
+                "error": "Headers must be a JSON object", "code": "VALIDATION_ERROR"
+            }))));
+        }
+    }
     let method = data.method.to_uppercase();
     if !["GET", "HEAD", "POST"].contains(&method.as_str()) {
         return Err((Status::BadRequest, Json(serde_json::json!({
@@ -191,6 +204,17 @@ pub fn bulk_create_monitors(
         if monitor_data.url.trim().is_empty() {
             errors.push(BulkError { index: idx, error: "URL is required".into(), code: "VALIDATION_ERROR".into() });
             continue;
+        }
+        let url_trimmed = monitor_data.url.trim().to_lowercase();
+        if !url_trimmed.starts_with("http://") && !url_trimmed.starts_with("https://") {
+            errors.push(BulkError { index: idx, error: "URL must start with http:// or https://".into(), code: "VALIDATION_ERROR".into() });
+            continue;
+        }
+        if let Some(ref headers) = monitor_data.headers {
+            if !headers.is_object() {
+                errors.push(BulkError { index: idx, error: "Headers must be a JSON object".into(), code: "VALIDATION_ERROR".into() });
+                continue;
+            }
         }
         let method = monitor_data.method.to_uppercase();
         if !["GET", "HEAD", "POST"].contains(&method.as_str()) {
@@ -381,6 +405,24 @@ pub fn update_monitor(
                 values.push(Box::new(val));
             }
         };
+    }
+
+    // Validate URL scheme if provided
+    if let Some(ref url) = data.url {
+        let url_lower = url.trim().to_lowercase();
+        if !url_lower.starts_with("http://") && !url_lower.starts_with("https://") {
+            return Err((Status::BadRequest, Json(serde_json::json!({
+                "error": "URL must start with http:// or https://", "code": "VALIDATION_ERROR"
+            }))));
+        }
+    }
+    // Validate headers is a JSON object if provided
+    if let Some(ref headers) = data.headers {
+        if !headers.is_object() {
+            return Err((Status::BadRequest, Json(serde_json::json!({
+                "error": "Headers must be a JSON object", "code": "VALIDATION_ERROR"
+            }))));
+        }
     }
 
     add_update!(name, "name");
@@ -1290,6 +1332,14 @@ GET /api/v1/monitors/:id/uptime-history?days=30 — Daily uptime percentages for
 - Read: no auth (use monitor UUID)
 - Write: manage_key via Bearer header, X-API-Key, or ?key= param
 
+## Validation
+- URL must start with http:// or https://
+- Headers must be a JSON object (not array or string)
+- interval_seconds: min 30, default 300
+- timeout_ms: min 1000, max 60000, default 10000
+- confirmation_threshold: min 1, max 10, default 2
+- response_time_threshold_ms: min 100 (if set)
+
 ## Monitor Methods
 GET, HEAD, POST
 
@@ -1989,7 +2039,7 @@ const OPENAPI_JSON: &str = r##"{
         "required": ["name", "url"],
         "properties": {
           "name": { "type": "string" },
-          "url": { "type": "string" },
+          "url": { "type": "string", "description": "Must start with http:// or https://" },
           "method": { "type": "string", "enum": ["GET", "HEAD", "POST"], "default": "GET" },
           "interval_seconds": { "type": "integer", "minimum": 30, "default": 300 },
           "timeout_ms": { "type": "integer", "default": 10000 },
