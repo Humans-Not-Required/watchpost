@@ -63,16 +63,17 @@
   - Monotonic seq column with backfill migration
   - Default (no cursor) = newest first; with cursor = forward scan (ASC)
   - OpenAPI spec updated
-- Test suite: **68 tests passing** (`cargo test -- --test-threads=1`) — includes 3 dashboard tests + 7 maintenance window tests + 4 response time alert tests + 6 tag tests + 3 search/filter tests + 3 heartbeat retention tests + 2 notification toggle tests
-
 ### What's Next (Priority Order)
 
 1. **Multi-region checks** — Check from multiple locations, consensus-based status
 2. **Email notifications** — SMTP config for sending email alerts on incidents
-3. **Status page badges** — Embeddable SVG uptime badges for READMEs
+3. **Public status page customization** — Custom branding, grouped monitors, custom domain support
+
+- Test suite: **75 tests passing** (`cargo test -- --test-threads=1`) — includes 7 badge tests, 3 dashboard tests, 7 maintenance window tests, 4 response time alert tests, 6 tag tests, 3 search/filter tests, 3 heartbeat retention tests, 2 notification toggle tests
 
 ### ✅ Completed (most recent)
 
+- **Status page badges** (commit 40c9479) — Two new SVG badge endpoints: `GET /api/v1/monitors/:id/badge/uptime` (shields.io-style uptime percentage, `?period=24h|7d|30d|90d`, `?label=`, color-coded by uptime level) and `GET /api/v1/monitors/:id/badge/status` (current status, color-coded). Frontend: new "🏷️ Badges" tab on monitor detail with live preview, period selector, and one-click copy for Markdown + HTML embed code. OpenAPI spec + llms.txt updated. 7 new tests (75 total).
 - **Uptime history chart** (commit f52475d) — New `GET /api/v1/uptime-history?days=30` (aggregate) and `GET /api/v1/monitors/:id/uptime-history?days=30` (per-monitor) endpoints returning daily uptime percentages, check counts, and avg response times. Frontend: SVG area chart on dashboard with interactive tooltips, color-coded by uptime level, range selector (7d/14d/30d/90d), auto-scaling Y-axis. OpenAPI spec + llms.txt updated. 6 new tests (68 total).
 - **Dashboard overview** (commit 3c88ba9) — New `GET /api/v1/dashboard` endpoint with aggregate stats: total/public/paused counts, status breakdown, active incidents, avg uptime 24h/7d, avg response time, recent 10 incidents (with monitor names), top 5 slowest monitors. React frontend: stat cards with color-coded values, horizontal status bar visualization, recent incidents list (clickable → monitor detail), slowest monitors ranking, auto-refresh 30s, responsive grid (4→2→2 col). Dashboard is now the default landing page (/ → dashboard, #/status → status). Nav updated with 📊 Dashboard tab. OpenAPI spec + llms.txt updated. 3 new tests (62 total).
 - **Bulk import UI** (commit aa3d850) — New "📦 Bulk Import" page in nav bar. Paste JSON array or upload .json file to create up to 50 monitors at once. Client-side validation (name, url, method, interval, limit). Preview table before submission. Results view with manage keys table and "Copy All Keys as JSON" button. Handles partial failures (shows created + failed). Accepts both `[...]` and `{monitors: [...]}` formats. Uses existing bulk create API endpoint.
