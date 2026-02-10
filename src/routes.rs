@@ -1,7 +1,9 @@
 use rocket::{get, post, patch, delete, serde::json::Json, State, http::Status};
+use rocket::response::stream::{Event, EventStream};
 use crate::db::Db;
 use crate::models::*;
 use crate::auth::{ManageToken, ClientIp, hash_key, generate_key};
+use crate::sse::EventBroadcaster;
 use rusqlite::params;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -611,6 +613,12 @@ up, down, degraded (>5s response), unknown (never checked)
 ## Notification Types
 webhook (POST JSON to URL), email
 
+## SSE Event Streams (real-time)
+GET /api/v1/events — global event stream (all monitors)
+GET /api/v1/monitors/:id/events — per-monitor event stream
+
+Event types: check.completed, incident.created, incident.resolved
+
 ## Endpoints
 POST /api/v1/monitors — create monitor
 GET /api/v1/monitors — list public monitors
@@ -626,9 +634,23 @@ POST /api/v1/incidents/:id/acknowledge — ack incident (auth)
 POST /api/v1/monitors/:id/notifications — add notification (auth)
 GET /api/v1/monitors/:id/notifications — list notifications (auth)
 DELETE /api/v1/notifications/:id — remove notification (auth)
+GET /api/v1/events — global SSE event stream
+GET /api/v1/monitors/:id/events — per-monitor SSE event stream
 GET /api/v1/status — public status page
 GET /api/v1/health — service health
 "#)
+}
+
+// ── SSE Event Streams ──
+
+#[get("/events")]
+pub fn global_events(broadcaster: &State<Arc<EventBroadcaster>>) -> EventStream![Event + '_] {
+    crate::sse::global_stream(broadcaster)
+}
+
+#[get("/monitors/<id>/events")]
+pub fn monitor_events<'a>(id: &'a str, broadcaster: &'a State<Arc<EventBroadcaster>>) -> EventStream![Event + 'a] {
+    crate::sse::monitor_stream(broadcaster, id.to_string())
 }
 
 // ── Helpers ──

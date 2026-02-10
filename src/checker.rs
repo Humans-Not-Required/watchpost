@@ -1,12 +1,13 @@
 use crate::db::Db;
 use crate::notifications::{self, WebhookPayload, WebhookMonitor, WebhookIncident};
+use crate::sse::{EventBroadcaster, SseEvent};
 use rusqlite::params;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time;
 
 /// Background check scheduler. Runs in a tokio task.
-pub async fn run_checker(db: Arc<Db>, shutdown: rocket::Shutdown) {
+pub async fn run_checker(db: Arc<Db>, broadcaster: Arc<EventBroadcaster>, shutdown: rocket::Shutdown) {
     // Wait 30s for server to warm up
     tokio::select! {
         _ = time::sleep(Duration::from_secs(30)) => {},
@@ -53,7 +54,7 @@ pub async fn run_checker(db: Arc<Db>, shutdown: rocket::Shutdown) {
 
         match monitor {
             Some(m) => {
-                run_check(&client, &db, &m).await;
+                run_check(&client, &db, &broadcaster, &m).await;
             }
             None => {
                 // No monitors due — sleep a bit before checking again
@@ -88,7 +89,7 @@ struct MonitorCheck {
     interval_seconds: u32,
 }
 
-async fn run_check(client: &reqwest::Client, db: &Db, monitor: &MonitorCheck) {
+async fn run_check(client: &reqwest::Client, db: &Db, broadcaster: &EventBroadcaster, monitor: &MonitorCheck) {
     let start = std::time::Instant::now();
 
     // Build request
@@ -245,11 +246,30 @@ async fn run_check(client: &reqwest::Client, db: &Db, monitor: &MonitorCheck) {
         }
     } // DB lock released here
 
-    // Fire webhooks outside the DB lock
-    if let Some(payload) = webhook_event {
+    // Fire webhooks and SSE events outside the DB lock
+    if let Some(ref payload) = webhook_event {
+        // SSE broadcast
+        broadcaster.send(SseEvent {
+            event_type: payload.event.clone(),
+            monitor_id: monitor.id.clone(),
+            data: serde_json::to_value(payload).unwrap_or_default(),
+        });
+
+        // Webhooks
         let urls = notifications::get_webhook_urls(db, &monitor.id);
         if !urls.is_empty() {
-            notifications::fire_webhooks(client, &urls, &payload).await;
+            notifications::fire_webhooks(client, &urls, payload).await;
         }
     }
+
+    // Always emit check.completed SSE event
+    broadcaster.send(SseEvent {
+        event_type: "check.completed".to_string(),
+        monitor_id: monitor.id.clone(),
+        data: serde_json::json!({
+            "status": status,
+            "response_time_ms": elapsed_ms,
+            "status_code": status_code,
+        }),
+    });
 }

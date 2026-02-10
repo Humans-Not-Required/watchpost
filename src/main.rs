@@ -6,6 +6,7 @@ mod auth;
 mod routes;
 mod checker;
 mod notifications;
+mod sse;
 
 use std::sync::Arc;
 use db::Db;
@@ -23,12 +24,15 @@ fn rocket() -> _ {
         .unwrap_or(10u32);
 
     let rate_limiter = routes::RateLimiter::new(rate_limit, 3600);
+    let broadcaster = Arc::new(sse::EventBroadcaster::new(256));
 
     let checker_db = database.clone();
+    let checker_broadcaster = broadcaster.clone();
 
     rocket::build()
         .manage(database)
         .manage(rate_limiter)
+        .manage(broadcaster)
         .mount("/api/v1", routes![
             routes::health,
             routes::create_monitor,
@@ -47,11 +51,13 @@ fn rocket() -> _ {
             routes::list_notifications,
             routes::delete_notification,
             routes::llms_txt,
+            routes::global_events,
+            routes::monitor_events,
         ])
         .attach(rocket::fairing::AdHoc::on_liftoff("Checker", move |rocket| {
             Box::pin(async move {
                 let shutdown = rocket.shutdown();
-                tokio::spawn(checker::run_checker(checker_db, shutdown));
+                tokio::spawn(checker::run_checker(checker_db, checker_broadcaster, shutdown));
             })
         }))
 }

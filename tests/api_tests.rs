@@ -8,10 +8,12 @@ fn test_client() -> Client {
 
     let database = Arc::new(watchpost::db::Db::new(&db_path).expect("DB init failed"));
     let rate_limiter = watchpost::routes::RateLimiter::new(100, 3600);
+    let broadcaster = Arc::new(watchpost::sse::EventBroadcaster::new(64));
 
     let rocket = rocket::build()
         .manage(database)
         .manage(rate_limiter)
+        .manage(broadcaster)
         .mount("/api/v1", rocket::routes![
             watchpost::routes::health,
             watchpost::routes::create_monitor,
@@ -30,6 +32,8 @@ fn test_client() -> Client {
             watchpost::routes::list_notifications,
             watchpost::routes::delete_notification,
             watchpost::routes::llms_txt,
+            watchpost::routes::global_events,
+            watchpost::routes::monitor_events,
         ]);
 
     Client::tracked(rocket).expect("valid rocket instance")
