@@ -9,8 +9,11 @@ mod notifications;
 mod sse;
 mod catchers;
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use db::Db;
+use rocket::fs::{FileServer, Options};
+use rocket_cors::{AllowedOrigins, CorsOptions};
 
 #[launch]
 fn rocket() -> _ {
@@ -30,7 +33,17 @@ fn rocket() -> _ {
     let checker_db = database.clone();
     let checker_broadcaster = broadcaster.clone();
 
-    rocket::build()
+    let cors = CorsOptions::default()
+        .allowed_origins(AllowedOrigins::all())
+        .to_cors()
+        .expect("CORS configuration failed");
+
+    let static_dir: PathBuf = std::env::var("STATIC_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("../frontend/dist"));
+
+    let mut build = rocket::build()
+        .attach(cors)
         .manage(database)
         .manage(rate_limiter)
         .manage(broadcaster)
@@ -70,5 +83,20 @@ fn rocket() -> _ {
                 let shutdown = rocket.shutdown();
                 tokio::spawn(checker::run_checker(checker_db, checker_broadcaster, shutdown));
             })
-        }))
+        }));
+
+    // Serve frontend static files if the directory exists
+    if static_dir.is_dir() {
+        println!("📦 Serving frontend from: {}", static_dir.display());
+        build = build
+            .mount("/", FileServer::new(&static_dir, Options::Index))
+            .mount("/", routes![routes::spa_fallback]);
+    } else {
+        println!(
+            "⚠️  Frontend directory not found: {} (API-only mode)",
+            static_dir.display()
+        );
+    }
+
+    build
 }

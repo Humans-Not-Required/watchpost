@@ -1,5 +1,6 @@
 use rocket::{get, post, patch, delete, serde::json::Json, State, http::Status};
 use rocket::response::stream::{Event, EventStream};
+use rocket::http::ContentType;
 use crate::db::Db;
 use crate::models::*;
 use crate::auth::{ManageToken, ClientIp, hash_key, generate_key};
@@ -1145,6 +1146,19 @@ fn row_to_monitor(row: &rusqlite::Row) -> Monitor {
         created_at: row.get(14).unwrap(),
         updated_at: row.get(15).unwrap(),
     }
+}
+
+// ── SPA Fallback ──
+
+#[get("/<_path..>", rank = 100)]
+pub fn spa_fallback(_path: std::path::PathBuf) -> Option<(ContentType, Vec<u8>)> {
+    let static_dir: std::path::PathBuf = std::env::var("STATIC_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("../frontend/dist"));
+    let index_path = static_dir.join("index.html");
+    std::fs::read(&index_path)
+        .ok()
+        .map(|bytes| (ContentType::HTML, bytes))
 }
 
 fn verify_manage_key(conn: &rusqlite::Connection, monitor_id: &str, token: &str) -> Result<(), (Status, Json<serde_json::Value>)> {
