@@ -63,20 +63,20 @@
   - Monotonic seq column with backfill migration
   - Default (no cursor) = newest first; with cursor = forward scan (ASC)
   - OpenAPI spec updated
-- Test suite: **27 HTTP integration tests passing** (`cargo test -- --test-threads=1`)
+- Test suite: **30 tests passing** (`cargo test -- --test-threads=1`) — includes 3 heartbeat retention tests
 
 ### What's Next (Priority Order)
 
-1. **Heartbeat retention** — Background task to prune heartbeats older than 90 days
-2. **Loading skeletons** — Replace spinner with skeleton screens on status page and monitor detail
-3. **Edit monitor settings** — Add inline editing of monitor config (name, URL, interval, etc.) when manage key present
-4. **Notification channel management UI** — Add/remove webhook notification channels from the frontend
+1. **Edit monitor settings** — Add inline editing of monitor config (name, URL, interval, etc.) when manage key present
+2. **Notification channel management UI** — Add/remove webhook notification channels from the frontend
+3. **Response time graph** — Visual chart of response times over time on monitor detail page
 
 ### ✅ Completed (most recent)
 
+- **Loading skeleton screens** (commit 488bd55) — Shimmer skeleton loading states for status page and monitor detail, replacing plain spinners
+- **Heartbeat retention** (commit ab480d4) — Auto-prune heartbeats older than 90 days (configurable via HEARTBEAT_RETENTION_DAYS env var). Runs hourly in checker loop. 3 new tests.
 - **DNS for watch.hnrstage.xyz** — Cloudflare wildcard resolves, HTTPS working
 - **Manage key integration** (commit 6ac08cf) — Pause/Resume, Delete (with confirmation), Incident Acknowledgement from UI when `?key=` present
-- **Admin links page** — Already had Watchpost entry
 
 ### ⚠️ Gotchas
 
