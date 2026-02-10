@@ -12,6 +12,7 @@ export default function CreateMonitor({ onCreated, onCancel }) {
     body_contains: '',
     is_public: true,
     confirmation_threshold: 2,
+    response_time_threshold_ms: '',
     tagsInput: '',
   });
   const [submitting, setSubmitting] = useState(false);
@@ -38,6 +39,9 @@ export default function CreateMonitor({ onCreated, onCancel }) {
       };
       if (form.body_contains.trim()) {
         payload.body_contains = form.body_contains.trim();
+      }
+      if (form.response_time_threshold_ms !== '') {
+        payload.response_time_threshold_ms = parseInt(form.response_time_threshold_ms, 10);
       }
       const tags = form.tagsInput.split(',').map(t => t.trim()).filter(Boolean);
       if (tags.length > 0) {
@@ -230,6 +234,19 @@ export default function CreateMonitor({ onCreated, onCancel }) {
                 <option value="private">Private (API access only)</option>
               </select>
             </div>
+          </div>
+
+          <div className="form-group">
+            <label className="form-label">Response Time Alert (ms, optional)</label>
+            <input
+              className="form-input"
+              type="number"
+              min="100"
+              placeholder="e.g. 2000"
+              value={form.response_time_threshold_ms}
+              onChange={(e) => update('response_time_threshold_ms', e.target.value)}
+            />
+            <div className="form-help">Mark as degraded when response time exceeds this threshold. Leave empty to disable.</div>
           </div>
 
           <div className="form-group">

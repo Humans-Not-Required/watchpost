@@ -96,11 +96,13 @@ pub fn create_monitor(
     let manage_key = generate_key();
     let key_hash = hash_key(&manage_key);
     let tags_str = tags_to_string(&data.tags);
+    // Validate response_time_threshold_ms: must be >= 100ms if provided
+    let rt_threshold = data.response_time_threshold_ms.map(|v| v.max(100));
 
     let conn = db.conn.lock().unwrap();
     conn.execute(
-        "INSERT INTO monitors (id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, manage_key_hash, is_public, confirmation_threshold, tags)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+        "INSERT INTO monitors (id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, manage_key_hash, is_public, confirmation_threshold, tags, response_time_threshold_ms)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
         params![
             id,
             data.name.trim(),
@@ -115,6 +117,7 @@ pub fn create_monitor(
             data.is_public as i32,
             confirmation,
             tags_str,
+            rt_threshold,
         ],
     ).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({
         "error": format!("DB error: {}", e), "code": "INTERNAL_ERROR"
@@ -142,7 +145,7 @@ pub fn list_monitors(search: Option<&str>, status: Option<&str>, tag: Option<&st
     let conn = db.conn.lock().unwrap();
 
     let mut sql = String::from(
-        "SELECT id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, is_public, is_paused, current_status, last_checked_at, confirmation_threshold, created_at, updated_at, tags
+        "SELECT id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, is_public, is_paused, current_status, last_checked_at, confirmation_threshold, created_at, updated_at, tags, response_time_threshold_ms
          FROM monitors WHERE is_public = 1"
     );
     let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
@@ -246,6 +249,15 @@ pub fn update_monitor(
     if let Some(ref tags) = data.tags {
         updates.push(format!("tags = ?{}", values.len() + 1));
         values.push(Box::new(tags_to_string(tags)));
+    }
+
+    // response_time_threshold_ms: Some(Some(val)) = set, Some(None) = clear, None = no change
+    if let Some(ref rt_opt) = data.response_time_threshold_ms {
+        updates.push(format!("response_time_threshold_ms = ?{}", values.len() + 1));
+        match rt_opt {
+            Some(val) => values.push(Box::new(Some((*val).max(100)))),
+            None => values.push(Box::new(None::<u32>)),
+        }
     }
 
     if updates.is_empty() {
@@ -786,7 +798,12 @@ GET /api/v1/status — Public status page
 GET, HEAD, POST
 
 ## Check Statuses
-up, down, degraded (>5s response), unknown (never checked)
+up, down, degraded (response time exceeds threshold), unknown (never checked)
+
+## Response Time Alerts
+Set response_time_threshold_ms on a monitor to get degraded status when response time exceeds threshold.
+Triggers monitor.degraded / monitor.recovered webhook events.
+Set to null to disable. Minimum: 100ms.
 
 ## Notification Types
 webhook (POST JSON to URL), email
@@ -1176,6 +1193,7 @@ const OPENAPI_JSON: &str = r##"{
           "current_status": { "type": "string", "enum": ["unknown", "up", "down", "degraded"] },
           "last_checked_at": { "type": "string", "nullable": true },
           "confirmation_threshold": { "type": "integer" },
+          "response_time_threshold_ms": { "type": "integer", "nullable": true, "description": "Mark as degraded when response time exceeds this (ms). Null = disabled." },
           "tags": { "type": "array", "items": { "type": "string" }, "description": "Freeform tags for grouping monitors" },
           "created_at": { "type": "string" },
           "updated_at": { "type": "string" }
@@ -1195,6 +1213,7 @@ const OPENAPI_JSON: &str = r##"{
           "headers": { "type": "object" },
           "is_public": { "type": "boolean", "default": false },
           "confirmation_threshold": { "type": "integer", "minimum": 1, "maximum": 10, "default": 2 },
+          "response_time_threshold_ms": { "type": "integer", "minimum": 100, "nullable": true, "description": "Alert when response time exceeds this threshold (ms). Null = disabled." },
           "tags": { "type": "array", "items": { "type": "string" }, "description": "Freeform tags for grouping" }
         }
       },
@@ -1211,6 +1230,7 @@ const OPENAPI_JSON: &str = r##"{
           "headers": { "type": "object" },
           "is_public": { "type": "boolean" },
           "confirmation_threshold": { "type": "integer" },
+          "response_time_threshold_ms": { "type": "integer", "minimum": 100, "nullable": true, "description": "Set to threshold value, or null to disable." },
           "tags": { "type": "array", "items": { "type": "string" } }
         }
       },
@@ -1362,7 +1382,7 @@ pub fn monitor_events<'a>(id: &'a str, broadcaster: &'a State<Arc<EventBroadcast
 
 fn get_monitor_from_db(conn: &rusqlite::Connection, id: &str) -> rusqlite::Result<Monitor> {
     conn.query_row(
-        "SELECT id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, is_public, is_paused, current_status, last_checked_at, confirmation_threshold, created_at, updated_at, tags
+        "SELECT id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, is_public, is_paused, current_status, last_checked_at, confirmation_threshold, created_at, updated_at, tags, response_time_threshold_ms
          FROM monitors WHERE id = ?1",
         params![id],
         |row| Ok(row_to_monitor(row)),
@@ -1403,6 +1423,7 @@ fn row_to_monitor(row: &rusqlite::Row) -> Monitor {
         current_status: row.get(11).unwrap(),
         last_checked_at: row.get(12).unwrap_or(None),
         confirmation_threshold: row.get(13).unwrap(),
+        response_time_threshold_ms: row.get::<_, Option<u32>>(17).unwrap_or(None),
         tags: parse_tags(&tags_str),
         created_at: row.get(14).unwrap(),
         updated_at: row.get(15).unwrap(),

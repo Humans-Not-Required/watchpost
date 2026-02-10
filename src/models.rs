@@ -1,5 +1,15 @@
 use serde::{Deserialize, Serialize};
 
+/// Deserialize a double-option field: absent → None, null → Some(None), value → Some(Some(v))
+fn deserialize_optional_nullable<'de, T, D>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    T: Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    // If serde calls this, the field was present in JSON
+    Ok(Some(Option::deserialize(deserializer)?))
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Monitor {
     pub id: String,
@@ -19,6 +29,8 @@ pub struct Monitor {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_checked_at: Option<String>,
     pub confirmation_threshold: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_time_threshold_ms: Option<u32>,
     pub tags: Vec<String>,
     pub created_at: String,
     pub updated_at: String,
@@ -41,6 +53,7 @@ pub struct CreateMonitor {
     #[serde(default)]
     pub is_public: bool,
     pub confirmation_threshold: Option<u32>,
+    pub response_time_threshold_ms: Option<u32>,
     #[serde(default)]
     pub tags: Vec<String>,
 }
@@ -62,6 +75,8 @@ pub struct UpdateMonitor {
     pub headers: Option<serde_json::Value>,
     pub is_public: Option<bool>,
     pub confirmation_threshold: Option<u32>,
+    #[serde(default, deserialize_with = "deserialize_optional_nullable")]
+    pub response_time_threshold_ms: Option<Option<u32>>,
     pub tags: Option<Vec<String>>,
 }
 

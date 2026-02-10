@@ -56,7 +56,7 @@ pub async fn run_checker(db: Arc<Db>, broadcaster: Arc<EventBroadcaster>, shutdo
         let monitor = {
             let conn = db.conn.lock().unwrap();
             conn.query_row(
-                "SELECT id, name, url, method, timeout_ms, expected_status, body_contains, headers, confirmation_threshold, consecutive_failures, current_status, interval_seconds
+                "SELECT id, name, url, method, timeout_ms, expected_status, body_contains, headers, confirmation_threshold, consecutive_failures, current_status, interval_seconds, response_time_threshold_ms
                  FROM monitors
                  WHERE is_paused = 0
                    AND (last_checked_at IS NULL OR datetime(last_checked_at, '+' || interval_seconds || ' seconds') <= datetime('now'))
@@ -78,6 +78,7 @@ pub async fn run_checker(db: Arc<Db>, broadcaster: Arc<EventBroadcaster>, shutdo
                         consecutive_failures: row.get(9)?,
                         current_status: row.get(10)?,
                         interval_seconds: row.get(11)?,
+                        response_time_threshold_ms: row.get(12)?,
                     })
                 },
             ).ok()
@@ -118,6 +119,7 @@ struct MonitorCheck {
     current_status: String,
     #[allow(dead_code)]
     interval_seconds: u32,
+    response_time_threshold_ms: Option<u32>,
 }
 
 async fn run_check(client: &reqwest::Client, db: &Db, broadcaster: &EventBroadcaster, monitor: &MonitorCheck) {
@@ -149,6 +151,9 @@ async fn run_check(client: &reqwest::Client, db: &Db, broadcaster: &EventBroadca
     let result = req.send().await;
     let elapsed_ms = start.elapsed().as_millis() as u32;
 
+    // Use per-monitor response time threshold if configured, otherwise no degraded-by-latency
+    let rt_threshold = monitor.response_time_threshold_ms;
+
     let (status, status_code, error_message) = match result {
         Ok(resp) => {
             let code = resp.status().as_u16();
@@ -157,8 +162,12 @@ async fn run_check(client: &reqwest::Client, db: &Db, broadcaster: &EventBroadca
             } else if let Some(ref expected_body) = monitor.body_contains {
                 match resp.text().await {
                     Ok(body) if body.contains(expected_body) => {
-                        if elapsed_ms > 5000 {
-                            ("degraded".to_string(), Some(code), None)
+                        if let Some(threshold) = rt_threshold {
+                            if elapsed_ms > threshold {
+                                ("degraded".to_string(), Some(code), Some(format!("Response time {}ms exceeds {}ms threshold", elapsed_ms, threshold)))
+                            } else {
+                                ("up".to_string(), Some(code), None)
+                            }
                         } else {
                             ("up".to_string(), Some(code), None)
                         }
@@ -166,8 +175,12 @@ async fn run_check(client: &reqwest::Client, db: &Db, broadcaster: &EventBroadca
                     Ok(_) => ("down".to_string(), Some(code), Some("Body match failed".to_string())),
                     Err(e) => ("down".to_string(), Some(code), Some(format!("Body read error: {}", e))),
                 }
-            } else if elapsed_ms > 5000 {
-                ("degraded".to_string(), Some(code), None)
+            } else if let Some(threshold) = rt_threshold {
+                if elapsed_ms > threshold {
+                    ("degraded".to_string(), Some(code), Some(format!("Response time {}ms exceeds {}ms threshold", elapsed_ms, threshold)))
+                } else {
+                    ("up".to_string(), Some(code), None)
+                }
             } else {
                 ("up".to_string(), Some(code), None)
             }
@@ -242,6 +255,32 @@ async fn run_check(client: &reqwest::Client, db: &Db, broadcaster: &EventBroadca
                     started_at: now_str.clone(),
                     resolved_at: None,
                 }),
+                timestamp: now_str,
+            });
+        } else if prev_status != "degraded" && effective_status == "degraded" {
+            // Transition to degraded — notify but don't create incident
+            webhook_event = Some(WebhookPayload {
+                event: "monitor.degraded".to_string(),
+                monitor: WebhookMonitor {
+                    id: monitor.id.clone(),
+                    name: monitor.name.clone(),
+                    url: monitor.url.clone(),
+                    current_status: "degraded".to_string(),
+                },
+                incident: None,
+                timestamp: now_str,
+            });
+        } else if prev_status == "degraded" && effective_status == "up" {
+            // Recovered from degraded — notify
+            webhook_event = Some(WebhookPayload {
+                event: "monitor.recovered".to_string(),
+                monitor: WebhookMonitor {
+                    id: monitor.id.clone(),
+                    name: monitor.name.clone(),
+                    url: monitor.url.clone(),
+                    current_status: "up".to_string(),
+                },
+                incident: None,
                 timestamp: now_str,
             });
         } else if prev_status == "down" && effective_status != "down" {

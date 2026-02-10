@@ -540,6 +540,7 @@ function EditMonitorForm({ monitor, manageKey, onSaved, onCancel }) {
     timeout_ms: monitor.timeout_ms || 10000,
     expected_status: monitor.expected_status || 200,
     confirmation_threshold: monitor.confirmation_threshold || 3,
+    response_time_threshold_ms: monitor.response_time_threshold_ms ?? '',
     body_contains: monitor.body_contains || '',
     is_public: monitor.is_public ?? true,
     tagsInput: (monitor.tags || []).join(', '),
@@ -566,6 +567,10 @@ function EditMonitorForm({ monitor, manageKey, onSaved, onCancel }) {
       if (form.timeout_ms !== monitor.timeout_ms) patch.timeout_ms = Number(form.timeout_ms);
       if (form.expected_status !== monitor.expected_status) patch.expected_status = Number(form.expected_status);
       if (form.confirmation_threshold !== monitor.confirmation_threshold) patch.confirmation_threshold = Number(form.confirmation_threshold);
+      // Handle response_time_threshold_ms: '' means clear (null), number means set
+      const newRtThreshold = form.response_time_threshold_ms === '' ? null : Number(form.response_time_threshold_ms);
+      const oldRtThreshold = monitor.response_time_threshold_ms ?? null;
+      if (newRtThreshold !== oldRtThreshold) patch.response_time_threshold_ms = newRtThreshold;
       if ((form.body_contains || '') !== (monitor.body_contains || '')) patch.body_contains = form.body_contains || null;
       if (form.is_public !== monitor.is_public) patch.is_public = form.is_public;
       const newTags = form.tagsInput.split(',').map(t => t.trim()).filter(Boolean);
@@ -640,9 +645,15 @@ function EditMonitorForm({ monitor, manageKey, onSaved, onCancel }) {
           <div className="form-help">Consecutive failures before incident</div>
         </div>
         <div className="form-group">
-          <label className="form-label">Body Contains</label>
-          <input className="form-input" value={form.body_contains} onChange={e => set('body_contains', e.target.value)} placeholder="Optional text to match in response" />
+          <label className="form-label">Response Time Alert (ms)</label>
+          <input className="form-input" type="number" min="100" placeholder="Disabled" value={form.response_time_threshold_ms} onChange={e => set('response_time_threshold_ms', e.target.value)} />
+          <div className="form-help">Mark as degraded above this threshold. Empty = disabled.</div>
         </div>
+      </div>
+
+      <div className="form-group">
+        <label className="form-label">Body Contains</label>
+        <input className="form-input" value={form.body_contains} onChange={e => set('body_contains', e.target.value)} placeholder="Optional text to match in response" />
       </div>
 
       <div className="form-group">
@@ -859,6 +870,10 @@ export default function MonitorDetail({ id, manageKey, onBack }) {
           <div className="monitor-stat">
             <span className="monitor-stat-label">Confirm</span>
             <span className="monitor-stat-value">{monitor.confirmation_threshold}x</span>
+          </div>
+          <div className="monitor-stat">
+            <span className="monitor-stat-label">RT Alert</span>
+            <span className="monitor-stat-value">{monitor.response_time_threshold_ms ? `${monitor.response_time_threshold_ms}ms` : 'Off'}</span>
           </div>
           <div className="monitor-stat">
             <span className="monitor-stat-label">Last Check</span>

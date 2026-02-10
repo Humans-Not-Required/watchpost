@@ -964,3 +964,82 @@ fn test_list_tags_endpoint() {
     // Should have api, prod, staging (sorted), no "secret"
     assert_eq!(body, vec!["api", "prod", "staging"]);
 }
+
+#[test]
+fn test_create_monitor_with_response_time_threshold() {
+    let client = test_client();
+
+    // Create with threshold
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "RT Alert Test", "url": "https://example.com", "is_public": true, "response_time_threshold_ms": 2000}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["monitor"]["response_time_threshold_ms"], 2000);
+
+    let id = body["monitor"]["id"].as_str().unwrap();
+    // Verify on GET
+    let resp = client.get(format!("/api/v1/monitors/{}", id)).dispatch();
+    let monitor: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(monitor["response_time_threshold_ms"], 2000);
+}
+
+#[test]
+fn test_create_monitor_without_response_time_threshold() {
+    let client = test_client();
+
+    // Create without threshold — should be null
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "No RT Threshold", "url": "https://example.com", "is_public": true}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert!(body["monitor"]["response_time_threshold_ms"].is_null());
+}
+
+#[test]
+fn test_update_monitor_response_time_threshold() {
+    let client = test_client();
+    let (id, key) = create_test_monitor(&client);
+
+    // Set threshold
+    let resp = client.patch(format!("/api/v1/monitors/{}", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"response_time_threshold_ms": 1500}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+
+    // Verify
+    let resp = client.get(format!("/api/v1/monitors/{}", id)).dispatch();
+    let monitor: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(monitor["response_time_threshold_ms"], 1500);
+
+    // Clear threshold by setting to null
+    let resp = client.patch(format!("/api/v1/monitors/{}", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"response_time_threshold_ms": null}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+
+    let resp = client.get(format!("/api/v1/monitors/{}", id)).dispatch();
+    let monitor: serde_json::Value = resp.into_json().unwrap();
+    assert!(monitor["response_time_threshold_ms"].is_null());
+}
+
+#[test]
+fn test_response_time_threshold_minimum_enforced() {
+    let client = test_client();
+
+    // Create with threshold below minimum (100ms) — should be clamped
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Low RT", "url": "https://example.com", "is_public": true, "response_time_threshold_ms": 50}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["monitor"]["response_time_threshold_ms"], 100);
+}

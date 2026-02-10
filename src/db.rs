@@ -85,6 +85,9 @@ impl Db {
         conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_incidents_seq ON incidents(seq);").ok();
         conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_incidents_monitor_seq ON incidents(monitor_id, seq);").ok();
 
+        // Add response_time_threshold_ms column to monitors
+        conn.execute_batch("ALTER TABLE monitors ADD COLUMN response_time_threshold_ms INTEGER;").ok();
+
         // Backfill seq for existing heartbeats
         let needs_hb_backfill: i64 = conn
             .query_row("SELECT COUNT(*) FROM heartbeats WHERE seq IS NULL", [], |r| r.get(0))
