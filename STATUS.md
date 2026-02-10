@@ -63,16 +63,17 @@
   - Monotonic seq column with backfill migration
   - Default (no cursor) = newest first; with cursor = forward scan (ASC)
   - OpenAPI spec updated
-- Test suite: **59 tests passing** (`cargo test -- --test-threads=1`) — includes 7 maintenance window tests + 4 response time alert tests + 6 tag tests + 3 search/filter tests + 3 heartbeat retention tests + 2 notification toggle tests
+- Test suite: **62 tests passing** (`cargo test -- --test-threads=1`) — includes 3 dashboard tests + 7 maintenance window tests + 4 response time alert tests + 6 tag tests + 3 search/filter tests + 3 heartbeat retention tests + 2 notification toggle tests
 
 ### What's Next (Priority Order)
 
-1. **Dashboard overview** — Summary page showing aggregate stats across all monitors (total monitors, overall uptime %, active incidents, charts)
-2. **Multi-region checks** — Check from multiple locations, consensus-based status
-3. **Email notifications** — SMTP config for sending email alerts on incidents
+1. **Multi-region checks** — Check from multiple locations, consensus-based status
+2. **Email notifications** — SMTP config for sending email alerts on incidents
+3. **Dashboard uptime history chart** — Time-series uptime chart on dashboard (visual trend over days/weeks)
 
 ### ✅ Completed (most recent)
 
+- **Dashboard overview** (commit 3c88ba9) — New `GET /api/v1/dashboard` endpoint with aggregate stats: total/public/paused counts, status breakdown, active incidents, avg uptime 24h/7d, avg response time, recent 10 incidents (with monitor names), top 5 slowest monitors. React frontend: stat cards with color-coded values, horizontal status bar visualization, recent incidents list (clickable → monitor detail), slowest monitors ranking, auto-refresh 30s, responsive grid (4→2→2 col). Dashboard is now the default landing page (/ → dashboard, #/status → status). Nav updated with 📊 Dashboard tab. OpenAPI spec + llms.txt updated. 3 new tests (62 total).
 - **Bulk import UI** (commit aa3d850) — New "📦 Bulk Import" page in nav bar. Paste JSON array or upload .json file to create up to 50 monitors at once. Client-side validation (name, url, method, interval, limit). Preview table before submission. Results view with manage keys table and "Copy All Keys as JSON" button. Handles partial failures (shows created + failed). Accepts both `[...]` and `{monitors: [...]}` formats. Uses existing bulk create API endpoint.
 - **Maintenance window UI** (commit df53871) — New "🔧 Maintenance" tab on monitor detail page. Lists windows categorized as Active Now (warning badge), Upcoming (accent badge), and Completed (muted badge). Create form with datetime-local inputs that auto-convert to UTC for the API. Delete button with manage key auth. Tab bar now wraps on mobile (flexWrap). API functions added to frontend: getMaintenanceWindows, createMaintenanceWindow, deleteMaintenanceWindow.
 - **Maintenance windows** (commit 7264b30) — `POST /api/v1/monitors/:id/maintenance` creates scheduled downtime windows. During active windows, checker suppresses incident creation and sets monitor status to "maintenance" instead of "down". Heartbeats still recorded. SSE events: `maintenance.started`, `maintenance.ended`. CRUD API with auth. Status page treats maintenance as operational. Cascade delete with monitors. Full validation (ISO-8601 timestamps, ordering). OpenAPI spec + llms.txt updated. 7 new tests (59 total).
