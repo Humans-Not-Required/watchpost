@@ -135,15 +135,37 @@ pub fn create_monitor(
 
 // ── List Monitors (public only) ──
 
-#[get("/monitors")]
-pub fn list_monitors(db: &State<Arc<Db>>) -> Result<Json<Vec<Monitor>>, (Status, Json<serde_json::Value>)> {
+#[get("/monitors?<search>&<status>")]
+pub fn list_monitors(search: Option<&str>, status: Option<&str>, db: &State<Arc<Db>>) -> Result<Json<Vec<Monitor>>, (Status, Json<serde_json::Value>)> {
     let conn = db.conn.lock().unwrap();
-    let mut stmt = conn.prepare(
-        "SELECT id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, is_public, is_paused, current_status, last_checked_at, confirmation_threshold, created_at, updated_at
-         FROM monitors WHERE is_public = 1 ORDER BY name"
-    ).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
 
-    let monitors = stmt.query_map([], |row| {
+    let mut sql = String::from(
+        "SELECT id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, is_public, is_paused, current_status, last_checked_at, confirmation_threshold, created_at, updated_at
+         FROM monitors WHERE is_public = 1"
+    );
+    let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+
+    if let Some(q) = search {
+        let q = q.trim();
+        if !q.is_empty() {
+            param_values.push(Box::new(format!("%{}%", q)));
+            sql.push_str(&format!(" AND (name LIKE ?{n} OR url LIKE ?{n})", n = param_values.len()));
+        }
+    }
+    if let Some(s) = status {
+        let s = s.trim().to_lowercase();
+        if !s.is_empty() && ["up", "down", "degraded", "unknown"].contains(&s.as_str()) {
+            param_values.push(Box::new(s));
+            sql.push_str(&format!(" AND current_status = ?{}", param_values.len()));
+        }
+    }
+    sql.push_str(" ORDER BY name");
+
+    let mut stmt = conn.prepare(&sql)
+        .map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
+    let params: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|v| v.as_ref()).collect();
+
+    let monitors = stmt.query_map(params.as_slice(), |row| {
         Ok(row_to_monitor(row))
     }).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?
     .filter_map(|r| r.ok())
@@ -457,14 +479,34 @@ pub fn acknowledge_incident(
 
 // ── Status Page ──
 
-#[get("/status")]
-pub fn status_page(db: &State<Arc<Db>>) -> Result<Json<StatusOverview>, (Status, Json<serde_json::Value>)> {
+#[get("/status?<search>&<status>")]
+pub fn status_page(search: Option<&str>, status: Option<&str>, db: &State<Arc<Db>>) -> Result<Json<StatusOverview>, (Status, Json<serde_json::Value>)> {
     let conn = db.conn.lock().unwrap();
-    let mut stmt = conn.prepare(
-        "SELECT id, name, url, current_status, last_checked_at FROM monitors WHERE is_public = 1 ORDER BY name"
-    ).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
 
-    let monitors: Vec<StatusMonitor> = stmt.query_map([], |row| {
+    let mut sql = String::from("SELECT id, name, url, current_status, last_checked_at FROM monitors WHERE is_public = 1");
+    let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+
+    if let Some(q) = search {
+        let q = q.trim();
+        if !q.is_empty() {
+            param_values.push(Box::new(format!("%{}%", q)));
+            sql.push_str(&format!(" AND (name LIKE ?{n} OR url LIKE ?{n})", n = param_values.len()));
+        }
+    }
+    if let Some(s) = status {
+        let s = s.trim().to_lowercase();
+        if !s.is_empty() && ["up", "down", "degraded", "unknown"].contains(&s.as_str()) {
+            param_values.push(Box::new(s));
+            sql.push_str(&format!(" AND current_status = ?{}", param_values.len()));
+        }
+    }
+    sql.push_str(" ORDER BY name");
+
+    let mut stmt = conn.prepare(&sql)
+        .map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
+    let params: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|v| v.as_ref()).collect();
+
+    let monitors: Vec<StatusMonitor> = stmt.query_map(params.as_slice(), |row| {
         let id: String = row.get(0)?;
         let status: String = row.get(3)?;
         Ok((id, row.get(1)?, row.get(2)?, status, row.get::<_, Option<String>>(4)?))
@@ -693,9 +735,14 @@ GET /api/v1/monitors/:id/events — per-monitor event stream
 
 Event types: check.completed, incident.created, incident.resolved
 
+## Search & Filter
+GET /api/v1/monitors?search=keyword — filter by name/URL
+GET /api/v1/monitors?status=up — filter by status (up/down/degraded/unknown)
+GET /api/v1/status?search=keyword&status=down — combined filters
+
 ## Endpoints
 POST /api/v1/monitors — create monitor
-GET /api/v1/monitors — list public monitors
+GET /api/v1/monitors — list public monitors (supports ?search= and ?status= filters)
 GET /api/v1/monitors/:id — get monitor
 PATCH /api/v1/monitors/:id — update (auth)
 DELETE /api/v1/monitors/:id — delete (auth)
@@ -748,6 +795,10 @@ const OPENAPI_JSON: &str = r##"{
         "summary": "List public monitors",
         "operationId": "listMonitors",
         "tags": ["monitors"],
+        "parameters": [
+          { "name": "search", "in": "query", "schema": { "type": "string" }, "description": "Filter monitors by name or URL (case-insensitive substring match)" },
+          { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["up", "down", "degraded", "unknown"] }, "description": "Filter by current status" }
+        ],
         "responses": {
           "200": { "description": "List of public monitors", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Monitor" } } } } }
         }
@@ -965,6 +1016,10 @@ const OPENAPI_JSON: &str = r##"{
         "summary": "Public status page",
         "operationId": "statusPage",
         "tags": ["status"],
+        "parameters": [
+          { "name": "search", "in": "query", "schema": { "type": "string" }, "description": "Filter monitors by name or URL (case-insensitive substring match)" },
+          { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["up", "down", "degraded", "unknown"] }, "description": "Filter by current status" }
+        ],
         "responses": {
           "200": { "description": "Status overview", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/StatusOverview" } } } }
         }

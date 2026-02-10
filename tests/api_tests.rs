@@ -711,3 +711,97 @@ fn test_notification_toggle_wrong_key() {
         .dispatch();
     assert_eq!(resp.status(), Status::Forbidden);
 }
+
+#[test]
+fn test_search_monitors_by_name() {
+    let client = test_client();
+
+    // Create two public monitors with distinct names
+    client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Alpha API", "url": "https://alpha.example.com", "is_public": true}"#)
+        .dispatch();
+    client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Beta Dashboard", "url": "https://beta.example.com", "is_public": true}"#)
+        .dispatch();
+
+    // Search for "Alpha"
+    let resp = client.get("/api/v1/monitors?search=Alpha").dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert_eq!(body.len(), 1);
+    assert_eq!(body[0]["name"], "Alpha API");
+
+    // Search for "example" (URL match) — both match
+    let resp = client.get("/api/v1/monitors?search=example").dispatch();
+    let body: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert_eq!(body.len(), 2);
+
+    // Search for something that doesn't exist
+    let resp = client.get("/api/v1/monitors?search=nonexistent").dispatch();
+    let body: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert_eq!(body.len(), 0);
+}
+
+#[test]
+fn test_filter_monitors_by_status() {
+    let client = test_client();
+
+    // Create a public monitor (default status = "unknown")
+    create_test_monitor(&client);
+
+    // Filter by unknown status — should find it
+    let resp = client.get("/api/v1/monitors?status=unknown").dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert_eq!(body.len(), 1);
+
+    // Filter by up status — should find nothing (monitor hasn't been checked)
+    let resp = client.get("/api/v1/monitors?status=up").dispatch();
+    let body: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert_eq!(body.len(), 0);
+
+    // Invalid status value should be ignored (return all)
+    let resp = client.get("/api/v1/monitors?status=invalid").dispatch();
+    let body: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert_eq!(body.len(), 1);
+}
+
+#[test]
+fn test_status_page_search_filter() {
+    let client = test_client();
+
+    // Create public monitors
+    client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Prod API", "url": "https://prod.example.com", "is_public": true}"#)
+        .dispatch();
+    client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Staging API", "url": "https://staging.example.com", "is_public": true}"#)
+        .dispatch();
+
+    // Full status page (no filters)
+    let resp = client.get("/api/v1/status").dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["monitors"].as_array().unwrap().len(), 2);
+
+    // Search filter on status page
+    let resp = client.get("/api/v1/status?search=Prod").dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["monitors"].as_array().unwrap().len(), 1);
+    assert_eq!(body["monitors"][0]["name"], "Prod API");
+
+    // Status filter on status page
+    let resp = client.get("/api/v1/status?status=unknown").dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["monitors"].as_array().unwrap().len(), 2);
+
+    // Combined search + status filter
+    let resp = client.get("/api/v1/status?search=Staging&status=unknown").dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["monitors"].as_array().unwrap().len(), 1);
+    assert_eq!(body["monitors"][0]["name"], "Staging API");
+}

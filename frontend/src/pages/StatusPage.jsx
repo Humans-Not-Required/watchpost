@@ -28,10 +28,20 @@ function formatMs(ms) {
   return `${Math.round(ms)}ms`;
 }
 
+const STATUS_FILTERS = [
+  { value: null, label: 'All' },
+  { value: 'up', label: '✅ Up' },
+  { value: 'down', label: '🔴 Down' },
+  { value: 'degraded', label: '⚠️ Degraded' },
+  { value: 'unknown', label: '⏳ Unknown' },
+];
+
 export default function StatusPage({ onSelect }) {
   const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState(null);
 
   useEffect(() => {
     let mounted = true;
@@ -89,19 +99,61 @@ export default function StatusPage({ onSelect }) {
 
   const { monitors, overall } = status;
 
+  const filtered = monitors.filter((m) => {
+    if (statusFilter && m.current_status !== statusFilter) return false;
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      if (!m.name.toLowerCase().includes(q) && !m.url.toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+
   return (
     <div>
       <div className={`status-banner ${overall}`}>
         {STATUS_LABELS[overall] || overall}
       </div>
 
+      {monitors.length > 0 && (
+        <div className="filter-bar">
+          <input
+            type="text"
+            className="search-input"
+            placeholder="Search monitors by name or URL..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+          <div className="status-chips">
+            {STATUS_FILTERS.map((f) => (
+              <button
+                key={f.label}
+                className={`chip ${statusFilter === f.value ? 'chip-active' : ''}`}
+                onClick={() => setStatusFilter(statusFilter === f.value ? null : f.value)}
+              >
+                {f.label}
+                {f.value && (
+                  <span className="chip-count">
+                    {monitors.filter((m) => m.current_status === f.value).length}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {monitors.length === 0 ? (
         <div className="empty-state">
           <h3>No monitors yet</h3>
           <p>Create your first monitor to start tracking uptime.</p>
         </div>
+      ) : filtered.length === 0 ? (
+        <div className="empty-state">
+          <h3>No matches</h3>
+          <p>No monitors match your search{statusFilter ? ` and "${statusFilter}" filter` : ''}.</p>
+        </div>
       ) : (
-        monitors.map((m) => (
+        filtered.map((m) => (
           <div
             key={m.id}
             className="card card-clickable"
