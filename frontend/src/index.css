@@ -459,6 +459,77 @@ input, select, textarea {
   to { transform: rotate(360deg); }
 }
 
+/* Skeleton Loading */
+@keyframes shimmer {
+  0% { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, var(--card-bg) 25%, rgba(255,255,255,0.06) 50%, var(--card-bg) 75%);
+  background-size: 800px 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+  border-radius: 6px;
+}
+.skeleton-text {
+  height: 14px;
+  margin-bottom: 8px;
+}
+.skeleton-text.wide { width: 80%; }
+.skeleton-text.medium { width: 50%; }
+.skeleton-text.short { width: 30%; }
+.skeleton-badge {
+  display: inline-block;
+  width: 64px;
+  height: 24px;
+  border-radius: 12px;
+}
+.skeleton-stat {
+  height: 32px;
+  width: 60px;
+}
+.skeleton-card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 12px;
+}
+.skeleton-banner {
+  height: 48px;
+  border-radius: 12px;
+  margin-bottom: 16px;
+}
+.skeleton-bar-segment {
+  display: inline-block;
+  width: 8px;
+  height: 28px;
+  border-radius: 2px;
+  margin-right: 2px;
+}
+.skeleton-uptime-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-top: 16px;
+}
+.skeleton-uptime-cell {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  text-align: center;
+}
+.skeleton-uptime-value {
+  height: 28px;
+  width: 60px;
+  margin: 0 auto 8px;
+}
+.skeleton-uptime-label {
+  height: 12px;
+  width: 80px;
+  margin: 0 auto;
+}
+
 /* Responsive */
 @media (max-width: 640px) {
   .form-row {

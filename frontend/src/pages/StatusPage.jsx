@@ -55,7 +55,27 @@ export default function StatusPage({ onSelect }) {
   }, []);
 
   if (loading) {
-    return <div className="loading"><div className="spinner" /> Loading status...</div>;
+    return (
+      <div>
+        <div className="skeleton skeleton-banner" />
+        {[1, 2, 3].map((i) => (
+          <div key={i} className="skeleton-card">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <div className="skeleton skeleton-text medium" style={{ marginBottom: 0 }} />
+              <div className="skeleton skeleton-badge" />
+            </div>
+            <div className="monitor-stats">
+              {[1, 2, 3, 4].map((j) => (
+                <div key={j} className="monitor-stat">
+                  <div className="skeleton skeleton-text short" />
+                  <div className="skeleton skeleton-stat" />
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    );
   }
 
   if (error) {

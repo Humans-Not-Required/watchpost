@@ -263,7 +263,45 @@ export default function MonitorDetail({ id, manageKey, onBack }) {
   }, [id]);
 
   if (loading) {
-    return <div className="loading"><div className="spinner" /> Loading monitor...</div>;
+    return (
+      <div>
+        <div style={{ padding: '16px 0' }}>
+          <div className="skeleton skeleton-text short" />
+        </div>
+        <div className="skeleton-card">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <div>
+              <div className="skeleton skeleton-text wide" style={{ height: 20, width: 200 }} />
+              <div className="skeleton skeleton-text medium" style={{ marginTop: 8, width: 280 }} />
+            </div>
+            <div className="skeleton skeleton-badge" />
+          </div>
+          <div className="monitor-stats">
+            {[1, 2, 3, 4, 5].map((j) => (
+              <div key={j} className="monitor-stat">
+                <div className="skeleton skeleton-text short" />
+                <div className="skeleton skeleton-stat" />
+              </div>
+            ))}
+          </div>
+        </div>
+        {/* Uptime bar skeleton */}
+        <div style={{ display: 'flex', gap: 2, margin: '16px 0' }}>
+          {Array.from({ length: 40 }, (_, i) => (
+            <div key={i} className="skeleton skeleton-bar-segment" />
+          ))}
+        </div>
+        {/* Uptime stats skeleton */}
+        <div className="skeleton-uptime-grid">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="skeleton-uptime-cell">
+              <div className="skeleton skeleton-uptime-value" />
+              <div className="skeleton skeleton-uptime-label" />
+            </div>
+          ))}
+        </div>
+      </div>
+    );
   }
 
   const reload = async () => {
