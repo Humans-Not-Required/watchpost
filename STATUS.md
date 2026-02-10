@@ -67,12 +67,13 @@
 
 ### What's Next (Priority Order)
 
-1. **Frontend: maintenance window UI** — Show maintenance windows in monitor detail, create/delete from UI
+1. **Frontend: bulk import UI** — Upload JSON or paste config to bulk-create monitors from the web UI
 2. **Multi-region checks** — Check from multiple locations, consensus-based status
-3. **Frontend: bulk import UI** — Upload JSON or paste config to bulk-create monitors from the web UI
+3. **Dashboard overview** — Summary page showing aggregate stats across all monitors
 
 ### ✅ Completed (most recent)
 
+- **Maintenance window UI** (commit df53871) — New "🔧 Maintenance" tab on monitor detail page. Lists windows categorized as Active Now (warning badge), Upcoming (accent badge), and Completed (muted badge). Create form with datetime-local inputs that auto-convert to UTC for the API. Delete button with manage key auth. Tab bar now wraps on mobile (flexWrap). API functions added to frontend: getMaintenanceWindows, createMaintenanceWindow, deleteMaintenanceWindow.
 - **Maintenance windows** (commit 7264b30) — `POST /api/v1/monitors/:id/maintenance` creates scheduled downtime windows. During active windows, checker suppresses incident creation and sets monitor status to "maintenance" instead of "down". Heartbeats still recorded. SSE events: `maintenance.started`, `maintenance.ended`. CRUD API with auth. Status page treats maintenance as operational. Cascade delete with monitors. Full validation (ISO-8601 timestamps, ordering). OpenAPI spec + llms.txt updated. 7 new tests (59 total).
 - **Bulk monitor management** (commit 6677b11) — `POST /api/v1/monitors/bulk` creates up to 50 monitors in one request with partial success handling (some may fail while others succeed, each gets its own manage_key). `GET /api/v1/monitors/:id/export` exports config in importable format (requires auth). Full export→reimport roundtrip tested. OpenAPI spec + llms.txt updated. 7 new tests (52 total).
 - **Response time alerts** (commit becb703) — Configurable per-monitor `response_time_threshold_ms` (nullable, min 100ms). Replaces hardcoded 5000ms degraded logic. When response time exceeds threshold, status set to "degraded" with descriptive error message. Fires `monitor.degraded` / `monitor.recovered` webhook + SSE events on transitions. Custom serde double-option deserializer for proper null handling (absent vs null vs value). Frontend: threshold field on create + edit forms, "RT Alert" displayed in monitor config. OpenAPI spec + llms.txt updated. 4 new tests (45 total).
