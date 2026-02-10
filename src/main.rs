@@ -7,6 +7,7 @@ mod routes;
 mod checker;
 mod notifications;
 mod sse;
+mod catchers;
 
 use std::sync::Arc;
 use db::Db;
@@ -51,8 +52,18 @@ fn rocket() -> _ {
             routes::list_notifications,
             routes::delete_notification,
             routes::llms_txt,
+            routes::openapi_spec,
             routes::global_events,
             routes::monitor_events,
+        ])
+        .register("/", catchers![
+            catchers::bad_request,
+            catchers::unauthorized,
+            catchers::forbidden,
+            catchers::not_found,
+            catchers::unprocessable_entity,
+            catchers::too_many_requests,
+            catchers::internal_error,
         ])
         .attach(rocket::fairing::AdHoc::on_liftoff("Checker", move |rocket| {
             Box::pin(async move {

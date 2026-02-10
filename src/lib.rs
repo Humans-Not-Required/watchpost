@@ -5,3 +5,4 @@ pub mod routes;
 pub mod checker;
 pub mod notifications;
 pub mod sse;
+pub mod catchers;

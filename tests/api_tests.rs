@@ -32,8 +32,18 @@ fn test_client() -> Client {
             watchpost::routes::list_notifications,
             watchpost::routes::delete_notification,
             watchpost::routes::llms_txt,
+            watchpost::routes::openapi_spec,
             watchpost::routes::global_events,
             watchpost::routes::monitor_events,
+        ])
+        .register("/", rocket::catchers![
+            watchpost::catchers::bad_request,
+            watchpost::catchers::unauthorized,
+            watchpost::catchers::forbidden,
+            watchpost::catchers::not_found,
+            watchpost::catchers::unprocessable_entity,
+            watchpost::catchers::too_many_requests,
+            watchpost::catchers::internal_error,
         ]);
 
     Client::tracked(rocket).expect("valid rocket instance")
@@ -374,6 +384,47 @@ fn test_monitor_defaults() {
     assert_eq!(m["is_public"], false);
     assert_eq!(m["is_paused"], false);
     assert_eq!(m["confirmation_threshold"], 2);
+}
+
+#[test]
+fn test_openapi_spec() {
+    let client = test_client();
+    let resp = client.get("/api/v1/openapi.json").dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["openapi"], "3.0.3");
+    assert_eq!(body["info"]["title"], "Watchpost");
+    assert!(body["paths"]["/monitors"].is_object());
+    assert!(body["paths"]["/monitors/{id}"].is_object());
+    assert!(body["paths"]["/health"].is_object());
+    assert!(body["components"]["schemas"]["Monitor"].is_object());
+    assert!(body["components"]["securitySchemes"]["manageKey"].is_object());
+}
+
+#[test]
+fn test_404_json_catcher() {
+    let client = test_client();
+    let resp = client.get("/api/v1/nonexistent-route").dispatch();
+    assert_eq!(resp.status(), Status::NotFound);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["code"], "NOT_FOUND");
+    assert!(body["error"].as_str().is_some());
+}
+
+#[test]
+fn test_422_json_catcher() {
+    let client = test_client();
+    // Send invalid JSON body to trigger 422
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"invalid json"#)
+        .dispatch();
+    // Rocket returns 422 for malformed JSON
+    let status = resp.status();
+    assert!(status == Status::BadRequest || status == Status::UnprocessableEntity,
+        "Expected 400 or 422, got {}", status.code);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert!(body["code"].as_str().is_some());
 }
 
 #[test]

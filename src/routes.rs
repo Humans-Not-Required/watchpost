@@ -641,6 +641,467 @@ GET /api/v1/health — service health
 "#)
 }
 
+// ── OpenAPI Spec ──
+
+#[get("/openapi.json")]
+pub fn openapi_spec() -> (rocket::http::ContentType, &'static str) {
+    (rocket::http::ContentType::JSON, OPENAPI_JSON)
+}
+
+const OPENAPI_JSON: &str = r##"{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Watchpost",
+    "description": "Agent-native monitoring service. Create monitors, track uptime, receive alerts — all via REST API. No signup required.",
+    "version": "0.1.0",
+    "license": { "name": "MIT" }
+  },
+  "servers": [{ "url": "/api/v1" }],
+  "paths": {
+    "/health": {
+      "get": {
+        "summary": "Service health check",
+        "operationId": "health",
+        "tags": ["system"],
+        "responses": {
+          "200": { "description": "Service is healthy", "content": { "application/json": { "schema": { "type": "object", "properties": { "service": { "type": "string" }, "status": { "type": "string" }, "version": { "type": "string" } } } } } }
+        }
+      }
+    },
+    "/monitors": {
+      "get": {
+        "summary": "List public monitors",
+        "operationId": "listMonitors",
+        "tags": ["monitors"],
+        "responses": {
+          "200": { "description": "List of public monitors", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Monitor" } } } } }
+        }
+      },
+      "post": {
+        "summary": "Create a monitor",
+        "operationId": "createMonitor",
+        "tags": ["monitors"],
+        "description": "Creates a new monitor and returns a manage_key (shown once). Save this key to manage the monitor later.",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateMonitor" } } }
+        },
+        "responses": {
+          "200": { "description": "Monitor created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateMonitorResponse" } } } },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "429": { "$ref": "#/components/responses/RateLimitError" }
+        }
+      }
+    },
+    "/monitors/{id}": {
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+      "get": {
+        "summary": "Get monitor details",
+        "operationId": "getMonitor",
+        "tags": ["monitors"],
+        "responses": {
+          "200": { "description": "Monitor details", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Monitor" } } } },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "patch": {
+        "summary": "Update monitor config",
+        "operationId": "updateMonitor",
+        "tags": ["monitors"],
+        "security": [{ "manageKey": [] }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UpdateMonitor" } } }
+        },
+        "responses": {
+          "200": { "description": "Monitor updated" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "delete": {
+        "summary": "Delete monitor and all data",
+        "operationId": "deleteMonitor",
+        "tags": ["monitors"],
+        "security": [{ "manageKey": [] }],
+        "responses": {
+          "200": { "description": "Monitor deleted" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/monitors/{id}/pause": {
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+      "post": {
+        "summary": "Pause monitor checks",
+        "operationId": "pauseMonitor",
+        "tags": ["monitors"],
+        "security": [{ "manageKey": [] }],
+        "responses": {
+          "200": { "description": "Monitor paused" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/monitors/{id}/resume": {
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+      "post": {
+        "summary": "Resume monitor checks",
+        "operationId": "resumeMonitor",
+        "tags": ["monitors"],
+        "security": [{ "manageKey": [] }],
+        "responses": {
+          "200": { "description": "Monitor resumed" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/monitors/{id}/heartbeats": {
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+      "get": {
+        "summary": "Get check history",
+        "operationId": "getHeartbeats",
+        "tags": ["heartbeats"],
+        "parameters": [
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 50, "maximum": 200 } },
+          { "name": "offset", "in": "query", "schema": { "type": "integer", "default": 0 } }
+        ],
+        "responses": {
+          "200": { "description": "Check history", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Heartbeat" } } } } },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/monitors/{id}/uptime": {
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+      "get": {
+        "summary": "Get uptime statistics",
+        "operationId": "getUptime",
+        "tags": ["heartbeats"],
+        "responses": {
+          "200": { "description": "Uptime stats", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UptimeStats" } } } },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/monitors/{id}/incidents": {
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+      "get": {
+        "summary": "Get incident history",
+        "operationId": "getIncidents",
+        "tags": ["incidents"],
+        "parameters": [
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 20, "maximum": 100 } },
+          { "name": "offset", "in": "query", "schema": { "type": "integer", "default": 0 } }
+        ],
+        "responses": {
+          "200": { "description": "Incident list", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Incident" } } } } },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/incidents/{id}/acknowledge": {
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+      "post": {
+        "summary": "Acknowledge an incident",
+        "operationId": "acknowledgeIncident",
+        "tags": ["incidents"],
+        "security": [{ "manageKey": [] }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AcknowledgeIncident" } } }
+        },
+        "responses": {
+          "200": { "description": "Incident acknowledged" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/monitors/{id}/notifications": {
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+      "post": {
+        "summary": "Add notification channel",
+        "operationId": "createNotification",
+        "tags": ["notifications"],
+        "security": [{ "manageKey": [] }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateNotification" } } }
+        },
+        "responses": {
+          "200": { "description": "Notification channel created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NotificationChannel" } } } },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      },
+      "get": {
+        "summary": "List notification channels",
+        "operationId": "listNotifications",
+        "tags": ["notifications"],
+        "security": [{ "manageKey": [] }],
+        "responses": {
+          "200": { "description": "Notification channels", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/NotificationChannel" } } } } },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/notifications/{id}": {
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+      "delete": {
+        "summary": "Remove notification channel",
+        "operationId": "deleteNotification",
+        "tags": ["notifications"],
+        "security": [{ "manageKey": [] }],
+        "responses": {
+          "200": { "description": "Notification deleted" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/status": {
+      "get": {
+        "summary": "Public status page",
+        "operationId": "statusPage",
+        "tags": ["status"],
+        "responses": {
+          "200": { "description": "Status overview", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/StatusOverview" } } } }
+        }
+      }
+    },
+    "/events": {
+      "get": {
+        "summary": "Global SSE event stream",
+        "operationId": "globalEvents",
+        "tags": ["events"],
+        "responses": {
+          "200": { "description": "SSE stream", "content": { "text/event-stream": {} } }
+        }
+      }
+    },
+    "/monitors/{id}/events": {
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+      "get": {
+        "summary": "Per-monitor SSE event stream",
+        "operationId": "monitorEvents",
+        "tags": ["events"],
+        "responses": {
+          "200": { "description": "SSE stream", "content": { "text/event-stream": {} } }
+        }
+      }
+    },
+    "/llms.txt": {
+      "get": {
+        "summary": "AI agent discovery document",
+        "operationId": "llmsTxt",
+        "tags": ["system"],
+        "responses": {
+          "200": { "description": "Agent-readable API summary", "content": { "text/plain": {} } }
+        }
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "summary": "OpenAPI specification",
+        "operationId": "openapiSpec",
+        "tags": ["system"],
+        "responses": {
+          "200": { "description": "This document", "content": { "application/json": {} } }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "manageKey": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Monitor manage_key. Also accepted as X-API-Key header or ?key= query param."
+      }
+    },
+    "schemas": {
+      "Monitor": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "name": { "type": "string" },
+          "url": { "type": "string" },
+          "method": { "type": "string", "enum": ["GET", "HEAD", "POST"] },
+          "interval_seconds": { "type": "integer", "minimum": 30 },
+          "timeout_ms": { "type": "integer" },
+          "expected_status": { "type": "integer" },
+          "body_contains": { "type": "string", "nullable": true },
+          "headers": { "type": "object", "nullable": true },
+          "is_public": { "type": "boolean" },
+          "is_paused": { "type": "boolean" },
+          "current_status": { "type": "string", "enum": ["unknown", "up", "down", "degraded"] },
+          "last_checked_at": { "type": "string", "nullable": true },
+          "confirmation_threshold": { "type": "integer" },
+          "created_at": { "type": "string" },
+          "updated_at": { "type": "string" }
+        }
+      },
+      "CreateMonitor": {
+        "type": "object",
+        "required": ["name", "url"],
+        "properties": {
+          "name": { "type": "string" },
+          "url": { "type": "string" },
+          "method": { "type": "string", "enum": ["GET", "HEAD", "POST"], "default": "GET" },
+          "interval_seconds": { "type": "integer", "minimum": 30, "default": 300 },
+          "timeout_ms": { "type": "integer", "default": 10000 },
+          "expected_status": { "type": "integer", "default": 200 },
+          "body_contains": { "type": "string" },
+          "headers": { "type": "object" },
+          "is_public": { "type": "boolean", "default": false },
+          "confirmation_threshold": { "type": "integer", "minimum": 1, "maximum": 10, "default": 2 }
+        }
+      },
+      "UpdateMonitor": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "url": { "type": "string" },
+          "method": { "type": "string" },
+          "interval_seconds": { "type": "integer" },
+          "timeout_ms": { "type": "integer" },
+          "expected_status": { "type": "integer" },
+          "body_contains": { "type": "string" },
+          "headers": { "type": "object" },
+          "is_public": { "type": "boolean" },
+          "confirmation_threshold": { "type": "integer" }
+        }
+      },
+      "CreateMonitorResponse": {
+        "type": "object",
+        "properties": {
+          "monitor": { "$ref": "#/components/schemas/Monitor" },
+          "manage_key": { "type": "string", "description": "Save this! Only shown once." },
+          "manage_url": { "type": "string" },
+          "view_url": { "type": "string" },
+          "api_base": { "type": "string" }
+        }
+      },
+      "Heartbeat": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "monitor_id": { "type": "string", "format": "uuid" },
+          "status": { "type": "string", "enum": ["up", "down", "degraded"] },
+          "response_time_ms": { "type": "integer" },
+          "status_code": { "type": "integer", "nullable": true },
+          "error_message": { "type": "string", "nullable": true },
+          "checked_at": { "type": "string" }
+        }
+      },
+      "Incident": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "monitor_id": { "type": "string", "format": "uuid" },
+          "started_at": { "type": "string" },
+          "resolved_at": { "type": "string", "nullable": true },
+          "cause": { "type": "string" },
+          "acknowledgement": { "type": "string", "nullable": true },
+          "acknowledged_by": { "type": "string", "nullable": true },
+          "acknowledged_at": { "type": "string", "nullable": true }
+        }
+      },
+      "AcknowledgeIncident": {
+        "type": "object",
+        "required": ["note"],
+        "properties": {
+          "note": { "type": "string" },
+          "actor": { "type": "string", "default": "anonymous" }
+        }
+      },
+      "UptimeStats": {
+        "type": "object",
+        "properties": {
+          "monitor_id": { "type": "string" },
+          "uptime_24h": { "type": "number" },
+          "uptime_7d": { "type": "number" },
+          "uptime_30d": { "type": "number" },
+          "uptime_90d": { "type": "number" },
+          "total_checks_24h": { "type": "integer" },
+          "total_checks_7d": { "type": "integer" },
+          "total_checks_30d": { "type": "integer" },
+          "total_checks_90d": { "type": "integer" },
+          "avg_response_ms_24h": { "type": "number", "nullable": true }
+        }
+      },
+      "StatusOverview": {
+        "type": "object",
+        "properties": {
+          "monitors": { "type": "array", "items": { "$ref": "#/components/schemas/StatusMonitor" } },
+          "overall": { "type": "string", "enum": ["operational", "degraded", "major_outage", "unknown"] }
+        }
+      },
+      "StatusMonitor": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "url": { "type": "string" },
+          "current_status": { "type": "string" },
+          "last_checked_at": { "type": "string", "nullable": true },
+          "uptime_24h": { "type": "number" },
+          "uptime_7d": { "type": "number" },
+          "avg_response_ms_24h": { "type": "number", "nullable": true },
+          "active_incident": { "type": "boolean" }
+        }
+      },
+      "NotificationChannel": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "monitor_id": { "type": "string", "format": "uuid" },
+          "name": { "type": "string" },
+          "channel_type": { "type": "string", "enum": ["webhook", "email"] },
+          "config": { "type": "object" },
+          "is_enabled": { "type": "boolean" },
+          "created_at": { "type": "string" }
+        }
+      },
+      "CreateNotification": {
+        "type": "object",
+        "required": ["name", "channel_type", "config"],
+        "properties": {
+          "name": { "type": "string" },
+          "channel_type": { "type": "string", "enum": ["webhook", "email"] },
+          "config": { "type": "object", "description": "For webhook: {\"url\": \"...\"}, for email: {\"address\": \"...\"}" }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": { "type": "string" },
+          "code": { "type": "string" }
+        }
+      }
+    },
+    "responses": {
+      "NotFound": {
+        "description": "Resource not found",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "Forbidden": {
+        "description": "Invalid manage key",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "ValidationError": {
+        "description": "Validation error",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "RateLimitError": {
+        "description": "Rate limit exceeded",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      }
+    }
+  }
+}"##;
+
 // ── SSE Event Streams ──
 
 #[get("/events")]
