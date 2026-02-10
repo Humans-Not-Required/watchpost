@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import StatusPage from './pages/StatusPage'
 import MonitorDetail from './pages/MonitorDetail'
 import CreateMonitor from './pages/CreateMonitor'
+import BulkImport from './pages/BulkImport'
 
 function parseRoute() {
   const hash = window.location.hash.slice(1) || '/';
@@ -11,6 +12,7 @@ function parseRoute() {
     return { page: 'detail', id: hash.slice(9), key };
   }
   if (hash === '/new') return { page: 'create', key };
+  if (hash === '/import') return { page: 'import', key };
   return { page: 'status', key };
 }
 
@@ -53,6 +55,12 @@ export default function App() {
             >
               + New Monitor
             </button>
+            <button
+              className={`nav-btn ${route.page === 'import' ? 'active' : ''}`}
+              onClick={() => navigate('/import')}
+            >
+              📦 Bulk Import
+            </button>
           </nav>
         </div>
       </header>
@@ -71,6 +79,12 @@ export default function App() {
         {route.page === 'create' && (
           <CreateMonitor
             onCreated={(id) => navigate(`/monitor/${id}`)}
+            onCancel={() => navigate('/')}
+          />
+        )}
+        {route.page === 'import' && (
+          <BulkImport
+            onDone={() => navigate('/')}
             onCancel={() => navigate('/')}
           />
         )}

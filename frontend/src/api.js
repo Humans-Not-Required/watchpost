@@ -132,3 +132,10 @@ export async function deleteMaintenanceWindow(id, key) {
     headers: { Authorization: `Bearer ${key}` },
   });
 }
+
+export async function bulkCreateMonitors(monitors) {
+  return request('/monitors/bulk', {
+    method: 'POST',
+    body: JSON.stringify({ monitors }),
+  });
+}
