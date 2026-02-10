@@ -419,6 +419,13 @@ input, select, textarea {
   color: var(--warning);
 }
 
+/* Manage Panel */
+.manage-panel {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
 /* Empty state */
 .empty-state {
   text-align: center;

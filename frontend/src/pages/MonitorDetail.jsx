@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { getMonitor, getHeartbeats, getUptime, getIncidents } from '../api'
+import { getMonitor, getHeartbeats, getUptime, getIncidents, pauseMonitor, resumeMonitor, deleteMonitor, acknowledgeIncident } from '../api'
 
 function formatTime(ts) {
   if (!ts) return 'Never';
@@ -78,7 +78,7 @@ function UptimeStats({ stats }) {
   );
 }
 
-function IncidentList({ incidents }) {
+function IncidentList({ incidents, manageKey, onAck }) {
   if (!incidents || incidents.length === 0) {
     return <div style={{ color: 'var(--text-muted)', padding: '16px 0' }}>No incidents recorded</div>;
   }
@@ -86,35 +86,100 @@ function IncidentList({ incidents }) {
   return (
     <div>
       {incidents.map((inc) => (
-        <div key={inc.id} className={`incident-card ${inc.resolved_at ? 'resolved' : 'active'}`}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
-            <div>
-              <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>
-                {inc.resolved_at ? '✅ Resolved' : '🔴 Active'}
-              </div>
-              <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: 4 }}>
-                {inc.cause}
-              </div>
-            </div>
-            <div style={{ textAlign: 'right', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-              <div>Started: {relativeTime(inc.started_at)}</div>
-              {inc.resolved_at && <div>Resolved: {relativeTime(inc.resolved_at)}</div>}
-            </div>
+        <IncidentCard key={inc.id} incident={inc} manageKey={manageKey} onAck={onAck} />
+      ))}
+    </div>
+  );
+}
+
+function IncidentCard({ incident: inc, manageKey, onAck }) {
+  const [ackNote, setAckNote] = useState('');
+  const [acking, setAcking] = useState(false);
+  const [showAckForm, setShowAckForm] = useState(false);
+
+  const handleAck = async () => {
+    if (!ackNote.trim()) return;
+    setAcking(true);
+    try {
+      await acknowledgeIncident(inc.id, ackNote.trim(), 'via UI', manageKey);
+      setShowAckForm(false);
+      setAckNote('');
+      onAck?.();
+    } catch (err) {
+      alert(`Failed to acknowledge: ${err.message}`);
+    } finally {
+      setAcking(false);
+    }
+  };
+
+  return (
+    <div className={`incident-card ${inc.resolved_at ? 'resolved' : 'active'}`}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
+        <div>
+          <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>
+            {inc.resolved_at ? '✅ Resolved' : '🔴 Active'}
           </div>
-          {inc.acknowledgement && (
-            <div style={{
-              marginTop: 8,
-              padding: '8px 12px',
-              background: 'rgba(0,212,170,0.05)',
-              borderRadius: 6,
-              fontSize: '0.85rem',
-              color: 'var(--text-secondary)',
-            }}>
-              <strong>Ack by {inc.acknowledged_by || 'unknown'}:</strong> {inc.acknowledgement}
+          <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: 4 }}>
+            {inc.cause}
+          </div>
+        </div>
+        <div style={{ textAlign: 'right', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+          <div>Started: {relativeTime(inc.started_at)}</div>
+          {inc.resolved_at && <div>Resolved: {relativeTime(inc.resolved_at)}</div>}
+        </div>
+      </div>
+      {inc.acknowledgement && (
+        <div style={{
+          marginTop: 8,
+          padding: '8px 12px',
+          background: 'rgba(0,212,170,0.05)',
+          borderRadius: 6,
+          fontSize: '0.85rem',
+          color: 'var(--text-secondary)',
+        }}>
+          <strong>Ack by {inc.acknowledged_by || 'unknown'}:</strong> {inc.acknowledgement}
+        </div>
+      )}
+      {manageKey && !inc.acknowledgement && !inc.resolved_at && (
+        <div style={{ marginTop: 8 }}>
+          {!showAckForm ? (
+            <button
+              className="btn btn-secondary"
+              style={{ fontSize: '0.8rem', padding: '6px 12px' }}
+              onClick={() => setShowAckForm(true)}
+            >
+              Acknowledge
+            </button>
+          ) : (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <input
+                className="form-input"
+                style={{ flex: 1, padding: '6px 10px', fontSize: '0.85rem' }}
+                placeholder="Acknowledgement note..."
+                value={ackNote}
+                onChange={(e) => setAckNote(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleAck()}
+                autoFocus
+              />
+              <button
+                className="btn btn-primary"
+                style={{ fontSize: '0.8rem', padding: '6px 12px' }}
+                disabled={acking || !ackNote.trim()}
+                onClick={handleAck}
+              >
+                {acking ? '...' : 'Send'}
+              </button>
+              <button
+                className="btn btn-secondary"
+                style={{ fontSize: '0.8rem', padding: '6px 12px' }}
+                onClick={() => { setShowAckForm(false); setAckNote(''); }}
+              >
+                Cancel
+              </button>
             </div>
           )}
         </div>
-      ))}
+      )}
     </div>
   );
 }
@@ -165,6 +230,8 @@ export default function MonitorDetail({ id, manageKey, onBack }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [tab, setTab] = useState('overview');
+  const [actionLoading, setActionLoading] = useState(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -198,6 +265,53 @@ export default function MonitorDetail({ id, manageKey, onBack }) {
   if (loading) {
     return <div className="loading"><div className="spinner" /> Loading monitor...</div>;
   }
+
+  const reload = async () => {
+    try {
+      const [m, hb, u, inc] = await Promise.all([
+        getMonitor(id),
+        getHeartbeats(id, 60),
+        getUptime(id),
+        getIncidents(id),
+      ]);
+      setMonitor(m);
+      setHeartbeats(hb);
+      setUptime(u);
+      setIncidents(inc);
+    } catch (err) {
+      // silent reload failure
+    }
+  };
+
+  const handlePauseResume = async () => {
+    const action = monitor.is_paused ? 'resume' : 'pause';
+    setActionLoading(action);
+    try {
+      if (monitor.is_paused) {
+        await resumeMonitor(id, manageKey);
+      } else {
+        await pauseMonitor(id, manageKey);
+      }
+      await reload();
+    } catch (err) {
+      alert(`Failed to ${action}: ${err.message}`);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleDelete = async () => {
+    setActionLoading('delete');
+    try {
+      await deleteMonitor(id, manageKey);
+      onBack();
+    } catch (err) {
+      alert(`Failed to delete: ${err.message}`);
+      setConfirmDelete(false);
+    } finally {
+      setActionLoading(null);
+    }
+  };
 
   if (error) {
     return (
@@ -260,6 +374,52 @@ export default function MonitorDetail({ id, manageKey, onBack }) {
             <span className="monitor-stat-value">{relativeTime(monitor.last_checked_at)}</span>
           </div>
         </div>
+
+        {manageKey && (
+          <div className="manage-panel">
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginRight: 8 }}>🔑 Manage:</span>
+              <button
+                className="btn btn-secondary"
+                style={{ fontSize: '0.8rem', padding: '6px 14px' }}
+                disabled={actionLoading === 'pause' || actionLoading === 'resume'}
+                onClick={handlePauseResume}
+              >
+                {actionLoading === 'pause' || actionLoading === 'resume'
+                  ? '...'
+                  : monitor.is_paused ? '▶ Resume' : '⏸ Pause'}
+              </button>
+              {!confirmDelete ? (
+                <button
+                  className="btn btn-danger"
+                  style={{ fontSize: '0.8rem', padding: '6px 14px' }}
+                  onClick={() => setConfirmDelete(true)}
+                >
+                  🗑 Delete
+                </button>
+              ) : (
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <span style={{ fontSize: '0.8rem', color: 'var(--danger)' }}>Delete this monitor?</span>
+                  <button
+                    className="btn btn-danger"
+                    style={{ fontSize: '0.8rem', padding: '6px 12px' }}
+                    disabled={actionLoading === 'delete'}
+                    onClick={handleDelete}
+                  >
+                    {actionLoading === 'delete' ? '...' : 'Confirm'}
+                  </button>
+                  <button
+                    className="btn btn-secondary"
+                    style={{ fontSize: '0.8rem', padding: '6px 12px' }}
+                    onClick={() => setConfirmDelete(false)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       <UptimeBar heartbeats={heartbeats} />
@@ -290,7 +450,7 @@ export default function MonitorDetail({ id, manageKey, onBack }) {
 
       {tab === 'heartbeats' && <HeartbeatTable heartbeats={heartbeats} />}
 
-      {tab === 'incidents' && <IncidentList incidents={incidents} />}
+      {tab === 'incidents' && <IncidentList incidents={incidents} manageKey={manageKey} onAck={reload} />}
     </div>
   );
 }
