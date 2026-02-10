@@ -50,6 +50,8 @@ fn rocket() -> _ {
         .mount("/api/v1", routes![
             routes::health,
             routes::create_monitor,
+            routes::bulk_create_monitors,
+            routes::export_monitor,
             routes::list_monitors,
             routes::get_monitor,
             routes::update_monitor,

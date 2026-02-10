@@ -18,6 +18,8 @@ fn test_client() -> Client {
         .mount("/api/v1", rocket::routes![
             watchpost::routes::health,
             watchpost::routes::create_monitor,
+            watchpost::routes::bulk_create_monitors,
+            watchpost::routes::export_monitor,
             watchpost::routes::list_monitors,
             watchpost::routes::get_monitor,
             watchpost::routes::update_monitor,
@@ -1042,4 +1044,183 @@ fn test_response_time_threshold_minimum_enforced() {
     assert_eq!(resp.status(), Status::Ok);
     let body: serde_json::Value = resp.into_json().unwrap();
     assert_eq!(body["monitor"]["response_time_threshold_ms"], 100);
+}
+
+// ── Bulk Create Tests ──
+
+#[test]
+fn test_bulk_create_monitors() {
+    let client = test_client();
+
+    let resp = client.post("/api/v1/monitors/bulk")
+        .header(ContentType::JSON)
+        .body(r#"{"monitors": [
+            {"name": "API Server", "url": "https://api.example.com/health", "is_public": true, "tags": ["api", "prod"]},
+            {"name": "Web Frontend", "url": "https://www.example.com", "is_public": true, "interval_seconds": 60},
+            {"name": "Internal DB", "url": "http://db.internal:5432/health", "is_public": false}
+        ]}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+
+    assert_eq!(body["total"], 3);
+    assert_eq!(body["succeeded"], 3);
+    assert_eq!(body["failed"], 0);
+    assert_eq!(body["created"].as_array().unwrap().len(), 3);
+    assert_eq!(body["errors"].as_array().unwrap().len(), 0);
+
+    // Each created monitor should have a unique manage_key
+    let keys: Vec<&str> = body["created"].as_array().unwrap()
+        .iter()
+        .map(|c| c["manage_key"].as_str().unwrap())
+        .collect();
+    assert_eq!(keys.len(), 3);
+    assert_ne!(keys[0], keys[1]);
+    assert_ne!(keys[1], keys[2]);
+
+    // First monitor should have tags
+    assert_eq!(body["created"][0]["monitor"]["tags"], serde_json::json!(["api", "prod"]));
+    // Second monitor should have custom interval
+    assert_eq!(body["created"][1]["monitor"]["interval_seconds"], 60);
+}
+
+#[test]
+fn test_bulk_create_partial_failure() {
+    let client = test_client();
+
+    let resp = client.post("/api/v1/monitors/bulk")
+        .header(ContentType::JSON)
+        .body(r#"{"monitors": [
+            {"name": "Good Monitor", "url": "https://example.com", "is_public": true},
+            {"name": "", "url": "https://example.com"},
+            {"name": "Also Good", "url": "https://example2.com"}
+        ]}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+
+    assert_eq!(body["total"], 3);
+    assert_eq!(body["succeeded"], 2);
+    assert_eq!(body["failed"], 1);
+    assert_eq!(body["errors"][0]["index"], 1);
+    assert_eq!(body["errors"][0]["code"], "VALIDATION_ERROR");
+}
+
+#[test]
+fn test_bulk_create_empty_array() {
+    let client = test_client();
+
+    let resp = client.post("/api/v1/monitors/bulk")
+        .header(ContentType::JSON)
+        .body(r#"{"monitors": []}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::BadRequest);
+}
+
+#[test]
+fn test_bulk_create_validation_errors() {
+    let client = test_client();
+
+    let resp = client.post("/api/v1/monitors/bulk")
+        .header(ContentType::JSON)
+        .body(r#"{"monitors": [
+            {"name": "No URL", "url": ""},
+            {"name": "Bad Method", "url": "https://example.com", "method": "PATCH"}
+        ]}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+
+    assert_eq!(body["total"], 2);
+    assert_eq!(body["succeeded"], 0);
+    assert_eq!(body["failed"], 2);
+}
+
+// ── Export Monitor Tests ──
+
+#[test]
+fn test_export_monitor() {
+    let client = test_client();
+    let (id, key) = create_test_monitor(&client);
+
+    let resp = client.get(format!("/api/v1/monitors/{}/export?key={}", id, key))
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+
+    // Should have importable fields
+    assert_eq!(body["name"], "Test Service");
+    assert_eq!(body["url"], "https://httpbin.org/status/200");
+    assert_eq!(body["method"], "GET");
+    assert!(body["interval_seconds"].is_number());
+    assert!(body["timeout_ms"].is_number());
+    assert!(body["expected_status"].is_number());
+    assert!(body["is_public"].is_boolean());
+
+    // Should NOT have runtime fields
+    assert!(body.get("id").is_none());
+    assert!(body.get("current_status").is_none());
+    assert!(body.get("created_at").is_none());
+    assert!(body.get("is_paused").is_none());
+}
+
+#[test]
+fn test_export_monitor_requires_auth() {
+    let client = test_client();
+    let (id, _key) = create_test_monitor(&client);
+
+    // No key
+    let resp = client.get(format!("/api/v1/monitors/{}/export", id))
+        .dispatch();
+    // Should fail (401 or 403) — ManageToken guard will reject
+    assert_ne!(resp.status(), Status::Ok);
+}
+
+#[test]
+fn test_export_reimport_roundtrip() {
+    let client = test_client();
+
+    // Create a monitor with custom settings
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Custom Monitor", "url": "https://api.example.com", "method": "HEAD", "interval_seconds": 120, "timeout_ms": 5000, "expected_status": 204, "is_public": true, "confirmation_threshold": 3, "response_time_threshold_ms": 2000, "tags": ["api", "staging"]}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let created: serde_json::Value = resp.into_json().unwrap();
+    let id = created["monitor"]["id"].as_str().unwrap();
+    let key = created["manage_key"].as_str().unwrap();
+
+    // Export it
+    let resp = client.get(format!("/api/v1/monitors/{}/export?key={}", id, key))
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let exported: serde_json::Value = resp.into_json().unwrap();
+
+    // Re-import via bulk create
+    let bulk_body = serde_json::json!({"monitors": [exported]});
+    let resp = client.post("/api/v1/monitors/bulk")
+        .header(ContentType::JSON)
+        .body(bulk_body.to_string())
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let bulk: serde_json::Value = resp.into_json().unwrap();
+
+    assert_eq!(bulk["succeeded"], 1);
+    assert_eq!(bulk["failed"], 0);
+
+    // Verify the clone has same settings
+    let clone = &bulk["created"][0]["monitor"];
+    assert_eq!(clone["name"], "Custom Monitor");
+    assert_eq!(clone["url"], "https://api.example.com");
+    assert_eq!(clone["method"], "HEAD");
+    assert_eq!(clone["interval_seconds"], 120);
+    assert_eq!(clone["timeout_ms"], 5000);
+    assert_eq!(clone["expected_status"], 204);
+    assert_eq!(clone["is_public"], true);
+    assert_eq!(clone["confirmation_threshold"], 3);
+    assert_eq!(clone["response_time_threshold_ms"], 2000);
+    assert_eq!(clone["tags"], serde_json::json!(["api", "staging"]));
+
+    // But it should have a different ID
+    assert_ne!(clone["id"].as_str().unwrap(), id);
 }

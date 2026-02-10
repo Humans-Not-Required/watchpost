@@ -2,7 +2,12 @@ use rocket::{get, post, patch, delete, serde::json::Json, State, http::Status};
 use rocket::response::stream::{Event, EventStream};
 use rocket::http::ContentType;
 use crate::db::Db;
-use crate::models::*;
+use crate::models::{
+    Monitor, CreateMonitor, UpdateMonitor, CreateMonitorResponse,
+    Heartbeat, Incident, AcknowledgeIncident, UptimeStats,
+    StatusOverview, StatusMonitor, NotificationChannel, CreateNotification,
+    BulkCreateMonitors, BulkCreateResponse, BulkError, ExportedMonitor,
+};
 use crate::auth::{ManageToken, ClientIp, hash_key, generate_key};
 use crate::sse::EventBroadcaster;
 use rusqlite::params;
@@ -135,6 +140,151 @@ pub fn create_monitor(
         manage_url: format!("/monitor/{}?key={}", id, manage_key),
         view_url: format!("/monitor/{}", id),
         api_base: format!("/api/v1/monitors/{}", id),
+    }))
+}
+
+// ── Bulk Create Monitors ──
+
+#[post("/monitors/bulk", format = "json", data = "<input>")]
+pub fn bulk_create_monitors(
+    input: Json<BulkCreateMonitors>,
+    db: &State<Arc<Db>>,
+    rate_limiter: &State<RateLimiter>,
+    client_ip: ClientIp,
+) -> Result<Json<BulkCreateResponse>, (Status, Json<serde_json::Value>)> {
+    let data = input.into_inner();
+
+    if data.monitors.is_empty() {
+        return Err((Status::BadRequest, Json(serde_json::json!({
+            "error": "monitors array is empty", "code": "VALIDATION_ERROR"
+        }))));
+    }
+    if data.monitors.len() > 50 {
+        return Err((Status::BadRequest, Json(serde_json::json!({
+            "error": "Maximum 50 monitors per bulk request", "code": "VALIDATION_ERROR"
+        }))));
+    }
+
+    let total = data.monitors.len();
+    let mut created = Vec::new();
+    let mut errors = Vec::new();
+    let conn = db.conn.lock().unwrap();
+
+    for (idx, monitor_data) in data.monitors.into_iter().enumerate() {
+        // Rate limit per monitor
+        if !rate_limiter.check(&client_ip.0) {
+            errors.push(BulkError {
+                index: idx,
+                error: "Rate limit exceeded".into(),
+                code: "RATE_LIMIT_EXCEEDED".into(),
+            });
+            continue;
+        }
+
+        // Validate
+        if monitor_data.name.trim().is_empty() {
+            errors.push(BulkError { index: idx, error: "Name is required".into(), code: "VALIDATION_ERROR".into() });
+            continue;
+        }
+        if monitor_data.url.trim().is_empty() {
+            errors.push(BulkError { index: idx, error: "URL is required".into(), code: "VALIDATION_ERROR".into() });
+            continue;
+        }
+        let method = monitor_data.method.to_uppercase();
+        if !["GET", "HEAD", "POST"].contains(&method.as_str()) {
+            errors.push(BulkError { index: idx, error: "Method must be GET, HEAD, or POST".into(), code: "VALIDATION_ERROR".into() });
+            continue;
+        }
+
+        let interval = monitor_data.interval_seconds.unwrap_or(300).max(30);
+        let timeout = monitor_data.timeout_ms.unwrap_or(10000).max(1000).min(60000);
+        let expected_status = monitor_data.expected_status.unwrap_or(200);
+        let confirmation = monitor_data.confirmation_threshold.unwrap_or(2).max(1).min(10);
+        let rt_threshold = monitor_data.response_time_threshold_ms.map(|v| v.max(100));
+
+        let id = uuid::Uuid::new_v4().to_string();
+        let manage_key = generate_key();
+        let key_hash = hash_key(&manage_key);
+        let tags_str = tags_to_string(&monitor_data.tags);
+
+        match conn.execute(
+            "INSERT INTO monitors (id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, manage_key_hash, is_public, confirmation_threshold, tags, response_time_threshold_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            params![
+                id,
+                monitor_data.name.trim(),
+                monitor_data.url.trim(),
+                method,
+                interval,
+                timeout,
+                expected_status,
+                monitor_data.body_contains,
+                monitor_data.headers.map(|h| h.to_string()),
+                key_hash,
+                monitor_data.is_public as i32,
+                confirmation,
+                tags_str,
+                rt_threshold,
+            ],
+        ) {
+            Ok(_) => {
+                match get_monitor_from_db(&conn, &id) {
+                    Ok(monitor) => {
+                        created.push(CreateMonitorResponse {
+                            monitor,
+                            manage_key: manage_key.clone(),
+                            manage_url: format!("/monitor/{}?key={}", id, manage_key),
+                            view_url: format!("/monitor/{}", id),
+                            api_base: format!("/api/v1/monitors/{}", id),
+                        });
+                    }
+                    Err(e) => {
+                        errors.push(BulkError { index: idx, error: format!("DB read error: {}", e), code: "INTERNAL_ERROR".into() });
+                    }
+                }
+            }
+            Err(e) => {
+                errors.push(BulkError { index: idx, error: format!("DB error: {}", e), code: "INTERNAL_ERROR".into() });
+            }
+        }
+    }
+
+    let succeeded = created.len();
+    let failed = errors.len();
+
+    Ok(Json(BulkCreateResponse { created, errors, total, succeeded, failed }))
+}
+
+// ── Export Monitor Config ──
+
+#[get("/monitors/<id>/export")]
+pub fn export_monitor(
+    id: &str,
+    db: &State<Arc<Db>>,
+    token: ManageToken,
+) -> Result<Json<ExportedMonitor>, (Status, Json<serde_json::Value>)> {
+    let conn = db.conn.lock().unwrap();
+    verify_manage_key(&conn, id, &token.0)?;
+
+    let monitor = get_monitor_from_db(&conn, id).map_err(|_| {
+        (Status::NotFound, Json(serde_json::json!({
+            "error": "Monitor not found", "code": "NOT_FOUND"
+        })))
+    })?;
+
+    Ok(Json(ExportedMonitor {
+        name: monitor.name,
+        url: monitor.url,
+        method: monitor.method,
+        interval_seconds: monitor.interval_seconds,
+        timeout_ms: monitor.timeout_ms,
+        expected_status: monitor.expected_status,
+        body_contains: monitor.body_contains,
+        headers: monitor.headers,
+        is_public: monitor.is_public,
+        confirmation_threshold: monitor.confirmation_threshold,
+        response_time_threshold_ms: monitor.response_time_threshold_ms,
+        tags: monitor.tags,
     }))
 }
 
@@ -826,8 +976,22 @@ GET /api/v1/monitors?search=keyword — filter by name/URL
 GET /api/v1/monitors?status=up — filter by status (up/down/degraded/unknown)
 GET /api/v1/status?search=keyword&status=down — combined filters
 
+## Bulk Operations
+POST /api/v1/monitors/bulk — create up to 50 monitors at once
+  Body: {"monitors": [{"name": "...", "url": "..."}, ...]}
+  Returns: {"created": [...], "errors": [...], "total": N, "succeeded": N, "failed": N}
+  Each created monitor includes its manage_key (save them!)
+  Partial success: some monitors may fail while others succeed
+
+## Export
+GET /api/v1/monitors/:id/export — export monitor config (auth required)
+  Returns monitor settings in a format you can re-import via POST /monitors or /monitors/bulk
+  Useful for backup, migration, or cloning monitors
+
 ## Endpoints
 POST /api/v1/monitors — create monitor
+POST /api/v1/monitors/bulk — bulk create monitors (up to 50)
+GET /api/v1/monitors/:id/export — export monitor config (auth)
 GET /api/v1/monitors — list public monitors (supports ?search= and ?status= filters)
 GET /api/v1/monitors/:id — get monitor
 PATCH /api/v1/monitors/:id — update (auth)
@@ -904,6 +1068,37 @@ const OPENAPI_JSON: &str = r##"{
           "200": { "description": "Monitor created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateMonitorResponse" } } } },
           "400": { "$ref": "#/components/responses/ValidationError" },
           "429": { "$ref": "#/components/responses/RateLimitError" }
+        }
+      }
+    },
+    "/monitors/bulk": {
+      "post": {
+        "summary": "Bulk create monitors",
+        "operationId": "bulkCreateMonitors",
+        "tags": ["monitors"],
+        "description": "Create up to 50 monitors in one request. Each monitor gets its own manage_key. Partial success: some may fail while others succeed. Each monitor counts against rate limit.",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BulkCreateMonitors" } } }
+        },
+        "responses": {
+          "200": { "description": "Bulk creation results (may include partial failures)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BulkCreateResponse" } } } },
+          "400": { "$ref": "#/components/responses/ValidationError" }
+        }
+      }
+    },
+    "/monitors/{id}/export": {
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+      "get": {
+        "summary": "Export monitor config",
+        "operationId": "exportMonitor",
+        "tags": ["monitors"],
+        "description": "Export monitor configuration in a format compatible with POST /monitors or /monitors/bulk. Useful for backup, migration, or cloning.",
+        "security": [{ "manageKey": [] }],
+        "responses": {
+          "200": { "description": "Exportable monitor config", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ExportedMonitor" } } } },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
         }
       }
     },
@@ -1215,6 +1410,49 @@ const OPENAPI_JSON: &str = r##"{
           "confirmation_threshold": { "type": "integer", "minimum": 1, "maximum": 10, "default": 2 },
           "response_time_threshold_ms": { "type": "integer", "minimum": 100, "nullable": true, "description": "Alert when response time exceeds this threshold (ms). Null = disabled." },
           "tags": { "type": "array", "items": { "type": "string" }, "description": "Freeform tags for grouping" }
+        }
+      },
+      "BulkCreateMonitors": {
+        "type": "object",
+        "required": ["monitors"],
+        "properties": {
+          "monitors": { "type": "array", "items": { "$ref": "#/components/schemas/CreateMonitor" }, "maxItems": 50, "description": "Array of monitors to create (max 50)" }
+        }
+      },
+      "BulkCreateResponse": {
+        "type": "object",
+        "properties": {
+          "created": { "type": "array", "items": { "$ref": "#/components/schemas/CreateMonitorResponse" }, "description": "Successfully created monitors with manage keys" },
+          "errors": { "type": "array", "items": { "$ref": "#/components/schemas/BulkError" }, "description": "Failed monitors with error details" },
+          "total": { "type": "integer", "description": "Total monitors in request" },
+          "succeeded": { "type": "integer", "description": "Number successfully created" },
+          "failed": { "type": "integer", "description": "Number that failed" }
+        }
+      },
+      "BulkError": {
+        "type": "object",
+        "properties": {
+          "index": { "type": "integer", "description": "Index in the input array" },
+          "error": { "type": "string" },
+          "code": { "type": "string" }
+        }
+      },
+      "ExportedMonitor": {
+        "type": "object",
+        "description": "Monitor config in a format compatible with POST /monitors for re-import",
+        "properties": {
+          "name": { "type": "string" },
+          "url": { "type": "string" },
+          "method": { "type": "string" },
+          "interval_seconds": { "type": "integer" },
+          "timeout_ms": { "type": "integer" },
+          "expected_status": { "type": "integer" },
+          "body_contains": { "type": "string", "nullable": true },
+          "headers": { "type": "object", "nullable": true },
+          "is_public": { "type": "boolean" },
+          "confirmation_threshold": { "type": "integer" },
+          "response_time_threshold_ms": { "type": "integer", "nullable": true },
+          "tags": { "type": "array", "items": { "type": "string" } }
         }
       },
       "UpdateMonitor": {

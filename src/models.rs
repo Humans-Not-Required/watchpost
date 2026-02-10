@@ -182,3 +182,43 @@ pub struct CreateNotification {
     pub channel_type: String,
     pub config: serde_json::Value,
 }
+
+#[derive(Debug, Deserialize)]
+pub struct BulkCreateMonitors {
+    pub monitors: Vec<CreateMonitor>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BulkCreateResponse {
+    pub created: Vec<CreateMonitorResponse>,
+    pub errors: Vec<BulkError>,
+    pub total: usize,
+    pub succeeded: usize,
+    pub failed: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BulkError {
+    pub index: usize,
+    pub error: String,
+    pub code: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExportedMonitor {
+    pub name: String,
+    pub url: String,
+    pub method: String,
+    pub interval_seconds: u32,
+    pub timeout_ms: u32,
+    pub expected_status: u16,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body_contains: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub headers: Option<serde_json::Value>,
+    pub is_public: bool,
+    pub confirmation_threshold: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_time_threshold_ms: Option<u32>,
+    pub tags: Vec<String>,
+}
