@@ -58,15 +58,19 @@
   - Watchtower auto-pull enabled
   - Added to backup-dbs.sh
   - Health: `curl http://192.168.0.79:3007/api/v1/health` ✅
-- Test suite: **25 HTTP integration tests passing** (`cargo test -- --test-threads=1`)
+- **Seq-based cursor pagination** ✅ (commit 456d21d):
+  - Heartbeats + incidents now use `?after=<seq>` cursor instead of `?offset=`
+  - Monotonic seq column with backfill migration
+  - Default (no cursor) = newest first; with cursor = forward scan (ASC)
+  - OpenAPI spec updated
+- Test suite: **27 HTTP integration tests passing** (`cargo test -- --test-threads=1`)
 
 ### What's Next (Priority Order)
 
 1. **DNS for watch.hnrstage.xyz** — Needs Cloudflare DNS A record pointing to staging server (Jordan action, or check if wildcard exists)
 2. **Polish frontend** — Error states, loading skeleton, manage key integration (pass ?key= for edit operations)
 3. **Add watchpost to admin links page** — Update hnrstage.xyz/mylinks (file at ~/domains/hnrstage.xyz/public/mylinks.html on staging)
-4. **Pagination** — Heartbeats and incidents endpoints should support pagination (seq-based, like other HNR services)
-5. **Heartbeat retention** — Background task to prune heartbeats older than 90 days
+4. **Heartbeat retention** — Background task to prune heartbeats older than 90 days
 
 ### ⚠️ Gotchas
 
