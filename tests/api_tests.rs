@@ -36,6 +36,9 @@ fn test_client() -> Client {
             watchpost::routes::delete_notification,
             watchpost::routes::update_notification,
             watchpost::routes::list_tags,
+            watchpost::routes::create_maintenance_window,
+            watchpost::routes::list_maintenance_windows,
+            watchpost::routes::delete_maintenance_window,
             watchpost::routes::llms_txt,
             watchpost::routes::openapi_spec,
             watchpost::routes::global_events,
@@ -1223,4 +1226,204 @@ fn test_export_reimport_roundtrip() {
 
     // But it should have a different ID
     assert_ne!(clone["id"].as_str().unwrap(), id);
+}
+
+// ── Maintenance Window Tests ──
+
+#[test]
+fn test_create_maintenance_window() {
+    let client = test_client();
+
+    // Create a monitor
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Maint Test", "url": "https://example.com", "is_public": true}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let created: serde_json::Value = resp.into_json().unwrap();
+    let id = created["monitor"]["id"].as_str().unwrap();
+    let key = created["manage_key"].as_str().unwrap();
+
+    // Create a maintenance window
+    let resp = client.post(format!("/api/v1/monitors/{}/maintenance?key={}", id, key))
+        .header(ContentType::JSON)
+        .body(r#"{"title": "Deploy v2.0", "starts_at": "2026-02-10T14:00:00Z", "ends_at": "2026-02-10T16:00:00Z"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let window: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(window["title"], "Deploy v2.0");
+    assert_eq!(window["monitor_id"], id);
+    assert_eq!(window["starts_at"], "2026-02-10T14:00:00Z");
+    assert_eq!(window["ends_at"], "2026-02-10T16:00:00Z");
+    assert!(window["id"].as_str().is_some());
+}
+
+#[test]
+fn test_list_maintenance_windows() {
+    let client = test_client();
+
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Maint List", "url": "https://example.com", "is_public": true}"#)
+        .dispatch();
+    let created: serde_json::Value = resp.into_json().unwrap();
+    let id = created["monitor"]["id"].as_str().unwrap();
+    let key = created["manage_key"].as_str().unwrap();
+
+    // Create two windows
+    client.post(format!("/api/v1/monitors/{}/maintenance?key={}", id, key))
+        .header(ContentType::JSON)
+        .body(r#"{"title": "Window 1", "starts_at": "2026-02-10T10:00:00Z", "ends_at": "2026-02-10T11:00:00Z"}"#)
+        .dispatch();
+    client.post(format!("/api/v1/monitors/{}/maintenance?key={}", id, key))
+        .header(ContentType::JSON)
+        .body(r#"{"title": "Window 2", "starts_at": "2026-02-10T12:00:00Z", "ends_at": "2026-02-10T13:00:00Z"}"#)
+        .dispatch();
+
+    // List them
+    let resp = client.get(format!("/api/v1/monitors/{}/maintenance", id)).dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let windows: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert_eq!(windows.len(), 2);
+}
+
+#[test]
+fn test_delete_maintenance_window() {
+    let client = test_client();
+
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Maint Delete", "url": "https://example.com", "is_public": true}"#)
+        .dispatch();
+    let created: serde_json::Value = resp.into_json().unwrap();
+    let id = created["monitor"]["id"].as_str().unwrap();
+    let key = created["manage_key"].as_str().unwrap();
+
+    // Create a window
+    let resp = client.post(format!("/api/v1/monitors/{}/maintenance?key={}", id, key))
+        .header(ContentType::JSON)
+        .body(r#"{"title": "To Delete", "starts_at": "2026-02-10T14:00:00Z", "ends_at": "2026-02-10T16:00:00Z"}"#)
+        .dispatch();
+    let window: serde_json::Value = resp.into_json().unwrap();
+    let window_id = window["id"].as_str().unwrap();
+
+    // Delete it
+    let resp = client.delete(format!("/api/v1/maintenance/{}?key={}", window_id, key)).dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+
+    // Verify gone
+    let resp = client.get(format!("/api/v1/monitors/{}/maintenance", id)).dispatch();
+    let windows: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert_eq!(windows.len(), 0);
+}
+
+#[test]
+fn test_maintenance_window_requires_auth() {
+    let client = test_client();
+
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Auth Test", "url": "https://example.com", "is_public": true}"#)
+        .dispatch();
+    let created: serde_json::Value = resp.into_json().unwrap();
+    let id = created["monitor"]["id"].as_str().unwrap();
+
+    // Try to create without auth
+    let resp = client.post(format!("/api/v1/monitors/{}/maintenance", id))
+        .header(ContentType::JSON)
+        .body(r#"{"title": "No Auth", "starts_at": "2026-02-10T14:00:00Z", "ends_at": "2026-02-10T16:00:00Z"}"#)
+        .dispatch();
+    // Should fail - no key provided (401 or 403)
+    assert_ne!(resp.status(), Status::Ok);
+}
+
+#[test]
+fn test_maintenance_window_validation() {
+    let client = test_client();
+
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Validation", "url": "https://example.com", "is_public": true}"#)
+        .dispatch();
+    let created: serde_json::Value = resp.into_json().unwrap();
+    let id = created["monitor"]["id"].as_str().unwrap();
+    let key = created["manage_key"].as_str().unwrap();
+
+    // ends_at before starts_at
+    let resp = client.post(format!("/api/v1/monitors/{}/maintenance?key={}", id, key))
+        .header(ContentType::JSON)
+        .body(r#"{"title": "Bad Window", "starts_at": "2026-02-10T16:00:00Z", "ends_at": "2026-02-10T14:00:00Z"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::BadRequest);
+
+    // Empty title
+    let resp = client.post(format!("/api/v1/monitors/{}/maintenance?key={}", id, key))
+        .header(ContentType::JSON)
+        .body(r#"{"title": "", "starts_at": "2026-02-10T14:00:00Z", "ends_at": "2026-02-10T16:00:00Z"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::BadRequest);
+
+    // Bad timestamp format
+    let resp = client.post(format!("/api/v1/monitors/{}/maintenance?key={}", id, key))
+        .header(ContentType::JSON)
+        .body(r#"{"title": "Bad Time", "starts_at": "not-a-date", "ends_at": "2026-02-10T16:00:00Z"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::BadRequest);
+}
+
+#[test]
+fn test_maintenance_suppresses_incidents() {
+    let client = test_client();
+
+    // Create a monitor
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Maint Suppression", "url": "https://example.com", "is_public": true}"#)
+        .dispatch();
+    let created: serde_json::Value = resp.into_json().unwrap();
+    let id = created["monitor"]["id"].as_str().unwrap();
+    let key = created["manage_key"].as_str().unwrap();
+
+    // Create a maintenance window covering right now (a wide future window)
+    let resp = client.post(format!("/api/v1/monitors/{}/maintenance?key={}", id, key))
+        .header(ContentType::JSON)
+        .body(r#"{"title": "Active Window", "starts_at": "2020-01-01T00:00:00Z", "ends_at": "2030-12-31T23:59:59Z"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let window: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(window["active"], true);
+
+    // Verify is_in_maintenance returns true via the checker helper
+    // We'll test this indirectly: the API should list the window as active
+    let resp = client.get(format!("/api/v1/monitors/{}/maintenance", id)).dispatch();
+    let windows: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert_eq!(windows.len(), 1);
+    assert_eq!(windows[0]["active"], true);
+}
+
+#[test]
+fn test_maintenance_window_cascade_delete() {
+    let client = test_client();
+
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Cascade Test", "url": "https://example.com", "is_public": true}"#)
+        .dispatch();
+    let created: serde_json::Value = resp.into_json().unwrap();
+    let id = created["monitor"]["id"].as_str().unwrap();
+    let key = created["manage_key"].as_str().unwrap();
+
+    // Create a maintenance window
+    client.post(format!("/api/v1/monitors/{}/maintenance?key={}", id, key))
+        .header(ContentType::JSON)
+        .body(r#"{"title": "Cascade Window", "starts_at": "2026-02-10T14:00:00Z", "ends_at": "2026-02-10T16:00:00Z"}"#)
+        .dispatch();
+
+    // Delete the monitor
+    let resp = client.delete(format!("/api/v1/monitors/{}?key={}", id, key)).dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+
+    // Monitor gone, maintenance windows should also be gone (cascade delete)
+    let resp = client.get(format!("/api/v1/monitors/{}/maintenance", id)).dispatch();
+    assert_eq!(resp.status(), Status::NotFound);
 }

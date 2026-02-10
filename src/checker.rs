@@ -1,5 +1,6 @@
 use crate::db::Db;
 use crate::notifications::{self, WebhookPayload, WebhookMonitor, WebhookIncident};
+use crate::routes::is_in_maintenance;
 use crate::sse::{EventBroadcaster, SseEvent};
 use rusqlite::params;
 use std::sync::Arc;
@@ -197,6 +198,9 @@ async fn run_check(client: &reqwest::Client, db: &Db, broadcaster: &EventBroadca
         }
     };
 
+    // Check maintenance window status BEFORE acquiring DB lock (is_in_maintenance acquires its own)
+    let in_maintenance = is_in_maintenance(db, &monitor.id);
+
     // Collect webhook data while holding DB lock, then release before firing
     let webhook_event: Option<WebhookPayload>;
 
@@ -211,7 +215,7 @@ async fn run_check(client: &reqwest::Client, db: &Db, broadcaster: &EventBroadca
         );
 
         // Update consecutive failures and determine status transition
-        let (new_consecutive, effective_status) = if status == "down" {
+        let (new_consecutive, mut effective_status) = if status == "down" {
             let new_count = monitor.consecutive_failures + 1;
             if new_count >= monitor.confirmation_threshold {
                 (new_count, "down".to_string())
@@ -222,6 +226,11 @@ async fn run_check(client: &reqwest::Client, db: &Db, broadcaster: &EventBroadca
             (0, status.clone())
         };
 
+        // If in maintenance window and would be "down", set status to "maintenance" instead
+        if in_maintenance && effective_status == "down" {
+            effective_status = "maintenance".to_string();
+        }
+
         let _ = conn.execute(
             "UPDATE monitors SET current_status = ?1, last_checked_at = datetime('now'), consecutive_failures = ?2, updated_at = datetime('now') WHERE id = ?3",
             params![effective_status, new_consecutive, monitor.id],
@@ -231,8 +240,8 @@ async fn run_check(client: &reqwest::Client, db: &Db, broadcaster: &EventBroadca
         let prev_status = &monitor.current_status;
         let now_str = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
-        if prev_status != "down" && effective_status == "down" {
-            // Transition to down — create incident
+        if prev_status != "down" && prev_status != "maintenance" && effective_status == "down" {
+            // Transition to down (not in maintenance) — create incident
             let inc_id = uuid::Uuid::new_v4().to_string();
             let cause = error_message.clone().unwrap_or_else(|| "Monitor is down".to_string());
             let inc_seq: i64 = conn.query_row("SELECT COALESCE(MAX(seq), 0) + 1 FROM incidents", [], |r| r.get(0)).unwrap_or(1);
@@ -255,6 +264,19 @@ async fn run_check(client: &reqwest::Client, db: &Db, broadcaster: &EventBroadca
                     started_at: now_str.clone(),
                     resolved_at: None,
                 }),
+                timestamp: now_str,
+            });
+        } else if effective_status == "maintenance" && prev_status != "maintenance" {
+            // Entering maintenance — no incident, but emit SSE event
+            webhook_event = Some(WebhookPayload {
+                event: "maintenance.started".to_string(),
+                monitor: WebhookMonitor {
+                    id: monitor.id.clone(),
+                    name: monitor.name.clone(),
+                    url: monitor.url.clone(),
+                    current_status: "maintenance".to_string(),
+                },
+                incident: None,
                 timestamp: now_str,
             });
         } else if prev_status != "degraded" && effective_status == "degraded" {
@@ -283,7 +305,20 @@ async fn run_check(client: &reqwest::Client, db: &Db, broadcaster: &EventBroadca
                 incident: None,
                 timestamp: now_str,
             });
-        } else if prev_status == "down" && effective_status != "down" {
+        } else if prev_status == "maintenance" && effective_status == "up" {
+            // Recovered from maintenance — no incidents to resolve, just notify
+            webhook_event = Some(WebhookPayload {
+                event: "maintenance.ended".to_string(),
+                monitor: WebhookMonitor {
+                    id: monitor.id.clone(),
+                    name: monitor.name.clone(),
+                    url: monitor.url.clone(),
+                    current_status: "up".to_string(),
+                },
+                incident: None,
+                timestamp: now_str,
+            });
+        } else if prev_status == "down" && effective_status != "down" && effective_status != "maintenance" {
             // Transition from down — resolve open incidents
             let _ = conn.execute(
                 "UPDATE incidents SET resolved_at = datetime('now') WHERE monitor_id = ?1 AND resolved_at IS NULL",

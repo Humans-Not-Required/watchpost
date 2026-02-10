@@ -204,6 +204,24 @@ pub struct BulkError {
     pub code: String,
 }
 
+#[derive(Debug, Serialize, Clone)]
+pub struct MaintenanceWindow {
+    pub id: String,
+    pub monitor_id: String,
+    pub title: String,
+    pub starts_at: String,
+    pub ends_at: String,
+    pub active: bool,
+    pub created_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateMaintenanceWindow {
+    pub title: String,
+    pub starts_at: String,
+    pub ends_at: String,
+}
+
 #[derive(Debug, Serialize)]
 pub struct ExportedMonitor {
     pub name: String,

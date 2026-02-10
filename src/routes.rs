@@ -757,13 +757,13 @@ pub fn status_page(search: Option<&str>, status: Option<&str>, tag: Option<&str>
         "unknown".to_string()
     } else if monitors.iter().any(|m| m.current_status == "down") {
         "major_outage".to_string()
-    } else if monitors.iter().all(|m| m.current_status == "up") {
+    } else if monitors.iter().all(|m| m.current_status == "up" || m.current_status == "maintenance") {
         "operational".to_string()
     } else if monitors.iter().any(|m| m.current_status == "unknown") {
         // If anything hasn't been checked yet, the overall status is unknown.
         "unknown".to_string()
     } else {
-        // Remaining case: some degraded, none down.
+        // Remaining case: some degraded, none down, or in maintenance.
         "degraded".to_string()
     };
 
@@ -900,6 +900,149 @@ pub fn update_notification(
     Ok(Json(serde_json::json!({"message": "Notification channel updated"})))
 }
 
+// ── Maintenance Windows ──
+
+#[post("/monitors/<monitor_id>/maintenance", format = "json", data = "<input>")]
+pub fn create_maintenance_window(
+    monitor_id: &str,
+    input: Json<crate::models::CreateMaintenanceWindow>,
+    db: &State<Arc<Db>>,
+    token: ManageToken,
+) -> Result<Json<crate::models::MaintenanceWindow>, (Status, Json<serde_json::Value>)> {
+    let conn = db.conn.lock().unwrap();
+    verify_manage_key(&conn, monitor_id, &token.0)?;
+
+    let data = input.into_inner();
+
+    // Validate title
+    if data.title.trim().is_empty() {
+        return Err((Status::BadRequest, Json(serde_json::json!({
+            "error": "Title is required", "code": "VALIDATION_ERROR"
+        }))));
+    }
+
+    // Validate timestamps (must be ISO-8601 parseable and ends_at > starts_at)
+    let starts = chrono::NaiveDateTime::parse_from_str(&data.starts_at, "%Y-%m-%dT%H:%M:%SZ")
+        .or_else(|_| chrono::NaiveDateTime::parse_from_str(&data.starts_at, "%Y-%m-%dT%H:%M:%S"))
+        .map_err(|_| (Status::BadRequest, Json(serde_json::json!({
+            "error": "starts_at must be ISO-8601 format (e.g. 2026-02-10T14:00:00Z)", "code": "VALIDATION_ERROR"
+        }))))?;
+    let ends = chrono::NaiveDateTime::parse_from_str(&data.ends_at, "%Y-%m-%dT%H:%M:%SZ")
+        .or_else(|_| chrono::NaiveDateTime::parse_from_str(&data.ends_at, "%Y-%m-%dT%H:%M:%S"))
+        .map_err(|_| (Status::BadRequest, Json(serde_json::json!({
+            "error": "ends_at must be ISO-8601 format (e.g. 2026-02-10T15:00:00Z)", "code": "VALIDATION_ERROR"
+        }))))?;
+    if ends <= starts {
+        return Err((Status::BadRequest, Json(serde_json::json!({
+            "error": "ends_at must be after starts_at", "code": "VALIDATION_ERROR"
+        }))));
+    }
+
+    let id = uuid::Uuid::new_v4().to_string();
+    let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+
+    conn.execute(
+        "INSERT INTO maintenance_windows (id, monitor_id, title, starts_at, ends_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![id, monitor_id, data.title.trim(), data.starts_at, data.ends_at],
+    ).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({
+        "error": format!("DB error: {}", e), "code": "INTERNAL_ERROR"
+    }))))?;
+
+    let active = is_time_in_window(&now, &data.starts_at, &data.ends_at);
+
+    Ok(Json(crate::models::MaintenanceWindow {
+        id,
+        monitor_id: monitor_id.to_string(),
+        title: data.title.trim().to_string(),
+        starts_at: data.starts_at,
+        ends_at: data.ends_at,
+        active,
+        created_at: now,
+    }))
+}
+
+#[get("/monitors/<monitor_id>/maintenance")]
+pub fn list_maintenance_windows(
+    monitor_id: &str,
+    db: &State<Arc<Db>>,
+) -> Result<Json<Vec<crate::models::MaintenanceWindow>>, (Status, Json<serde_json::Value>)> {
+    let conn = db.conn.lock().unwrap();
+
+    // Verify monitor exists
+    let _: String = conn.query_row(
+        "SELECT id FROM monitors WHERE id = ?1", params![monitor_id], |r| r.get(0)
+    ).map_err(|_| (Status::NotFound, Json(serde_json::json!({
+        "error": "Monitor not found", "code": "NOT_FOUND"
+    }))))?;
+
+    let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+
+    let mut stmt = conn.prepare(
+        "SELECT id, monitor_id, title, starts_at, ends_at, created_at FROM maintenance_windows WHERE monitor_id = ?1 ORDER BY starts_at DESC"
+    ).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
+
+    let windows: Vec<crate::models::MaintenanceWindow> = stmt.query_map(params![monitor_id], |row| {
+        let starts_at: String = row.get(3)?;
+        let ends_at: String = row.get(4)?;
+        Ok(crate::models::MaintenanceWindow {
+            id: row.get(0)?,
+            monitor_id: row.get(1)?,
+            title: row.get(2)?,
+            starts_at: starts_at.clone(),
+            ends_at: ends_at.clone(),
+            active: is_time_in_window(&now, &starts_at, &ends_at),
+            created_at: row.get(5)?,
+        })
+    }).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?
+    .filter_map(|r| r.ok())
+    .collect();
+
+    Ok(Json(windows))
+}
+
+#[delete("/maintenance/<id>")]
+pub fn delete_maintenance_window(
+    id: &str,
+    db: &State<Arc<Db>>,
+    token: ManageToken,
+) -> Result<Json<serde_json::Value>, (Status, Json<serde_json::Value>)> {
+    let conn = db.conn.lock().unwrap();
+
+    // Get the monitor_id for this maintenance window
+    let monitor_id: String = conn.query_row(
+        "SELECT monitor_id FROM maintenance_windows WHERE id = ?1", params![id], |r| r.get(0)
+    ).map_err(|_| (Status::NotFound, Json(serde_json::json!({
+        "error": "Maintenance window not found", "code": "NOT_FOUND"
+    }))))?;
+
+    verify_manage_key(&conn, &monitor_id, &token.0)?;
+
+    conn.execute("DELETE FROM maintenance_windows WHERE id = ?1", params![id])
+        .map_err(|e| (Status::InternalServerError, Json(serde_json::json!({
+            "error": format!("DB error: {}", e), "code": "INTERNAL_ERROR"
+        }))))?;
+
+    Ok(Json(serde_json::json!({"message": "Maintenance window deleted"})))
+}
+
+/// Check if a given ISO-8601 timestamp falls within a window
+fn is_time_in_window(now: &str, starts_at: &str, ends_at: &str) -> bool {
+    now >= starts_at && now < ends_at
+}
+
+/// Check if a monitor currently has an active maintenance window.
+/// Used by the checker to suppress incident creation.
+pub fn is_in_maintenance(db: &Db, monitor_id: &str) -> bool {
+    let conn = db.conn.lock().unwrap();
+    let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM maintenance_windows WHERE monitor_id = ?1 AND starts_at <= ?2 AND ends_at > ?2",
+        params![monitor_id, now],
+        |r| r.get(0),
+    ).unwrap_or(0);
+    count > 0
+}
+
 // ── Tags ──
 
 #[get("/tags")]
@@ -1006,11 +1149,20 @@ POST /api/v1/monitors/:id/notifications — add notification (auth)
 GET /api/v1/monitors/:id/notifications — list notifications (auth)
 DELETE /api/v1/notifications/:id — remove notification (auth)
 PATCH /api/v1/notifications/:id — enable/disable notification (auth)
+POST /api/v1/monitors/:id/maintenance — create maintenance window (auth)
+GET /api/v1/monitors/:id/maintenance — list maintenance windows
+DELETE /api/v1/maintenance/:id — delete maintenance window (auth)
 GET /api/v1/tags — list all unique tags (public monitors)
 GET /api/v1/events — global SSE event stream
 GET /api/v1/monitors/:id/events — per-monitor SSE event stream
 GET /api/v1/status — public status page (supports ?tag= filter)
 GET /api/v1/health — service health
+
+## Maintenance Windows
+Schedule downtime so checks still run but incidents are suppressed.
+POST /api/v1/monitors/:id/maintenance with {"title": "Deploy v2", "starts_at": "2026-02-10T14:00:00Z", "ends_at": "2026-02-10T15:00:00Z"}
+During an active window, monitor status shows "maintenance" instead of "down".
+Heartbeats are still recorded. No incidents created. SSE events: maintenance.started, maintenance.ended.
 "#)
 }
 
@@ -1341,6 +1493,59 @@ const OPENAPI_JSON: &str = r##"{
         }
       }
     },
+    "/monitors/{id}/maintenance": {
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+      "post": {
+        "summary": "Create a maintenance window (suppresses incidents during the window)",
+        "operationId": "createMaintenanceWindow",
+        "tags": ["maintenance"],
+        "security": [{ "manageKey": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["title", "starts_at", "ends_at"],
+                "properties": {
+                  "title": { "type": "string", "description": "Maintenance description" },
+                  "starts_at": { "type": "string", "format": "date-time", "description": "Window start (ISO-8601 UTC)" },
+                  "ends_at": { "type": "string", "format": "date-time", "description": "Window end (ISO-8601 UTC)" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Maintenance window created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MaintenanceWindow" } } } },
+          "400": { "description": "Validation error" },
+          "403": { "description": "Invalid manage key" }
+        }
+      },
+      "get": {
+        "summary": "List maintenance windows for a monitor",
+        "operationId": "listMaintenanceWindows",
+        "tags": ["maintenance"],
+        "responses": {
+          "200": { "description": "List of maintenance windows", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/MaintenanceWindow" } } } } },
+          "404": { "description": "Monitor not found" }
+        }
+      }
+    },
+    "/maintenance/{id}": {
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+      "delete": {
+        "summary": "Delete a maintenance window",
+        "operationId": "deleteMaintenanceWindow",
+        "tags": ["maintenance"],
+        "security": [{ "manageKey": [] }],
+        "responses": {
+          "200": { "description": "Deleted" },
+          "403": { "description": "Invalid manage key" },
+          "404": { "description": "Maintenance window not found" }
+        }
+      }
+    },
     "/llms.txt": {
       "get": {
         "summary": "AI agent discovery document",
@@ -1385,7 +1590,7 @@ const OPENAPI_JSON: &str = r##"{
           "headers": { "type": "object", "nullable": true },
           "is_public": { "type": "boolean" },
           "is_paused": { "type": "boolean" },
-          "current_status": { "type": "string", "enum": ["unknown", "up", "down", "degraded"] },
+          "current_status": { "type": "string", "enum": ["unknown", "up", "down", "degraded", "maintenance"] },
           "last_checked_at": { "type": "string", "nullable": true },
           "confirmation_threshold": { "type": "integer" },
           "response_time_threshold_ms": { "type": "integer", "nullable": true, "description": "Mark as degraded when response time exceeds this (ms). Null = disabled." },
@@ -1573,6 +1778,18 @@ const OPENAPI_JSON: &str = r##"{
           "name": { "type": "string" },
           "channel_type": { "type": "string", "enum": ["webhook", "email"] },
           "config": { "type": "object", "description": "For webhook: {\"url\": \"...\"}, for email: {\"address\": \"...\"}" }
+        }
+      },
+      "MaintenanceWindow": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "monitor_id": { "type": "string", "format": "uuid" },
+          "title": { "type": "string" },
+          "starts_at": { "type": "string", "format": "date-time" },
+          "ends_at": { "type": "string", "format": "date-time" },
+          "active": { "type": "boolean", "description": "Whether the window is currently active" },
+          "created_at": { "type": "string" }
         }
       },
       "Error": {

@@ -88,6 +88,20 @@ impl Db {
         // Add response_time_threshold_ms column to monitors
         conn.execute_batch("ALTER TABLE monitors ADD COLUMN response_time_threshold_ms INTEGER;").ok();
 
+        // Maintenance windows table
+        conn.execute_batch("
+            CREATE TABLE IF NOT EXISTS maintenance_windows (
+                id TEXT PRIMARY KEY,
+                monitor_id TEXT NOT NULL REFERENCES monitors(id) ON DELETE CASCADE,
+                title TEXT NOT NULL,
+                starts_at TEXT NOT NULL,
+                ends_at TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_maintenance_monitor ON maintenance_windows(monitor_id);
+            CREATE INDEX IF NOT EXISTS idx_maintenance_active ON maintenance_windows(starts_at, ends_at);
+        ").ok();
+
         // Backfill seq for existing heartbeats
         let needs_hb_backfill: i64 = conn
             .query_row("SELECT COUNT(*) FROM heartbeats WHERE seq IS NULL", [], |r| r.get(0))
