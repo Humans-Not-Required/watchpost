@@ -13,6 +13,10 @@ async function request(path, options = {}) {
   return res.json();
 }
 
+export async function getDashboard() {
+  return request('/dashboard');
+}
+
 export async function getStatus() {
   return request('/status');
 }

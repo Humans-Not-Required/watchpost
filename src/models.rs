@@ -223,6 +223,49 @@ pub struct CreateMaintenanceWindow {
 }
 
 #[derive(Debug, Serialize)]
+pub struct DashboardOverview {
+    pub total_monitors: u32,
+    pub public_monitors: u32,
+    pub paused_monitors: u32,
+    pub status_counts: StatusCounts,
+    pub active_incidents: u32,
+    pub avg_uptime_24h: f64,
+    pub avg_uptime_7d: f64,
+    pub avg_response_ms_24h: Option<f64>,
+    pub total_checks_24h: u32,
+    pub recent_incidents: Vec<DashboardIncident>,
+    pub slowest_monitors: Vec<SlowMonitor>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StatusCounts {
+    pub up: u32,
+    pub down: u32,
+    pub degraded: u32,
+    pub unknown: u32,
+    pub maintenance: u32,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DashboardIncident {
+    pub id: String,
+    pub monitor_id: String,
+    pub monitor_name: String,
+    pub started_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved_at: Option<String>,
+    pub cause: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SlowMonitor {
+    pub id: String,
+    pub name: String,
+    pub avg_response_ms: f64,
+    pub current_status: String,
+}
+
+#[derive(Debug, Serialize)]
 pub struct ExportedMonitor {
     pub name: String,
     pub url: String,

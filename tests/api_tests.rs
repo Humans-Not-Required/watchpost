@@ -30,6 +30,7 @@ fn test_client() -> Client {
             watchpost::routes::get_uptime,
             watchpost::routes::get_incidents,
             watchpost::routes::acknowledge_incident,
+            watchpost::routes::dashboard,
             watchpost::routes::status_page,
             watchpost::routes::create_notification,
             watchpost::routes::list_notifications,
@@ -1426,4 +1427,65 @@ fn test_maintenance_window_cascade_delete() {
     // Monitor gone, maintenance windows should also be gone (cascade delete)
     let resp = client.get(format!("/api/v1/monitors/{}/maintenance", id)).dispatch();
     assert_eq!(resp.status(), Status::NotFound);
+}
+
+// ── Dashboard Tests ──
+
+#[test]
+fn test_dashboard_empty() {
+    let client = test_client();
+    let resp = client.get("/api/v1/dashboard").dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["total_monitors"], 0);
+    assert_eq!(body["public_monitors"], 0);
+    assert_eq!(body["paused_monitors"], 0);
+    assert_eq!(body["active_incidents"], 0);
+    assert_eq!(body["avg_uptime_24h"], 100.0);
+    assert_eq!(body["total_checks_24h"], 0);
+    assert!(body["status_counts"]["up"].as_u64().unwrap() == 0);
+    assert!(body["recent_incidents"].as_array().unwrap().is_empty());
+    assert!(body["slowest_monitors"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn test_dashboard_with_monitors() {
+    let client = test_client();
+
+    // Create a public monitor
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Public API", "url": "https://example.com", "is_public": true}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+
+    // Create a private monitor
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Private API", "url": "https://internal.example.com", "is_public": false}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+
+    let resp = client.get("/api/v1/dashboard").dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["total_monitors"], 2);
+    assert_eq!(body["public_monitors"], 1);
+    assert_eq!(body["paused_monitors"], 0);
+    // New monitors start as "unknown"
+    assert_eq!(body["status_counts"]["unknown"], 2);
+}
+
+#[test]
+fn test_dashboard_with_paused_monitor() {
+    let client = test_client();
+    let (id, key) = create_test_monitor(&client);
+
+    // Pause it
+    client.post(format!("/api/v1/monitors/{}/pause?key={}", id, key)).dispatch();
+
+    let resp = client.get("/api/v1/dashboard").dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["total_monitors"], 1);
+    assert_eq!(body["paused_monitors"], 1);
 }

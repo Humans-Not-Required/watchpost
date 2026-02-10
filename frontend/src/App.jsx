@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import Dashboard from './pages/Dashboard'
 import StatusPage from './pages/StatusPage'
 import MonitorDetail from './pages/MonitorDetail'
 import CreateMonitor from './pages/CreateMonitor'
@@ -13,7 +14,8 @@ function parseRoute() {
   }
   if (hash === '/new') return { page: 'create', key };
   if (hash === '/import') return { page: 'import', key };
-  return { page: 'status', key };
+  if (hash === '/status') return { page: 'status', key };
+  return { page: 'dashboard', key };
 }
 
 function navigate(path) {
@@ -44,8 +46,14 @@ export default function App() {
           </div>
           <nav className="header-nav">
             <button
-              className={`nav-btn ${route.page === 'status' ? 'active' : ''}`}
+              className={`nav-btn ${route.page === 'dashboard' ? 'active' : ''}`}
               onClick={() => navigate('/')}
+            >
+              📊 Dashboard
+            </button>
+            <button
+              className={`nav-btn ${route.page === 'status' ? 'active' : ''}`}
+              onClick={() => navigate('/status')}
             >
               Status
             </button>
@@ -66,6 +74,9 @@ export default function App() {
       </header>
 
       <main className="container" style={{ paddingBottom: 40 }}>
+        {route.page === 'dashboard' && (
+          <Dashboard onNavigate={(path) => navigate(path)} />
+        )}
         {route.page === 'status' && (
           <StatusPage onSelect={(id) => navigate(`/monitor/${id}`)} />
         )}
