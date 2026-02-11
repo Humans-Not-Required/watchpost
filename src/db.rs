@@ -88,6 +88,9 @@ impl Db {
         // Add response_time_threshold_ms column to monitors
         conn.execute_batch("ALTER TABLE monitors ADD COLUMN response_time_threshold_ms INTEGER;").ok();
 
+        // Add follow_redirects column to monitors (default true — follow 301/302/etc.)
+        conn.execute_batch("ALTER TABLE monitors ADD COLUMN follow_redirects INTEGER NOT NULL DEFAULT 1;").ok();
+
         // Maintenance windows table
         conn.execute_batch("
             CREATE TABLE IF NOT EXISTS maintenance_windows (

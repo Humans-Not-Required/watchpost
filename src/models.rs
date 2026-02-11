@@ -31,6 +31,7 @@ pub struct Monitor {
     pub confirmation_threshold: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_time_threshold_ms: Option<u32>,
+    pub follow_redirects: bool,
     pub tags: Vec<String>,
     pub created_at: String,
     pub updated_at: String,
@@ -54,10 +55,13 @@ pub struct CreateMonitor {
     pub is_public: bool,
     pub confirmation_threshold: Option<u32>,
     pub response_time_threshold_ms: Option<u32>,
+    #[serde(default = "default_follow_redirects")]
+    pub follow_redirects: Option<bool>,
     #[serde(default)]
     pub tags: Vec<String>,
 }
 
+fn default_follow_redirects() -> Option<bool> { Some(true) }
 fn default_method() -> String { "GET".into() }
 fn default_interval() -> Option<u32> { Some(300) }
 fn default_timeout() -> Option<u32> { Some(10000) }
@@ -77,6 +81,7 @@ pub struct UpdateMonitor {
     pub confirmation_threshold: Option<u32>,
     #[serde(default, deserialize_with = "deserialize_optional_nullable")]
     pub response_time_threshold_ms: Option<Option<u32>>,
+    pub follow_redirects: Option<bool>,
     pub tags: Option<Vec<String>>,
 }
 
@@ -281,6 +286,7 @@ pub struct ExportedMonitor {
     pub confirmation_threshold: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_time_threshold_ms: Option<u32>,
+    pub follow_redirects: bool,
     pub tags: Vec<String>,
 }
 

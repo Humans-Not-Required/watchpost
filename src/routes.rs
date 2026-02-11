@@ -118,11 +118,12 @@ pub fn create_monitor(
     let tags_str = tags_to_string(&data.tags);
     // Validate response_time_threshold_ms: must be >= 100ms if provided
     let rt_threshold = data.response_time_threshold_ms.map(|v| v.max(100));
+    let follow_redirects = data.follow_redirects.unwrap_or(true);
 
     let conn = db.conn.lock().unwrap();
     conn.execute(
-        "INSERT INTO monitors (id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, manage_key_hash, is_public, confirmation_threshold, tags, response_time_threshold_ms)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+        "INSERT INTO monitors (id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, manage_key_hash, is_public, confirmation_threshold, tags, response_time_threshold_ms, follow_redirects)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
         params![
             id,
             data.name.trim(),
@@ -138,6 +139,7 @@ pub fn create_monitor(
             confirmation,
             tags_str,
             rt_threshold,
+            follow_redirects as i32,
         ],
     ).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({
         "error": format!("DB error: {}", e), "code": "INTERNAL_ERROR"
@@ -232,10 +234,11 @@ pub fn bulk_create_monitors(
         let manage_key = generate_key();
         let key_hash = hash_key(&manage_key);
         let tags_str = tags_to_string(&monitor_data.tags);
+        let follow_redirects = monitor_data.follow_redirects.unwrap_or(true);
 
         match conn.execute(
-            "INSERT INTO monitors (id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, manage_key_hash, is_public, confirmation_threshold, tags, response_time_threshold_ms)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            "INSERT INTO monitors (id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, manage_key_hash, is_public, confirmation_threshold, tags, response_time_threshold_ms, follow_redirects)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             params![
                 id,
                 monitor_data.name.trim(),
@@ -251,6 +254,7 @@ pub fn bulk_create_monitors(
                 confirmation,
                 tags_str,
                 rt_threshold,
+                follow_redirects as i32,
             ],
         ) {
             Ok(_) => {
@@ -310,6 +314,7 @@ pub fn export_monitor(
         is_public: monitor.is_public,
         confirmation_threshold: monitor.confirmation_threshold,
         response_time_threshold_ms: monitor.response_time_threshold_ms,
+        follow_redirects: monitor.follow_redirects,
         tags: monitor.tags,
     }))
 }
@@ -321,7 +326,7 @@ pub fn list_monitors(search: Option<&str>, status: Option<&str>, tag: Option<&st
     let conn = db.conn.lock().unwrap();
 
     let mut sql = String::from(
-        "SELECT id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, is_public, is_paused, current_status, last_checked_at, confirmation_threshold, created_at, updated_at, tags, response_time_threshold_ms
+        "SELECT id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, is_public, is_paused, current_status, last_checked_at, confirmation_threshold, created_at, updated_at, tags, response_time_threshold_ms, follow_redirects
          FROM monitors WHERE is_public = 1"
     );
     let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
@@ -452,6 +457,11 @@ pub fn update_monitor(
             Some(val) => values.push(Box::new(Some((*val).max(100)))),
             None => values.push(Box::new(None::<u32>)),
         }
+    }
+
+    if let Some(follow) = data.follow_redirects {
+        updates.push(format!("follow_redirects = ?{}", values.len() + 1));
+        values.push(Box::new(follow as i32));
     }
 
     if updates.is_empty() {
@@ -1343,6 +1353,11 @@ GET /api/v1/monitors/:id/uptime-history?days=30 — Daily uptime percentages for
 ## Monitor Methods
 GET, HEAD, POST
 
+## Redirect Handling
+By default, monitors follow HTTP redirects (301, 302, etc.) up to 10 hops.
+Set follow_redirects: false on create/update to disable redirect following (useful for monitoring that a redirect is in place).
+When follow_redirects is true (default), the final response after all redirects is evaluated against expected_status.
+
 ## Check Statuses
 up, down, degraded (response time exceeds threshold), unknown (never checked)
 
@@ -2029,6 +2044,7 @@ const OPENAPI_JSON: &str = r##"{
           "last_checked_at": { "type": "string", "nullable": true },
           "confirmation_threshold": { "type": "integer" },
           "response_time_threshold_ms": { "type": "integer", "nullable": true, "description": "Mark as degraded when response time exceeds this (ms). Null = disabled." },
+          "follow_redirects": { "type": "boolean", "description": "Whether HTTP redirects are followed (default: true)" },
           "tags": { "type": "array", "items": { "type": "string" }, "description": "Freeform tags for grouping monitors" },
           "created_at": { "type": "string" },
           "updated_at": { "type": "string" }
@@ -2049,6 +2065,7 @@ const OPENAPI_JSON: &str = r##"{
           "is_public": { "type": "boolean", "default": false },
           "confirmation_threshold": { "type": "integer", "minimum": 1, "maximum": 10, "default": 2 },
           "response_time_threshold_ms": { "type": "integer", "minimum": 100, "nullable": true, "description": "Alert when response time exceeds this threshold (ms). Null = disabled." },
+          "follow_redirects": { "type": "boolean", "default": true, "description": "Follow HTTP redirects (301, 302, etc.) up to 10 hops. Default: true." },
           "tags": { "type": "array", "items": { "type": "string" }, "description": "Freeform tags for grouping" }
         }
       },
@@ -2405,7 +2422,7 @@ pub fn monitor_events<'a>(id: &'a str, broadcaster: &'a State<Arc<EventBroadcast
 
 fn get_monitor_from_db(conn: &rusqlite::Connection, id: &str) -> rusqlite::Result<Monitor> {
     conn.query_row(
-        "SELECT id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, is_public, is_paused, current_status, last_checked_at, confirmation_threshold, created_at, updated_at, tags, response_time_threshold_ms
+        "SELECT id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, is_public, is_paused, current_status, last_checked_at, confirmation_threshold, created_at, updated_at, tags, response_time_threshold_ms, follow_redirects
          FROM monitors WHERE id = ?1",
         params![id],
         |row| Ok(row_to_monitor(row)),
@@ -2447,6 +2464,7 @@ fn row_to_monitor(row: &rusqlite::Row) -> Monitor {
         last_checked_at: row.get(12).unwrap_or(None),
         confirmation_threshold: row.get(13).unwrap(),
         response_time_threshold_ms: row.get::<_, Option<u32>>(17).unwrap_or(None),
+        follow_redirects: row.get::<_, i32>(18).unwrap_or(1) != 0,
         tags: parse_tags(&tags_str),
         created_at: row.get(14).unwrap(),
         updated_at: row.get(15).unwrap(),

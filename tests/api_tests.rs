@@ -1933,3 +1933,108 @@ fn test_bulk_create_invalid_headers() {
     assert_eq!(body["failed"], 1);
     assert!(body["errors"][0]["error"].as_str().unwrap().contains("JSON object"));
 }
+
+// ── Follow Redirects Tests ──
+
+#[test]
+fn test_create_monitor_follow_redirects_default_true() {
+    let client = test_client();
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Default Redirect", "url": "https://example.com"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["monitor"]["follow_redirects"], true);
+}
+
+#[test]
+fn test_create_monitor_follow_redirects_false() {
+    let client = test_client();
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "No Redirect", "url": "https://example.com", "follow_redirects": false}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["monitor"]["follow_redirects"], false);
+}
+
+#[test]
+fn test_update_monitor_follow_redirects() {
+    let client = test_client();
+
+    // Create with default (true)
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Update Redirect Test", "url": "https://example.com"}"#)
+        .dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let id = body["monitor"]["id"].as_str().unwrap().to_string();
+    let key = body["manage_key"].as_str().unwrap().to_string();
+    assert_eq!(body["monitor"]["follow_redirects"], true);
+
+    // Update to false
+    let resp = client.patch(format!("/api/v1/monitors/{}", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("X-API-Key", key.clone()))
+        .body(r#"{"follow_redirects": false}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+
+    // Verify
+    let resp = client.get(format!("/api/v1/monitors/{}", id)).dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["follow_redirects"], false);
+
+    // Update back to true
+    let resp = client.patch(format!("/api/v1/monitors/{}", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("X-API-Key", key))
+        .body(r#"{"follow_redirects": true}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+
+    let resp = client.get(format!("/api/v1/monitors/{}", id)).dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["follow_redirects"], true);
+}
+
+#[test]
+fn test_bulk_create_follow_redirects() {
+    let client = test_client();
+    let resp = client.post("/api/v1/monitors/bulk")
+        .header(ContentType::JSON)
+        .body(r#"{"monitors": [
+            {"name": "Follow", "url": "https://example.com"},
+            {"name": "No Follow", "url": "https://example.com", "follow_redirects": false}
+        ]}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["succeeded"], 2);
+    assert_eq!(body["created"][0]["monitor"]["follow_redirects"], true);
+    assert_eq!(body["created"][1]["monitor"]["follow_redirects"], false);
+}
+
+#[test]
+fn test_export_includes_follow_redirects() {
+    let client = test_client();
+
+    // Create with follow_redirects: false
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Export Redirect", "url": "https://example.com", "follow_redirects": false}"#)
+        .dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let id = body["monitor"]["id"].as_str().unwrap().to_string();
+    let key = body["manage_key"].as_str().unwrap().to_string();
+
+    // Export
+    let resp = client.get(format!("/api/v1/monitors/{}/export", id))
+        .header(rocket::http::Header::new("X-API-Key", key))
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["follow_redirects"], false);
+}

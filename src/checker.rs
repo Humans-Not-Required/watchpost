@@ -34,11 +34,17 @@ pub async fn run_checker(db: Arc<Db>, broadcaster: Arc<EventBroadcaster>, shutdo
         _ = shutdown.clone() => return,
     }
 
-    let client = reqwest::Client::builder()
+    let client_follow = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::limited(10))
+        .timeout(Duration::from_secs(60))
+        .build()
+        .expect("Failed to build HTTP client (follow redirects)");
+
+    let client_no_follow = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(60))
         .build()
-        .expect("Failed to build HTTP client");
+        .expect("Failed to build HTTP client (no redirects)");
 
     // Track last retention run so we only prune once per hour
     let mut last_retention = std::time::Instant::now() - Duration::from_secs(3600);
@@ -57,7 +63,7 @@ pub async fn run_checker(db: Arc<Db>, broadcaster: Arc<EventBroadcaster>, shutdo
         let monitor = {
             let conn = db.conn.lock().unwrap();
             conn.query_row(
-                "SELECT id, name, url, method, timeout_ms, expected_status, body_contains, headers, confirmation_threshold, consecutive_failures, current_status, interval_seconds, response_time_threshold_ms
+                "SELECT id, name, url, method, timeout_ms, expected_status, body_contains, headers, confirmation_threshold, consecutive_failures, current_status, interval_seconds, response_time_threshold_ms, follow_redirects
                  FROM monitors
                  WHERE is_paused = 0
                    AND (last_checked_at IS NULL OR datetime(last_checked_at, '+' || interval_seconds || ' seconds') <= datetime('now'))
@@ -80,6 +86,7 @@ pub async fn run_checker(db: Arc<Db>, broadcaster: Arc<EventBroadcaster>, shutdo
                         current_status: row.get(10)?,
                         interval_seconds: row.get(11)?,
                         response_time_threshold_ms: row.get(12)?,
+                        follow_redirects: row.get::<_, i32>(13).unwrap_or(1) != 0,
                     })
                 },
             ).ok()
@@ -87,7 +94,8 @@ pub async fn run_checker(db: Arc<Db>, broadcaster: Arc<EventBroadcaster>, shutdo
 
         match monitor {
             Some(m) => {
-                run_check(&client, &db, &broadcaster, &m).await;
+                let client = if m.follow_redirects { &client_follow } else { &client_no_follow };
+                run_check(client, &db, &broadcaster, &m).await;
             }
             None => {
                 // No monitors due — sleep a bit before checking again
@@ -121,6 +129,7 @@ struct MonitorCheck {
     #[allow(dead_code)]
     interval_seconds: u32,
     response_time_threshold_ms: Option<u32>,
+    follow_redirects: bool,
 }
 
 async fn run_check(client: &reqwest::Client, db: &Db, broadcaster: &EventBroadcaster, monitor: &MonitorCheck) {
