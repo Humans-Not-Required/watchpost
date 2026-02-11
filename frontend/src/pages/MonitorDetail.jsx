@@ -196,7 +196,7 @@ function UptimeStats({ stats }) {
   ];
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginTop: 16 }}>
+    <div className="uptime-stats-grid">
       {items.map(({ label, value, checks }) => (
         <div key={label} className="card" style={{ textAlign: 'center', padding: 16, marginBottom: 0 }}>
           <div style={{

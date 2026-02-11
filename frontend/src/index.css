@@ -506,6 +506,13 @@ input, select, textarea {
   border-radius: 2px;
   margin-right: 2px;
 }
+.uptime-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-top: 16px;
+}
+
 .skeleton-uptime-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -946,6 +953,10 @@ input, select, textarea {
   }
   .dashboard-grid {
     grid-template-columns: 1fr 1fr;
+  }
+  .uptime-stats-grid,
+  .skeleton-uptime-grid {
+    grid-template-columns: repeat(2, 1fr);
   }
   .stat-value {
     font-size: 1.4rem;
