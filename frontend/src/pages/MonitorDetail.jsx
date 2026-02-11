@@ -884,7 +884,97 @@ function EditMonitorForm({ monitor, manageKey, onSaved, onCancel }) {
   );
 }
 
-export default function MonitorDetail({ id, manageKey, onBack }) {
+function ManageKeyInput({ monitorId, onKeySet }) {
+  const [showInput, setShowInput] = useState(false);
+  const [keyValue, setKeyValue] = useState('');
+  const [validating, setValidating] = useState(false);
+  const [error, setError] = useState(null);
+
+  const handleSubmit = async () => {
+    const key = keyValue.trim();
+    if (!key) return;
+    setValidating(true);
+    setError(null);
+    try {
+      // Validate the key by trying to fetch notifications (requires auth)
+      await getNotifications(monitorId, key);
+      // Key is valid — persist and activate
+      try { localStorage.setItem(`watchpost_key_${monitorId}`, key); } catch (e) { /* silent */ }
+      onKeySet(key);
+    } catch (err) {
+      // Try a PATCH with empty body as fallback validation
+      try {
+        await updateMonitor(monitorId, {}, key);
+        try { localStorage.setItem(`watchpost_key_${monitorId}`, key); } catch (e) { /* silent */ }
+        onKeySet(key);
+      } catch (err2) {
+        setError('Invalid manage key');
+      }
+    } finally {
+      setValidating(false);
+    }
+  };
+
+  if (!showInput) {
+    return (
+      <div style={{ marginTop: 12 }}>
+        <button
+          className="btn btn-secondary"
+          style={{ fontSize: '0.85rem', padding: '8px 16px' }}
+          onClick={() => setShowInput(true)}
+        >
+          🔑 Enter Manage Key
+        </button>
+        <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginLeft: 10 }}>
+          Unlock editing, pause/resume, and delete
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="card" style={{ marginTop: 12, borderColor: 'var(--accent)', padding: 16 }}>
+      <div style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: 10 }}>🔑 Enter Manage Key</div>
+      <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: 12 }}>
+        Paste the manage key you received when creating this monitor.
+      </div>
+      {error && (
+        <div style={{ background: 'var(--danger-bg)', border: '1px solid var(--danger)', borderRadius: 'var(--radius)', padding: '8px 12px', marginBottom: 12, fontSize: '0.85rem', color: 'var(--danger)' }}>
+          {error}
+        </div>
+      )}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <input
+          className="form-input"
+          type="password"
+          style={{ flex: 1, fontFamily: 'monospace', fontSize: '0.85rem' }}
+          placeholder="wp_..."
+          value={keyValue}
+          onChange={(e) => setKeyValue(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && handleSubmit()}
+          autoFocus
+        />
+        <button
+          className="btn btn-primary"
+          style={{ fontSize: '0.85rem', padding: '8px 16px' }}
+          disabled={validating || !keyValue.trim()}
+          onClick={handleSubmit}
+        >
+          {validating ? 'Checking...' : 'Unlock'}
+        </button>
+        <button
+          className="btn btn-secondary"
+          style={{ fontSize: '0.85rem', padding: '8px 12px' }}
+          onClick={() => { setShowInput(false); setError(null); setKeyValue(''); }}
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export default function MonitorDetail({ id, manageKey: urlKey, onBack }) {
   const [monitor, setMonitor] = useState(null);
   const [heartbeats, setHeartbeats] = useState([]);
   const [uptime, setUptime] = useState(null);
@@ -895,6 +985,12 @@ export default function MonitorDetail({ id, manageKey, onBack }) {
   const [actionLoading, setActionLoading] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [enteredKey, setEnteredKey] = useState(null);
+
+  // Effective manage key: URL param > entered key > localStorage
+  const manageKey = urlKey || enteredKey || (() => {
+    try { return localStorage.getItem(`watchpost_key_${id}`) || ''; } catch (e) { return ''; }
+  })();
 
   useEffect(() => {
     let mounted = true;
@@ -1088,7 +1184,7 @@ export default function MonitorDetail({ id, manageKey, onBack }) {
           </div>
         </div>
 
-        {manageKey && (
+        {manageKey ? (
           <div className="manage-panel">
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
               <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginRight: 8 }}>🔑 Manage:</span>
@@ -1138,8 +1234,23 @@ export default function MonitorDetail({ id, manageKey, onBack }) {
                   </button>
                 </div>
               )}
+              {!urlKey && (
+                <button
+                  className="btn btn-secondary"
+                  style={{ fontSize: '0.75rem', padding: '4px 10px', marginLeft: 'auto' }}
+                  onClick={() => {
+                    setEnteredKey(null);
+                    try { localStorage.removeItem(`watchpost_key_${id}`); } catch (e) { /* silent */ }
+                  }}
+                  title="Remove saved manage key"
+                >
+                  🔒 Lock
+                </button>
+              )}
             </div>
           </div>
+        ) : (
+          <ManageKeyInput monitorId={id} onKeySet={(key) => setEnteredKey(key)} />
         )}
 
         {editing && manageKey && (
