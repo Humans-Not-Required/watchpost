@@ -7,14 +7,20 @@ import BulkImport from './pages/BulkImport'
 
 function parseRoute() {
   const hash = window.location.hash.slice(1) || '/';
-  const params = new URLSearchParams(window.location.search);
-  const key = params.get('key') || '';
-  if (hash.startsWith('/monitor/')) {
-    return { page: 'detail', id: hash.slice(9), key };
+  // Support key in hash query: #/monitor/<id>?key=<key>
+  const qIdx = hash.indexOf('?');
+  const path = qIdx >= 0 ? hash.slice(0, qIdx) : hash;
+  const hashParams = qIdx >= 0 ? new URLSearchParams(hash.slice(qIdx + 1)) : new URLSearchParams();
+  // Backward compat: also check main URL query params
+  const mainParams = new URLSearchParams(window.location.search);
+  const key = hashParams.get('key') || mainParams.get('key') || '';
+
+  if (path.startsWith('/monitor/')) {
+    return { page: 'detail', id: path.slice(9), key };
   }
-  if (hash === '/new') return { page: 'create', key };
-  if (hash === '/import') return { page: 'import', key };
-  if (hash === '/status') return { page: 'status', key };
+  if (path === '/new') return { page: 'create', key };
+  if (path === '/import') return { page: 'import', key };
+  if (path === '/status') return { page: 'status', key };
   return { page: 'dashboard', key };
 }
 

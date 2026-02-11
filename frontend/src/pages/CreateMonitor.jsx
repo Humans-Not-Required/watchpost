@@ -10,11 +10,12 @@ export default function CreateMonitor({ onCreated, onCancel }) {
     timeout_ms: 10000,
     expected_status: 200,
     body_contains: '',
-    is_public: true,
+    is_public: false,
     confirmation_threshold: 2,
     response_time_threshold_ms: '',
     tagsInput: '',
   });
+  const [copied, setCopied] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
@@ -58,6 +59,19 @@ export default function CreateMonitor({ onCreated, onCancel }) {
   };
 
   if (result) {
+    // Auto-save key to localStorage
+    try { localStorage.setItem(`watchpost_key_${result.monitor.id}`, result.manage_key); } catch (e) { /* silent */ }
+
+    const manageUrl = `${window.location.origin}/#/monitor/${result.monitor.id}?key=${result.manage_key}`;
+    const viewUrl = `${window.location.origin}/#/monitor/${result.monitor.id}`;
+
+    const handleCopy = () => {
+      navigator.clipboard.writeText(manageUrl).then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 3000);
+      });
+    };
+
     return (
       <div style={{ marginTop: 24 }}>
         <h2 className="section-title" style={{ color: 'var(--success)' }}>
@@ -65,12 +79,31 @@ export default function CreateMonitor({ onCreated, onCancel }) {
         </h2>
 
         <div className="manage-key-banner">
-          <div style={{ fontWeight: 700, marginBottom: 8, color: 'var(--warning)' }}>
-            ⚠️ Save your manage key — it's only shown once!
+          <div style={{ fontWeight: 700, marginBottom: 8, color: 'var(--accent)' }}>
+            🔗 Bookmark this manage link — it's your key to this monitor
           </div>
-          <code>{result.manage_key}</code>
+          <div style={{
+            display: 'flex', gap: 8, alignItems: 'center',
+            background: 'var(--bg-primary)', borderRadius: 6, padding: '8px 12px',
+            border: '1px solid var(--border)',
+          }}>
+            <code style={{
+              flex: 1, fontSize: '0.8rem', wordBreak: 'break-all',
+              color: 'var(--accent)', lineHeight: 1.4,
+            }}>
+              {manageUrl}
+            </code>
+            <button
+              className="btn btn-primary"
+              style={{ fontSize: '0.8rem', padding: '6px 14px', flexShrink: 0 }}
+              onClick={handleCopy}
+            >
+              {copied ? '✅ Copied!' : '📋 Copy'}
+            </button>
+          </div>
           <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: 8 }}>
-            Use this key to update, delete, pause, or manage notifications for this monitor.
+            This link includes your manage key. Bookmark it or save it somewhere safe — anyone with this link can edit, pause, or delete this monitor.
+            Your key is also saved in this browser automatically.
           </div>
         </div>
 
@@ -104,15 +137,21 @@ export default function CreateMonitor({ onCreated, onCancel }) {
               <span className="monitor-stat-label">Interval</span>
               <span className="monitor-stat-value">{result.monitor.interval_seconds}s</span>
             </div>
+            <div className="monitor-stat">
+              <span className="monitor-stat-label">Visibility</span>
+              <span className="monitor-stat-value">{result.monitor.is_public ? '🌐 Public' : '🔒 Private'}</span>
+            </div>
           </div>
         </div>
 
         <div style={{ marginTop: 16, display: 'flex', gap: 8 }}>
-          <button className="btn btn-primary" onClick={() => onCreated(result.monitor.id)}>
+          <button className="btn btn-primary" onClick={() => {
+            window.location.hash = `/monitor/${result.monitor.id}?key=${result.manage_key}`;
+          }}>
             View Monitor →
           </button>
           <button className="btn btn-secondary" onClick={onCancel}>
-            Back to Status
+            Back to Dashboard
           </button>
         </div>
 
@@ -120,10 +159,17 @@ export default function CreateMonitor({ onCreated, onCancel }) {
           <div style={{ color: 'var(--text-muted)', marginBottom: 8 }}>Quick Reference (API)</div>
           <div style={{ color: 'var(--text-secondary)' }}>
             <div>View: <code style={{ color: 'var(--accent)' }}>GET {result.api_base}</code></div>
-            <div>Dashboard: <code style={{ color: 'var(--accent)' }}>{result.view_url}</code></div>
-            <div>Manage: <code style={{ color: 'var(--accent)' }}>{result.manage_url}</code></div>
+            <div>Dashboard: <code style={{ color: 'var(--accent)' }}>{viewUrl}</code></div>
+            <div>Manage: <code style={{ color: 'var(--accent)' }}>{manageUrl}</code></div>
           </div>
         </div>
+
+        <details style={{ marginTop: 12, fontSize: '0.85rem' }}>
+          <summary style={{ color: 'var(--text-muted)', cursor: 'pointer' }}>🔑 Raw manage key</summary>
+          <code style={{ display: 'block', marginTop: 8, padding: '8px 12px', background: 'var(--bg-secondary)', borderRadius: 6, wordBreak: 'break-all', color: 'var(--text-secondary)' }}>
+            {result.manage_key}
+          </code>
+        </details>
       </div>
     );
   }

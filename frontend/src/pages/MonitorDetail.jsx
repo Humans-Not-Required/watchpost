@@ -986,11 +986,19 @@ export default function MonitorDetail({ id, manageKey: urlKey, onBack }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [editing, setEditing] = useState(false);
   const [enteredKey, setEnteredKey] = useState(null);
+  const [linkCopied, setLinkCopied] = useState(false);
 
   // Effective manage key: URL param > entered key > localStorage
   const manageKey = urlKey || enteredKey || (() => {
     try { return localStorage.getItem(`watchpost_key_${id}`) || ''; } catch (e) { return ''; }
   })();
+
+  // Auto-save key to localStorage when loaded via URL
+  useEffect(() => {
+    if (urlKey) {
+      try { localStorage.setItem(`watchpost_key_${id}`, urlKey); } catch (e) { /* silent */ }
+    }
+  }, [id, urlKey]);
 
   useEffect(() => {
     let mounted = true;
@@ -1205,6 +1213,19 @@ export default function MonitorDetail({ id, manageKey: urlKey, onBack }) {
                 {actionLoading === 'pause' || actionLoading === 'resume'
                   ? '...'
                   : monitor.is_paused ? '▶ Resume' : '⏸ Pause'}
+              </button>
+              <button
+                className="btn btn-secondary"
+                style={{ fontSize: '0.8rem', padding: '6px 14px' }}
+                onClick={() => {
+                  const link = `${window.location.origin}/#/monitor/${id}?key=${manageKey}`;
+                  navigator.clipboard.writeText(link).then(() => {
+                    setLinkCopied(true);
+                    setTimeout(() => setLinkCopied(false), 3000);
+                  });
+                }}
+              >
+                {linkCopied ? '✅ Copied!' : '🔗 Copy Link'}
               </button>
               {!confirmDelete ? (
                 <button

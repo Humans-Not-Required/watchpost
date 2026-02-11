@@ -119,66 +119,84 @@ export default function BulkImport({ onDone, onCancel }) {
           }
         </h2>
 
-        {result.created.length > 0 && (
-          <div className="card" style={{ marginTop: 16 }}>
-            <div className="card-header">
-              <span className="card-title">Created Monitors</span>
-            </div>
-            <div className="manage-key-banner" style={{ marginBottom: 16 }}>
-              <div style={{ fontWeight: 700, marginBottom: 8, color: 'var(--warning)' }}>
-                ⚠️ Save these manage keys — they're only shown once!
+        {result.created.length > 0 && (() => {
+          // Auto-save all keys to localStorage
+          result.created.forEach(item => {
+            try { localStorage.setItem(`watchpost_key_${item.monitor.id}`, item.manage_key); } catch (e) { /* silent */ }
+          });
+
+          return (
+            <div className="card" style={{ marginTop: 16 }}>
+              <div className="card-header">
+                <span className="card-title">Created Monitors</span>
+              </div>
+              <div className="manage-key-banner" style={{ marginBottom: 16 }}>
+                <div style={{ fontWeight: 700, marginBottom: 8, color: 'var(--accent)' }}>
+                  🔗 Bookmark these manage links — they include your keys
+                </div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                  Keys are also saved in this browser automatically.
+                </div>
+              </div>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                      <th style={thStyle}>Name</th>
+                      <th style={thStyle}>Target URL</th>
+                      <th style={thStyle}>Manage Link</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {result.created.map((item) => {
+                      const manageLink = `${window.location.origin}/#/monitor/${item.monitor.id}?key=${item.manage_key}`;
+                      return (
+                        <tr key={item.monitor.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                          <td style={tdStyle}>{item.monitor.name}</td>
+                          <td style={{ ...tdStyle, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {item.monitor.url}
+                          </td>
+                          <td style={tdStyle}>
+                            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                              <a href={`#/monitor/${item.monitor.id}?key=${item.manage_key}`} style={{ color: 'var(--accent)', fontSize: '0.8rem' }}>
+                                Open →
+                              </a>
+                              <button
+                                className="btn btn-secondary"
+                                style={{ fontSize: '0.7rem', padding: '2px 8px' }}
+                                onClick={() => navigator.clipboard.writeText(manageLink)}
+                              >
+                                📋
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
+                <button
+                  className="btn btn-secondary"
+                  style={{ fontSize: '0.8rem' }}
+                  onClick={() => {
+                    const data = result.created.map(c => ({
+                      name: c.monitor.name,
+                      id: c.monitor.id,
+                      manage_link: `${window.location.origin}/#/monitor/${c.monitor.id}?key=${c.manage_key}`,
+                      manage_key: c.manage_key,
+                    }));
+                    navigator.clipboard.writeText(JSON.stringify(data, null, 2));
+                  }}
+                >
+                  📋 Copy All as JSON
+                </button>
               </div>
             </div>
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-                <thead>
-                  <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                    <th style={thStyle}>Name</th>
-                    <th style={thStyle}>URL</th>
-                    <th style={thStyle}>Manage Key</th>
-                    <th style={thStyle}>Link</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {result.created.map((item) => (
-                    <tr key={item.monitor.id} style={{ borderBottom: '1px solid var(--border)' }}>
-                      <td style={tdStyle}>{item.monitor.name}</td>
-                      <td style={{ ...tdStyle, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {item.monitor.url}
-                      </td>
-                      <td style={tdStyle}>
-                        <code style={{ fontSize: '0.75rem', color: 'var(--accent)', wordBreak: 'break-all' }}>{item.manage_key}</code>
-                      </td>
-                      <td style={tdStyle}>
-                        <a href={`#/monitor/${item.monitor.id}?key=${item.manage_key}`} style={{ color: 'var(--accent)' }}>
-                          View →
-                        </a>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            <div style={{ marginTop: 12 }}>
-              <button
-                className="btn btn-secondary"
-                style={{ fontSize: '0.8rem' }}
-                onClick={() => {
-                  const keys = result.created.map(c => ({
-                    name: c.monitor.name,
-                    id: c.monitor.id,
-                    manage_key: c.manage_key,
-                    manage_url: c.manage_url,
-                  }));
-                  navigator.clipboard.writeText(JSON.stringify(keys, null, 2));
-                }}
-              >
-                📋 Copy All Keys as JSON
-              </button>
-            </div>
-          </div>
-        )}
+          );
+        })()}
 
         {result.errors.length > 0 && (
           <div className="card" style={{ marginTop: 16, borderColor: 'var(--danger)' }}>
