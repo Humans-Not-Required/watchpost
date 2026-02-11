@@ -107,7 +107,7 @@ pub fn create_monitor(
             "error": "Method must be GET, HEAD, or POST", "code": "VALIDATION_ERROR"
         }))));
     }
-    let interval = data.interval_seconds.unwrap_or(300).max(30);
+    let interval = data.interval_seconds.unwrap_or(600).max(600);
     let timeout = data.timeout_ms.unwrap_or(10000).max(1000).min(60000);
     let expected_status = data.expected_status.unwrap_or(200);
     let confirmation = data.confirmation_threshold.unwrap_or(2).max(1).min(10);
@@ -224,7 +224,7 @@ pub fn bulk_create_monitors(
             continue;
         }
 
-        let interval = monitor_data.interval_seconds.unwrap_or(300).max(30);
+        let interval = monitor_data.interval_seconds.unwrap_or(600).max(600);
         let timeout = monitor_data.timeout_ms.unwrap_or(10000).max(1000).min(60000);
         let expected_status = monitor_data.expected_status.unwrap_or(200);
         let confirmation = monitor_data.confirmation_threshold.unwrap_or(2).max(1).min(10);
@@ -399,7 +399,7 @@ pub fn update_monitor(
     let conn = db.conn.lock().unwrap();
     verify_manage_key(&conn, id, &token.0)?;
 
-    let data = input.into_inner();
+    let mut data = input.into_inner();
     let mut updates = Vec::new();
     let mut values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
@@ -428,6 +428,11 @@ pub fn update_monitor(
                 "error": "Headers must be a JSON object", "code": "VALIDATION_ERROR"
             }))));
         }
+    }
+
+    // Clamp interval_seconds to minimum 600 (10 minutes)
+    if let Some(interval) = data.interval_seconds {
+        data.interval_seconds = Some(interval.max(600));
     }
 
     add_update!(name, "name");
@@ -1345,7 +1350,7 @@ GET /api/v1/monitors/:id/uptime-history?days=30 — Daily uptime percentages for
 ## Validation
 - URL must start with http:// or https://
 - Headers must be a JSON object (not array or string)
-- interval_seconds: min 30, default 300
+- interval_seconds: min 600 (10 minutes), default 600
 - timeout_ms: min 1000, max 60000, default 10000
 - confirmation_threshold: min 1, max 10, default 2
 - response_time_threshold_ms: min 100 (if set)
@@ -2033,7 +2038,7 @@ const OPENAPI_JSON: &str = r##"{
           "name": { "type": "string" },
           "url": { "type": "string" },
           "method": { "type": "string", "enum": ["GET", "HEAD", "POST"] },
-          "interval_seconds": { "type": "integer", "minimum": 30 },
+          "interval_seconds": { "type": "integer", "minimum": 600 },
           "timeout_ms": { "type": "integer" },
           "expected_status": { "type": "integer" },
           "body_contains": { "type": "string", "nullable": true },
@@ -2057,7 +2062,7 @@ const OPENAPI_JSON: &str = r##"{
           "name": { "type": "string" },
           "url": { "type": "string", "description": "Must start with http:// or https://" },
           "method": { "type": "string", "enum": ["GET", "HEAD", "POST"], "default": "GET" },
-          "interval_seconds": { "type": "integer", "minimum": 30, "default": 300 },
+          "interval_seconds": { "type": "integer", "minimum": 600, "default": 600 },
           "timeout_ms": { "type": "integer", "default": 10000 },
           "expected_status": { "type": "integer", "default": 200 },
           "body_contains": { "type": "string" },

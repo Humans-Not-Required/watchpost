@@ -22,7 +22,7 @@ impl Db {
                 name TEXT NOT NULL,
                 url TEXT NOT NULL,
                 method TEXT NOT NULL DEFAULT 'GET',
-                interval_seconds INTEGER NOT NULL DEFAULT 300,
+                interval_seconds INTEGER NOT NULL DEFAULT 600,
                 timeout_ms INTEGER NOT NULL DEFAULT 10000,
                 expected_status INTEGER NOT NULL DEFAULT 200,
                 body_contains TEXT,

@@ -13,7 +13,7 @@ const EXAMPLE_JSON = `[
   {
     "name": "Staging Frontend",
     "url": "https://staging.example.com",
-    "interval_seconds": 300,
+    "interval_seconds": 600,
     "is_public": false,
     "tags": ["staging"]
   }
@@ -36,8 +36,8 @@ function validateMonitors(monitors) {
     if (m.method && !['GET', 'HEAD', 'POST'].includes(m.method.toUpperCase())) {
       errors.push({ index: i, error: `Monitor ${i + 1}: method must be GET, HEAD, or POST` });
     }
-    if (m.interval_seconds !== undefined && m.interval_seconds < 30) {
-      errors.push({ index: i, error: `Monitor ${i + 1}: interval must be ≥ 30s` });
+    if (m.interval_seconds !== undefined && m.interval_seconds < 600) {
+      errors.push({ index: i, error: `Monitor ${i + 1}: interval must be ≥ 600s (10 min)` });
     }
   });
   return errors;
@@ -308,7 +308,7 @@ export default function BulkImport({ onDone, onCancel }) {
                         {m.url || '—'}
                       </td>
                       <td style={tdStyle}>{(m.method || 'GET').toUpperCase()}</td>
-                      <td style={tdStyle}>{m.interval_seconds || 300}s</td>
+                      <td style={tdStyle}>{m.interval_seconds || 600}s</td>
                       <td style={tdStyle}>{m.is_public === false ? '🔒' : '🌐'}</td>
                       <td style={tdStyle}>
                         {(m.tags || []).length > 0

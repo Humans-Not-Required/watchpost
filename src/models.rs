@@ -63,7 +63,7 @@ pub struct CreateMonitor {
 
 fn default_follow_redirects() -> Option<bool> { Some(true) }
 fn default_method() -> String { "GET".into() }
-fn default_interval() -> Option<u32> { Some(300) }
+fn default_interval() -> Option<u32> { Some(600) }
 fn default_timeout() -> Option<u32> { Some(10000) }
 fn default_status() -> Option<u16> { Some(200) }
 

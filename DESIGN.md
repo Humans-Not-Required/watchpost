@@ -17,7 +17,7 @@ A **monitor** is a check definition: what to probe, how often, and what counts a
 | name | String | Human-readable label |
 | url | String | Target URL to check |
 | method | Enum | GET, HEAD, POST |
-| interval_seconds | u32 | Check frequency (min: 30, default: 300) |
+| interval_seconds | u32 | Check frequency (min: 600, default: 600) |
 | timeout_ms | u32 | Request timeout (default: 10000) |
 | expected_status | u16 | Expected HTTP status (default: 200) |
 | body_contains | Option<String> | Optional substring match on response body |

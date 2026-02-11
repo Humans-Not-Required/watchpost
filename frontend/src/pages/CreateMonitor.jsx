@@ -6,7 +6,7 @@ export default function CreateMonitor({ onCreated, onCancel }) {
     name: '',
     url: '',
     method: 'GET',
-    interval_seconds: 300,
+    interval_seconds: 600,
     timeout_ms: 10000,
     expected_status: 200,
     body_contains: '',
@@ -189,11 +189,11 @@ export default function CreateMonitor({ onCreated, onCancel }) {
               <input
                 className="form-input"
                 type="number"
-                min="30"
+                min="600"
                 value={form.interval_seconds}
                 onChange={(e) => update('interval_seconds', e.target.value)}
               />
-              <div className="form-help">Minimum: 30 seconds</div>
+              <div className="form-help">Minimum: 10 minutes (600 seconds)</div>
             </div>
 
             <div className="form-group">

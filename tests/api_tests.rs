@@ -89,13 +89,13 @@ fn test_create_monitor() {
     let client = test_client();
     let resp = client.post("/api/v1/monitors")
         .header(ContentType::JSON)
-        .body(r#"{"name": "My API", "url": "https://example.com/health", "interval_seconds": 60}"#)
+        .body(r#"{"name": "My API", "url": "https://example.com/health", "interval_seconds": 900}"#)
         .dispatch();
     assert_eq!(resp.status(), Status::Ok);
     let body: serde_json::Value = resp.into_json().unwrap();
     assert_eq!(body["monitor"]["name"], "My API");
     assert_eq!(body["monitor"]["url"], "https://example.com/health");
-    assert_eq!(body["monitor"]["interval_seconds"], 60);
+    assert_eq!(body["monitor"]["interval_seconds"], 900);
     assert_eq!(body["monitor"]["method"], "GET");
     assert_eq!(body["monitor"]["current_status"], "unknown");
     assert!(body["manage_key"].as_str().unwrap().starts_with("wp_"));
@@ -176,7 +176,7 @@ fn test_update_monitor() {
     let resp = client.patch(format!("/api/v1/monitors/{}", id))
         .header(ContentType::JSON)
         .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
-        .body(r#"{"name": "Updated Service", "interval_seconds": 120}"#)
+        .body(r#"{"name": "Updated Service", "interval_seconds": 900}"#)
         .dispatch();
     assert_eq!(resp.status(), Status::Ok);
 
@@ -184,7 +184,7 @@ fn test_update_monitor() {
     let resp = client.get(format!("/api/v1/monitors/{}", id)).dispatch();
     let body: serde_json::Value = resp.into_json().unwrap();
     assert_eq!(body["name"], "Updated Service");
-    assert_eq!(body["interval_seconds"], 120);
+    assert_eq!(body["interval_seconds"], 900);
 }
 
 #[test]
@@ -477,7 +477,7 @@ fn test_monitor_defaults() {
     let body: serde_json::Value = resp.into_json().unwrap();
     let m = &body["monitor"];
     assert_eq!(m["method"], "GET");
-    assert_eq!(m["interval_seconds"], 300);
+    assert_eq!(m["interval_seconds"], 600);
     assert_eq!(m["timeout_ms"], 10000);
     assert_eq!(m["expected_status"], 200);
     assert_eq!(m["is_public"], false);
@@ -1064,7 +1064,7 @@ fn test_bulk_create_monitors() {
         .header(ContentType::JSON)
         .body(r#"{"monitors": [
             {"name": "API Server", "url": "https://api.example.com/health", "is_public": true, "tags": ["api", "prod"]},
-            {"name": "Web Frontend", "url": "https://www.example.com", "is_public": true, "interval_seconds": 60},
+            {"name": "Web Frontend", "url": "https://www.example.com", "is_public": true, "interval_seconds": 900},
             {"name": "Internal DB", "url": "http://db.internal:5432/health", "is_public": false}
         ]}"#)
         .dispatch();
@@ -1089,7 +1089,7 @@ fn test_bulk_create_monitors() {
     // First monitor should have tags
     assert_eq!(body["created"][0]["monitor"]["tags"], serde_json::json!(["api", "prod"]));
     // Second monitor should have custom interval
-    assert_eq!(body["created"][1]["monitor"]["interval_seconds"], 60);
+    assert_eq!(body["created"][1]["monitor"]["interval_seconds"], 900);
 }
 
 #[test]
@@ -1191,7 +1191,7 @@ fn test_export_reimport_roundtrip() {
     // Create a monitor with custom settings
     let resp = client.post("/api/v1/monitors")
         .header(ContentType::JSON)
-        .body(r#"{"name": "Custom Monitor", "url": "https://api.example.com", "method": "HEAD", "interval_seconds": 120, "timeout_ms": 5000, "expected_status": 204, "is_public": true, "confirmation_threshold": 3, "response_time_threshold_ms": 2000, "tags": ["api", "staging"]}"#)
+        .body(r#"{"name": "Custom Monitor", "url": "https://api.example.com", "method": "HEAD", "interval_seconds": 900, "timeout_ms": 5000, "expected_status": 204, "is_public": true, "confirmation_threshold": 3, "response_time_threshold_ms": 2000, "tags": ["api", "staging"]}"#)
         .dispatch();
     assert_eq!(resp.status(), Status::Ok);
     let created: serde_json::Value = resp.into_json().unwrap();
@@ -1221,7 +1221,7 @@ fn test_export_reimport_roundtrip() {
     assert_eq!(clone["name"], "Custom Monitor");
     assert_eq!(clone["url"], "https://api.example.com");
     assert_eq!(clone["method"], "HEAD");
-    assert_eq!(clone["interval_seconds"], 120);
+    assert_eq!(clone["interval_seconds"], 900);
     assert_eq!(clone["timeout_ms"], 5000);
     assert_eq!(clone["expected_status"], 204);
     assert_eq!(clone["is_public"], true);
@@ -1839,14 +1839,14 @@ fn test_create_monitor_with_body_contains() {
 fn test_create_monitor_interval_clamped() {
     let client = test_client();
 
-    // Interval below minimum (30s) should be clamped to 30
+    // Interval below minimum (600s / 10 min) should be clamped to 600
     let resp = client.post("/api/v1/monitors")
         .header(ContentType::JSON)
         .body(r#"{"name": "Fast Check", "url": "https://example.com", "interval_seconds": 5}"#)
         .dispatch();
     assert_eq!(resp.status(), Status::Ok);
     let body: serde_json::Value = resp.into_json().unwrap();
-    assert_eq!(body["monitor"]["interval_seconds"], 30);
+    assert_eq!(body["monitor"]["interval_seconds"], 600);
 }
 
 #[test]

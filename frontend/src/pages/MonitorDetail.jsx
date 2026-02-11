@@ -743,7 +743,7 @@ function EditMonitorForm({ monitor, manageKey, onSaved, onCancel }) {
     name: monitor.name || '',
     url: monitor.url || '',
     method: monitor.method || 'GET',
-    interval_seconds: monitor.interval_seconds || 300,
+    interval_seconds: monitor.interval_seconds || 600,
     timeout_ms: monitor.timeout_ms || 10000,
     expected_status: monitor.expected_status || 200,
     confirmation_threshold: monitor.confirmation_threshold || 3,
@@ -836,8 +836,8 @@ function EditMonitorForm({ monitor, manageKey, onSaved, onCancel }) {
       <div className="form-row">
         <div className="form-group">
           <label className="form-label">Check Interval (seconds)</label>
-          <input className="form-input" type="number" min="30" value={form.interval_seconds} onChange={e => set('interval_seconds', Number(e.target.value))} />
-          <div className="form-help">Minimum 30 seconds</div>
+          <input className="form-input" type="number" min="600" value={form.interval_seconds} onChange={e => set('interval_seconds', Number(e.target.value))} />
+          <div className="form-help">Minimum 10 minutes (600 seconds)</div>
         </div>
         <div className="form-group">
           <label className="form-label">Timeout (ms)</label>
