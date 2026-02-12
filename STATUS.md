@@ -69,6 +69,9 @@
 2. **Email notifications** — SMTP config for sending email alerts on incidents
 3. **Public status page customization** — Custom branding, grouped monitors, custom domain support
 
+### ⚠️ Jordan's Questions
+- **Task ef781225:** Jordan asked "What is this about?" — Need to clarify what this task refers to next time board manager picks it up.
+
 - Test suite: **93 tests passing** (`cargo test -- --test-threads=1`) — includes 7 badge tests, 3 dashboard tests, 7 maintenance window tests, 4 response time alert tests, 6 tag tests, 3 search/filter tests, 3 heartbeat retention tests, 2 notification toggle tests, 5 follow_redirects tests, 13 validation/coverage tests
 
 ### ✅ Completed (most recent)

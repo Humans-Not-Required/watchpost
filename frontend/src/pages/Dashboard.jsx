@@ -17,8 +17,47 @@ const STATUS_EMOJI = {
   maintenance: '🔵',
 };
 
-function UptimeHistoryChart({ data }) {
+function fillMissingDays(data, days) {
+  if (!data || data.length === 0) return [];
+  // Build a map of existing data by date
+  const dataMap = {};
+  for (const d of data) dataMap[d.date] = d;
+  // Generate all dates in the range
+  const filled = [];
+  const now = new Date();
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(now);
+    d.setUTCDate(d.getUTCDate() - i);
+    const key = d.toISOString().slice(0, 10);
+    if (dataMap[key]) {
+      filled.push(dataMap[key]);
+    } else {
+      filled.push({ date: key, uptime_pct: null, total_checks: 0, up_checks: 0, down_checks: 0, avg_response_ms: null });
+    }
+  }
+  return filled;
+}
+
+function niceStep(range) {
+  // Pick a step that gives ~4-8 ticks
+  if (range <= 2) return 0.5;
+  if (range <= 5) return 1;
+  if (range <= 10) return 2;
+  if (range <= 25) return 5;
+  if (range <= 50) return 10;
+  return 20;
+}
+
+function UptimeHistoryChart({ data, days }) {
   if (!data || data.length === 0) {
+    return <p className="empty-state">No uptime history data yet</p>;
+  }
+
+  const filled = fillMissingDays(data, days || 30);
+  // Points with actual data (for line/area — skip nulls)
+  const hasData = filled.filter(d => d.uptime_pct !== null);
+
+  if (hasData.length === 0) {
     return <p className="empty-state">No uptime history data yet</p>;
   }
 
@@ -26,30 +65,39 @@ function UptimeHistoryChart({ data }) {
   const chartW = W - PAD_L - PAD_R;
   const chartH = H - PAD_T - PAD_B;
 
-  // Y range: 90-100% (or lower if data demands)
-  const minUp = Math.min(...data.map(d => d.uptime_pct));
-  const yMin = Math.min(90, Math.floor(minUp));
+  // Y range: 0-100% always when data dips below 90%, otherwise zoom into 90-100%
+  const minUp = Math.min(...hasData.map(d => d.uptime_pct));
+  const yMin = minUp >= 90 ? 90 : 0;
   const yMax = 100;
   const yRange = yMax - yMin || 1;
 
-  const toX = (i) => PAD_L + (i / Math.max(data.length - 1, 1)) * chartW;
+  const toX = (i) => PAD_L + (i / Math.max(filled.length - 1, 1)) * chartW;
   const toY = (pct) => PAD_T + chartH - ((pct - yMin) / yRange) * chartH;
 
-  // Build path
-  const points = data.map((d, i) => `${toX(i).toFixed(1)},${toY(d.uptime_pct).toFixed(1)}`);
-  const linePath = `M${points.join('L')}`;
-  const areaPath = `${linePath}L${toX(data.length - 1).toFixed(1)},${(PAD_T + chartH).toFixed(1)}L${PAD_L.toFixed(1)},${(PAD_T + chartH).toFixed(1)}Z`;
-
-  // Y-axis ticks
-  const yTicks = [];
-  const step = yRange <= 2 ? 0.5 : yRange <= 5 ? 1 : 2;
-  for (let v = yMin; v <= yMax; v += step) {
-    yTicks.push(v);
+  // Build line/area path only through data points (skip null gaps)
+  const segments = []; // array of arrays of {idx, d}
+  let current = [];
+  for (let i = 0; i < filled.length; i++) {
+    if (filled[i].uptime_pct !== null) {
+      current.push({ idx: i, d: filled[i] });
+    } else {
+      if (current.length > 0) { segments.push(current); current = []; }
+    }
   }
-  if (yTicks[yTicks.length - 1] !== yMax) yTicks.push(yMax);
+  if (current.length > 0) segments.push(current);
+
+  // Y-axis ticks — use nice step to keep ~4-8 labels
+  const step = niceStep(yRange);
+  const yTicks = [];
+  const firstTick = Math.ceil(yMin / step) * step;
+  for (let v = firstTick; v <= yMax; v += step) {
+    yTicks.push(Math.round(v * 10) / 10);
+  }
+  if (yTicks.length > 0 && yTicks[yTicks.length - 1] !== yMax) yTicks.push(yMax);
+  if (yTicks.length > 0 && yTicks[0] !== yMin && yMin === 0) yTicks.unshift(0);
 
   // X-axis labels (show ~5-7 dates)
-  const labelInterval = Math.max(1, Math.floor(data.length / 6));
+  const labelInterval = Math.max(1, Math.floor(filled.length / 6));
 
   // Color gradient based on min uptime
   const lineColor = minUp >= 99.9 ? '#00d4aa' : minUp >= 99 ? '#ffa502' : '#ff4757';
@@ -71,28 +119,57 @@ function UptimeHistoryChart({ data }) {
         </g>
       ))}
 
-      {/* Area fill */}
-      <path d={areaPath} fill={fillColor} />
+      {/* No-data zone markers */}
+      {filled.map((d, i) => {
+        if (d.uptime_pct !== null) return null;
+        const bw = Math.max(chartW / filled.length, 2);
+        return (
+          <rect key={`nodata-${i}`} x={toX(i) - bw/2} y={PAD_T} width={bw} height={chartH}
+            fill="rgba(255,255,255,0.03)" />
+        );
+      })}
 
-      {/* Line */}
-      <path d={linePath} fill="none" stroke={lineColor} strokeWidth="2" strokeLinejoin="round" />
+      {/* Area fill + Line — per segment (skip gaps) */}
+      {segments.map((seg, si) => {
+        if (seg.length === 0) return null;
+        const pts = seg.map(s => `${toX(s.idx).toFixed(1)},${toY(s.d.uptime_pct).toFixed(1)}`);
+        const linePath = `M${pts.join('L')}`;
+        const lastX = toX(seg[seg.length - 1].idx).toFixed(1);
+        const firstX = toX(seg[0].idx).toFixed(1);
+        const baseY = (PAD_T + chartH).toFixed(1);
+        const areaPath = `${linePath}L${lastX},${baseY}L${firstX},${baseY}Z`;
+        return (
+          <g key={`seg-${si}`}>
+            <path d={areaPath} fill={fillColor} />
+            <path d={linePath} fill="none" stroke={lineColor} strokeWidth="2" strokeLinejoin="round" />
+          </g>
+        );
+      })}
 
       {/* Data points + hover targets */}
-      {data.map((d, i) => (
-        <g key={i}>
-          <circle cx={toX(i)} cy={toY(d.uptime_pct)} r="3"
-            fill={d.uptime_pct >= 99.9 ? '#00d4aa' : d.uptime_pct >= 99 ? '#ffa502' : '#ff4757'}
-            stroke="rgba(0,0,0,0.3)" strokeWidth="1" />
-          <rect x={toX(i) - 10} y={PAD_T} width="20" height={chartH}
+      {filled.map((d, i) => {
+        if (d.uptime_pct === null) return (
+          <rect key={i} x={toX(i) - 10} y={PAD_T} width="20" height={chartH}
             fill="transparent"
-            onMouseEnter={() => setTooltip({ i, d, x: toX(i), y: toY(d.uptime_pct) })}
+            onMouseEnter={() => setTooltip({ i, d, x: toX(i), y: PAD_T + chartH / 2, noData: true })}
             onMouseLeave={() => setTooltip(null)} />
-        </g>
-      ))}
+        );
+        return (
+          <g key={i}>
+            <circle cx={toX(i)} cy={toY(d.uptime_pct)} r="3"
+              fill={d.uptime_pct >= 99.9 ? '#00d4aa' : d.uptime_pct >= 99 ? '#ffa502' : '#ff4757'}
+              stroke="rgba(0,0,0,0.3)" strokeWidth="1" />
+            <rect x={toX(i) - 10} y={PAD_T} width="20" height={chartH}
+              fill="transparent"
+              onMouseEnter={() => setTooltip({ i, d, x: toX(i), y: toY(d.uptime_pct) })}
+              onMouseLeave={() => setTooltip(null)} />
+          </g>
+        );
+      })}
 
       {/* X-axis labels */}
-      {data.map((d, i) => {
-        if (i % labelInterval !== 0 && i !== data.length - 1) return null;
+      {filled.map((d, i) => {
+        if (i % labelInterval !== 0 && i !== filled.length - 1) return null;
         const label = d.date.slice(5); // MM-DD
         return (
           <text key={i} x={toX(i)} y={H - 6} textAnchor="middle"
@@ -107,16 +184,31 @@ function UptimeHistoryChart({ data }) {
         <g>
           <line x1={tooltip.x} y1={PAD_T} x2={tooltip.x} y2={PAD_T + chartH}
             stroke="rgba(255,255,255,0.2)" strokeWidth="1" strokeDasharray="3,3" />
-          <rect x={tooltip.x - 60} y={tooltip.y - 42} width="120" height="36"
+          <rect x={Math.min(tooltip.x - 60, W - PAD_R - 120)} y={Math.max(tooltip.y - 42, PAD_T)} width="120" height="36"
             rx="4" fill="rgba(30,30,40,0.95)" stroke="rgba(255,255,255,0.15)" />
-          <text x={tooltip.x} y={tooltip.y - 26} textAnchor="middle"
-            fill="#fff" fontSize="11" fontWeight="bold">
-            {tooltip.d.uptime_pct.toFixed(2)}% uptime
-          </text>
-          <text x={tooltip.x} y={tooltip.y - 13} textAnchor="middle"
-            fill="rgba(255,255,255,0.6)" fontSize="10">
-            {tooltip.d.date} · {tooltip.d.total_checks} checks
-          </text>
+          {tooltip.noData ? (
+            <>
+              <text x={Math.min(tooltip.x, W - PAD_R - 60)} y={Math.max(tooltip.y - 22, PAD_T + 20)} textAnchor="middle"
+                fill="rgba(255,255,255,0.5)" fontSize="11">
+                No data
+              </text>
+              <text x={Math.min(tooltip.x, W - PAD_R - 60)} y={Math.max(tooltip.y - 9, PAD_T + 33)} textAnchor="middle"
+                fill="rgba(255,255,255,0.4)" fontSize="10">
+                {tooltip.d.date}
+              </text>
+            </>
+          ) : (
+            <>
+              <text x={Math.min(tooltip.x, W - PAD_R - 60)} y={Math.max(tooltip.y - 26, PAD_T + 16)} textAnchor="middle"
+                fill="#fff" fontSize="11" fontWeight="bold">
+                {tooltip.d.uptime_pct.toFixed(2)}% uptime
+              </text>
+              <text x={Math.min(tooltip.x, W - PAD_R - 60)} y={Math.max(tooltip.y - 13, PAD_T + 29)} textAnchor="middle"
+                fill="rgba(255,255,255,0.6)" fontSize="10">
+                {tooltip.d.date} · {tooltip.d.total_checks} checks
+              </text>
+            </>
+          )}
         </g>
       )}
     </svg>
@@ -296,7 +388,7 @@ export default function Dashboard({ onNavigate }) {
             ))}
           </div>
         </div>
-        <UptimeHistoryChart data={history} />
+        <UptimeHistoryChart data={history} days={historyDays} />
       </div>
 
       {/* Two-column: Recent Incidents + Slowest Monitors */}
