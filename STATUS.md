@@ -54,7 +54,7 @@
 - **README** ✅ (commit 75dd595): Quick start, API reference, Docker usage, env config, architecture
 - **Staging deploy** ✅:
   - Docker Compose on 192.168.0.79:3007
-  - Nginx reverse proxy: watch.hnrstage.xyz
+  - Nginx reverse proxy: <staging-domain>
   - Watchtower auto-pull enabled
   - Added to backup-dbs.sh
   - Health: `curl http://192.168.0.79:3007/api/v1/health` ✅
@@ -71,6 +71,7 @@
 
 ### ⚠️ Jordan's Questions
 - **Task ef781225:** Jordan asked "What is this about?" — Need to clarify what this task refers to next time board manager picks it up.
+- **Task b446f607 (Follow 301 redirects):** Jordan directed "Watchers should follow 301!" — This is already implemented (commit a7fc268). Monitors follow redirects by default. Commented on board asking if there's a specific bug or if task can be closed.
 
 - Test suite: **93 tests passing** (`cargo test -- --test-threads=1`) — includes 7 badge tests, 3 dashboard tests, 7 maintenance window tests, 4 response time alert tests, 6 tag tests, 3 search/filter tests, 3 heartbeat retention tests, 2 notification toggle tests, 5 follow_redirects tests, 13 validation/coverage tests
 
@@ -98,7 +99,7 @@
 - **Inline edit monitor settings** (commit ca0a446) — Edit all monitor config fields (name, URL, method, interval, timeout, expected status, confirmation threshold, body contains, public/private) from UI with manage key. Only sends changed fields via PATCH.
 - **Loading skeleton screens** (commit 488bd55) — Shimmer skeleton loading states for status page and monitor detail, replacing plain spinners
 - **Heartbeat retention** (commit ab480d4) — Auto-prune heartbeats older than 90 days (configurable via HEARTBEAT_RETENTION_DAYS env var). Runs hourly in checker loop. 3 new tests.
-- **DNS for watch.hnrstage.xyz** — Cloudflare wildcard resolves, HTTPS working
+- **DNS for <staging-domain>** — Cloudflare wildcard resolves, HTTPS working
 - **Manage key integration** (commit 6ac08cf) — Pause/Resume, Delete (with confirmation), Incident Acknowledgement from UI when `?key=` present
 
 ### ⚠️ Gotchas
