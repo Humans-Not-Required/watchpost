@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { createMonitor } from '../api'
+import { IconCheckCircle, IconLink, IconClipboard, IconKey, IconGlobe, IconLock } from '../Icons'
 
 export default function CreateMonitor({ onCreated, onCancel }) {
   const [form, setForm] = useState({
@@ -75,12 +76,12 @@ export default function CreateMonitor({ onCreated, onCancel }) {
     return (
       <div style={{ marginTop: 24 }}>
         <h2 className="section-title" style={{ color: 'var(--success)' }}>
-          ✅ Monitor Created!
+          <IconCheckCircle size={18} style={{ marginRight: 6 }} />Monitor Created!
         </h2>
 
         <div className="manage-key-banner">
           <div style={{ fontWeight: 700, marginBottom: 8, color: 'var(--accent)' }}>
-            🔗 Bookmark this manage link — it's your key to this monitor
+            <IconLink size={14} style={{ marginRight: 6 }} />Bookmark this manage link — it's your key to this monitor
           </div>
           <div style={{
             display: 'flex', gap: 8, alignItems: 'center',
@@ -98,7 +99,7 @@ export default function CreateMonitor({ onCreated, onCancel }) {
               style={{ fontSize: '0.8rem', padding: '6px 14px', flexShrink: 0 }}
               onClick={handleCopy}
             >
-              {copied ? '✅ Copied!' : '📋 Copy'}
+              {copied ? <><IconCheckCircle size={12} /> Copied!</> : <><IconClipboard size={12} /> Copy</>}
             </button>
           </div>
           <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: 8 }}>
@@ -139,7 +140,7 @@ export default function CreateMonitor({ onCreated, onCancel }) {
             </div>
             <div className="monitor-stat">
               <span className="monitor-stat-label">Visibility</span>
-              <span className="monitor-stat-value">{result.monitor.is_public ? '🌐 Public' : '🔒 Private'}</span>
+              <span className="monitor-stat-value">{result.monitor.is_public ? <><IconGlobe size={14} /> Public</> : <><IconLock size={14} /> Private</>}</span>
             </div>
           </div>
         </div>
@@ -165,7 +166,7 @@ export default function CreateMonitor({ onCreated, onCancel }) {
         </div>
 
         <details style={{ marginTop: 12, fontSize: '0.85rem' }}>
-          <summary style={{ color: 'var(--text-muted)', cursor: 'pointer' }}>🔑 Raw manage key</summary>
+          <summary style={{ color: 'var(--text-muted)', cursor: 'pointer' }}><IconKey size={12} style={{ marginRight: 4 }} />Raw manage key</summary>
           <code style={{ display: 'block', marginTop: 8, padding: '8px 12px', background: 'var(--bg-secondary)', borderRadius: 6, wordBreak: 'break-all', color: 'var(--text-secondary)' }}>
             {result.manage_key}
           </code>

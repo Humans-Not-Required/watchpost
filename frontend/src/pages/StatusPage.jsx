@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react'
 import { getStatus, getTags } from '../api'
+import { IconCheckCircle, IconAlertTriangle, IconAlertCircle, IconClock, IconStatusDot } from '../Icons'
 
 const STATUS_LABELS = {
-  operational: '✅ All Systems Operational',
-  degraded: '⚠️ Some Systems Degraded',
-  major_outage: '🔴 Major Outage Detected',
-  unknown: '⏳ Checking Status...',
+  operational: <><IconCheckCircle size={16} style={{ marginRight: 6 }} />All Systems Operational</>,
+  degraded: <><IconAlertTriangle size={16} style={{ marginRight: 6 }} />Some Systems Degraded</>,
+  major_outage: <><IconAlertCircle size={16} style={{ marginRight: 6 }} />Major Outage Detected</>,
+  unknown: <><IconClock size={16} style={{ marginRight: 6 }} />Checking Status...</>,
 };
 
 function formatTime(ts) {
@@ -30,10 +31,10 @@ function formatMs(ms) {
 
 const STATUS_FILTERS = [
   { value: null, label: 'All' },
-  { value: 'up', label: '✅ Up' },
-  { value: 'down', label: '🔴 Down' },
-  { value: 'degraded', label: '⚠️ Degraded' },
-  { value: 'unknown', label: '⏳ Unknown' },
+  { value: 'up', label: <><IconStatusDot color="#00d4aa" size={8} style={{ marginRight: 4 }} />Up</> },
+  { value: 'down', label: <><IconStatusDot color="#ff4757" size={8} style={{ marginRight: 4 }} />Down</> },
+  { value: 'degraded', label: <><IconStatusDot color="#ffa502" size={8} style={{ marginRight: 4 }} />Degraded</> },
+  { value: 'unknown', label: <><IconStatusDot color="#747d8c" size={8} style={{ marginRight: 4 }} />Unknown</> },
 ];
 
 export default function StatusPage({ onSelect }) {
@@ -231,7 +232,7 @@ export default function StatusPage({ onSelect }) {
                 <div className="monitor-stat">
                   <span className="monitor-stat-label">Incident</span>
                   <span className="monitor-stat-value" style={{ color: 'var(--danger)' }}>
-                    🔴 Active
+                    <IconAlertCircle size={12} style={{ color: 'var(--danger)' }} /> Active
                   </span>
                 </div>
               )}

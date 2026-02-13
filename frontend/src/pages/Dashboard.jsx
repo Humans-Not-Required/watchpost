@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { getDashboard, getUptimeHistory } from '../api'
+import { IconDashboard, IconSignal, IconArrowUp, IconZap, IconAlertOctagon, IconTrendUp, IconFlame, IconClock, IconCheckCircle, IconAlertCircle, IconStatusDot } from '../Icons'
 
 const STATUS_COLORS = {
   up: '#00d4aa',
@@ -9,12 +10,12 @@ const STATUS_COLORS = {
   maintenance: '#3742fa',
 };
 
-const STATUS_EMOJI = {
-  up: '🟢',
-  down: '🔴',
-  degraded: '🟡',
-  unknown: '⚪',
-  maintenance: '🔵',
+const STATUS_DOT_COLORS = {
+  up: '#00d4aa',
+  down: '#ff4757',
+  degraded: '#ffa502',
+  unknown: '#747d8c',
+  maintenance: '#3742fa',
 };
 
 function fillMissingDays(data, days) {
@@ -306,7 +307,7 @@ export default function Dashboard({ onNavigate }) {
   if (loading && !data) {
     return (
       <div>
-        <h2 style={{ marginBottom: 24 }}>📊 Dashboard</h2>
+        <h2 style={{ marginBottom: 24 }}><IconDashboard size={20} style={{ marginRight: 8 }} />Dashboard</h2>
         <div className="dashboard-grid">
           {[1,2,3,4].map(i => <div key={i} className="stat-card skeleton-card"><div className="skeleton" style={{height:48,width:'60%',margin:'0 auto 8px'}}/><div className="skeleton" style={{height:16,width:'40%',margin:'0 auto'}}/></div>)}
         </div>
@@ -331,7 +332,7 @@ export default function Dashboard({ onNavigate }) {
 
   return (
     <div className="dashboard">
-      <h2 style={{ marginBottom: 8 }}>📊 Dashboard</h2>
+      <h2 style={{ marginBottom: 8 }}><IconDashboard size={20} style={{ marginRight: 8 }} />Dashboard</h2>
       <div className="overall-banner" style={{ borderLeftColor: overallColor }}>
         <span className="overall-status" style={{ color: overallColor }}>{overallLabel}</span>
         {data.total_checks_24h > 0 && (
@@ -342,26 +343,26 @@ export default function Dashboard({ onNavigate }) {
       {/* Key Metrics */}
       <div className="dashboard-grid">
         <StatCard
-          icon="📡"
+          icon={<IconSignal size={20} />}
           label="Monitors"
           value={data.total_monitors}
           sub={`${data.public_monitors} public · ${data.paused_monitors} paused`}
         />
         <StatCard
-          icon="⬆️"
+          icon={<IconArrowUp size={20} />}
           label="Uptime (24h)"
           value={`${data.avg_uptime_24h.toFixed(2)}%`}
           color={data.avg_uptime_24h >= 99.9 ? '#00d4aa' : data.avg_uptime_24h >= 99 ? '#ffa502' : '#ff4757'}
           sub={`7d: ${data.avg_uptime_7d.toFixed(2)}%`}
         />
         <StatCard
-          icon="⚡"
+          icon={<IconZap size={20} />}
           label="Avg Response"
           value={data.avg_response_ms_24h != null ? `${Math.round(data.avg_response_ms_24h)}ms` : '—'}
           color={data.avg_response_ms_24h != null && data.avg_response_ms_24h > 1000 ? '#ffa502' : '#00d4aa'}
         />
         <StatCard
-          icon="🚨"
+          icon={<IconAlertOctagon size={20} />}
           label="Active Incidents"
           value={data.active_incidents}
           color={data.active_incidents > 0 ? '#ff4757' : '#00d4aa'}
@@ -377,7 +378,7 @@ export default function Dashboard({ onNavigate }) {
       {/* Uptime History Chart */}
       <div className="dashboard-section">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-          <h3>📈 Uptime History</h3>
+          <h3><IconTrendUp size={16} style={{ marginRight: 6 }} />Uptime History</h3>
           <div className="history-range-selector">
             {[7, 14, 30, 90].map(d => (
               <button key={d}
@@ -394,7 +395,7 @@ export default function Dashboard({ onNavigate }) {
       {/* Two-column: Recent Incidents + Slowest Monitors */}
       <div className="dashboard-columns">
         <div className="dashboard-section">
-          <h3>🔥 Recent Incidents</h3>
+          <h3><IconFlame size={16} style={{ marginRight: 6 }} />Recent Incidents</h3>
           {data.recent_incidents.length === 0 ? (
             <p className="empty-state">No incidents recorded</p>
           ) : (
@@ -403,7 +404,7 @@ export default function Dashboard({ onNavigate }) {
                 <div key={inc.id} className="incident-row" onClick={() => onNavigate && onNavigate(`/monitor/${inc.monitor_id}`)}>
                   <div className="incident-row-header">
                     <span className={`incident-badge ${inc.resolved_at ? 'resolved' : 'active'}`}>
-                      {inc.resolved_at ? '✅' : '🔴'}
+                      {inc.resolved_at ? <IconCheckCircle size={14} style={{ color: '#00d4aa' }} /> : <IconAlertCircle size={14} style={{ color: '#ff4757' }} />}
                     </span>
                     <span className="incident-monitor">{inc.monitor_name}</span>
                     <span className="incident-time">{timeAgo(inc.started_at)}</span>
@@ -416,7 +417,7 @@ export default function Dashboard({ onNavigate }) {
         </div>
 
         <div className="dashboard-section">
-          <h3>🐌 Slowest Monitors (24h)</h3>
+          <h3><IconClock size={16} style={{ marginRight: 6 }} />Slowest Monitors (24h)</h3>
           {data.slowest_monitors.length === 0 ? (
             <p className="empty-state">No data yet</p>
           ) : (
@@ -425,7 +426,7 @@ export default function Dashboard({ onNavigate }) {
                 <div key={m.id} className="slow-row" onClick={() => onNavigate && onNavigate(`/monitor/${m.id}`)}>
                   <span className="slow-rank">#{i + 1}</span>
                   <span className="slow-name">
-                    {STATUS_EMOJI[m.current_status] || '⚪'} {m.name}
+                    <IconStatusDot color={STATUS_DOT_COLORS[m.current_status] || '#747d8c'} size={8} style={{ marginRight: 6 }} />{m.name}
                   </span>
                   <span className="slow-ms">{Math.round(m.avg_response_ms)}ms</span>
                 </div>

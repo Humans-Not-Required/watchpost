@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { getMonitor, getHeartbeats, getUptime, getIncidents, pauseMonitor, resumeMonitor, deleteMonitor, updateMonitor, acknowledgeIncident, getNotifications, createNotification, deleteNotification, updateNotification, getMaintenanceWindows, createMaintenanceWindow, deleteMaintenanceWindow } from '../api'
+import { IconTrendUp, IconCheckCircle, IconAlertCircle, IconBell, IconMail, IconPause, IconPlay, IconX, IconWrench, IconCalendar, IconKey, IconEdit, IconSave, IconLink, IconLock, IconGlobe, IconClipboard, IconTrash, IconDashboard, IconHeart, IconZap, IconTag } from '../Icons'
 
 function formatTime(ts) {
   if (!ts) return 'Never';
@@ -107,7 +108,7 @@ function ResponseTimeChart({ heartbeats }) {
   return (
     <div className="card" style={{ marginTop: 16, padding: '16px 12px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-        <h4 style={{ fontSize: '0.9rem', fontWeight: 600 }}>📈 Response Time</h4>
+        <h4 style={{ fontSize: '0.9rem', fontWeight: 600 }}><IconTrendUp size={14} style={{ marginRight: 6 }} />Response Time</h4>
         <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
           avg {Math.round(avg)}ms · last {data.length} checks
         </span>
@@ -254,7 +255,7 @@ function IncidentCard({ incident: inc, manageKey, onAck }) {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
         <div>
           <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>
-            {inc.resolved_at ? '✅ Resolved' : '🔴 Active'}
+            {inc.resolved_at ? <><IconCheckCircle size={14} style={{ color: 'var(--success)' }} /> Resolved</> : <><IconAlertCircle size={14} style={{ color: 'var(--danger)' }} /> Active</>}
           </div>
           <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: 4 }}>
             {inc.cause}
@@ -454,7 +455,7 @@ function NotificationManager({ monitorId, manageKey }) {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div>
               <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>
-                {ch.channel_type === 'webhook' ? '🔔' : '📧'} {ch.name}
+                {ch.channel_type === 'webhook' ? <IconBell size={14} style={{ marginRight: 4 }} /> : <IconMail size={14} style={{ marginRight: 4 }} />}{ch.name}
               </div>
               <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: 2 }}>
                 {ch.channel_type} — {ch.config?.url || 'No URL'}
@@ -468,7 +469,7 @@ function NotificationManager({ monitorId, manageKey }) {
                 onClick={() => handleToggle(ch.id, ch.is_enabled)}
                 title={ch.is_enabled ? 'Disable notifications' : 'Enable notifications'}
               >
-                {toggling === ch.id ? '...' : ch.is_enabled ? '⏸ Disable' : '▶ Enable'}
+                {toggling === ch.id ? '...' : ch.is_enabled ? <><IconPause size={12} /> Disable</> : <><IconPlay size={12} /> Enable</>}
               </button>
               <button
                 className="btn btn-danger"
@@ -476,7 +477,7 @@ function NotificationManager({ monitorId, manageKey }) {
                 disabled={deleting === ch.id}
                 onClick={() => handleDelete(ch.id)}
               >
-                {deleting === ch.id ? '...' : '✕'}
+                {deleting === ch.id ? '...' : <IconX size={12} />}
               </button>
             </div>
           </div>
@@ -625,7 +626,7 @@ function MaintenanceManager({ monitorId, manageKey }) {
   const renderWindow = (w) => {
     const cat = categorize(w);
     const badgeColor = cat === 'active' ? 'var(--warning)' : cat === 'upcoming' ? 'var(--accent)' : 'var(--text-muted)';
-    const badgeLabel = cat === 'active' ? '🔧 Active' : cat === 'upcoming' ? '📅 Upcoming' : '✅ Completed';
+    const badgeLabel = cat === 'active' ? <><IconWrench size={12} /> Active</> : cat === 'upcoming' ? <><IconCalendar size={12} /> Upcoming</> : <><IconCheckCircle size={12} /> Completed</>;
     return (
       <div key={w.id} className="card" style={{ padding: 14, marginBottom: 8 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
@@ -654,7 +655,7 @@ function MaintenanceManager({ monitorId, manageKey }) {
               disabled={deleting === w.id}
               onClick={() => handleDelete(w.id)}
             >
-              {deleting === w.id ? '...' : '✕'}
+              {deleting === w.id ? '...' : <IconX size={12} />}
             </button>
           )}
         </div>
@@ -706,7 +707,7 @@ function MaintenanceManager({ monitorId, manageKey }) {
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
             <button className="btn btn-secondary" style={{ fontSize: '0.8rem', padding: '6px 12px' }} onClick={() => { setShowAdd(false); setError(null); }}>Cancel</button>
             <button className="btn btn-primary" style={{ fontSize: '0.8rem', padding: '6px 12px' }} disabled={adding} onClick={handleAdd}>
-              {adding ? 'Scheduling...' : '📅 Schedule'}
+              {adding ? 'Scheduling...' : <><IconCalendar size={12} /> Schedule</>}
             </button>
           </div>
         </div>
@@ -800,7 +801,7 @@ function EditMonitorForm({ monitor, manageKey, onSaved, onCancel }) {
   return (
     <div className="card" style={{ marginTop: 12, borderColor: 'var(--accent)', borderWidth: 2 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <h3 style={{ fontSize: '1rem', fontWeight: 600 }}>✏️ Edit Monitor</h3>
+        <h3 style={{ fontSize: '1rem', fontWeight: 600 }}><IconEdit size={16} style={{ marginRight: 6 }} />Edit Monitor</h3>
         <button className="btn btn-secondary" style={{ fontSize: '0.8rem', padding: '6px 12px' }} onClick={onCancel}>Cancel</button>
       </div>
 
@@ -877,7 +878,7 @@ function EditMonitorForm({ monitor, manageKey, onSaved, onCancel }) {
       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
         <button className="btn btn-secondary" onClick={onCancel} disabled={saving}>Cancel</button>
         <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
-          {saving ? 'Saving...' : '💾 Save Changes'}
+          {saving ? 'Saving...' : <><IconSave size={14} /> Save Changes</>}
         </button>
       </div>
     </div>
@@ -923,7 +924,7 @@ function ManageKeyInput({ monitorId, onKeySet }) {
           style={{ fontSize: '0.85rem', padding: '8px 16px' }}
           onClick={() => setShowInput(true)}
         >
-          🔑 Enter Manage Key
+          <IconKey size={14} /> Enter Manage Key
         </button>
         <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginLeft: 10 }}>
           Unlock editing, pause/resume, and delete
@@ -934,7 +935,7 @@ function ManageKeyInput({ monitorId, onKeySet }) {
 
   return (
     <div className="card" style={{ marginTop: 12, borderColor: 'var(--accent)', padding: 16 }}>
-      <div style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: 10 }}>🔑 Enter Manage Key</div>
+      <div style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: 10 }}><IconKey size={14} style={{ marginRight: 6 }} />Enter Manage Key</div>
       <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: 12 }}>
         Paste the manage key you received when creating this monitor.
       </div>
@@ -1149,7 +1150,7 @@ export default function MonitorDetail({ id, manageKey: urlKey, onBack }) {
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            {monitor.is_paused && <span className="badge paused">⏸ Paused</span>}
+            {monitor.is_paused && <span className="badge paused"><IconPause size={12} /> Paused</span>}
             <span className={`badge ${monitor.current_status}`}>
               <span className="badge-dot" />
               {monitor.current_status}
@@ -1195,14 +1196,14 @@ export default function MonitorDetail({ id, manageKey: urlKey, onBack }) {
         {manageKey ? (
           <div className="manage-panel">
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginRight: 8 }}>🔑 Manage:</span>
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginRight: 8 }}><IconKey size={12} style={{ marginRight: 4 }} />Manage:</span>
               <button
                 className="btn btn-secondary"
                 style={{ fontSize: '0.8rem', padding: '6px 14px' }}
                 onClick={() => { setEditing(true); setConfirmDelete(false); }}
                 disabled={editing}
               >
-                ✏️ Edit
+                <IconEdit size={12} /> Edit
               </button>
               <button
                 className="btn btn-secondary"
@@ -1212,7 +1213,7 @@ export default function MonitorDetail({ id, manageKey: urlKey, onBack }) {
               >
                 {actionLoading === 'pause' || actionLoading === 'resume'
                   ? '...'
-                  : monitor.is_paused ? '▶ Resume' : '⏸ Pause'}
+                  : monitor.is_paused ? <><IconPlay size={12} /> Resume</> : <><IconPause size={12} /> Pause</>}
               </button>
               <button
                 className="btn btn-secondary"
@@ -1225,7 +1226,7 @@ export default function MonitorDetail({ id, manageKey: urlKey, onBack }) {
                   });
                 }}
               >
-                {linkCopied ? '✅ Copied!' : '🔗 Copy Link'}
+                {linkCopied ? <><IconCheckCircle size={12} /> Copied!</> : <><IconLink size={12} /> Copy Link</>}
               </button>
               {!confirmDelete ? (
                 <button
@@ -1233,7 +1234,7 @@ export default function MonitorDetail({ id, manageKey: urlKey, onBack }) {
                   style={{ fontSize: '0.8rem', padding: '6px 14px' }}
                   onClick={() => setConfirmDelete(true)}
                 >
-                  🗑 Delete
+                  <IconTrash size={12} /> Delete
                 </button>
               ) : (
                 <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
@@ -1265,7 +1266,7 @@ export default function MonitorDetail({ id, manageKey: urlKey, onBack }) {
                   }}
                   title="Remove saved manage key"
                 >
-                  🔒 Lock
+                  <IconLock size={12} /> Lock
                 </button>
               )}
             </div>
@@ -1294,7 +1295,7 @@ export default function MonitorDetail({ id, manageKey: urlKey, onBack }) {
             className={`nav-btn ${tab === t ? 'active' : ''}`}
             onClick={() => setTab(t)}
           >
-            {t === 'overview' ? '📊 Overview' : t === 'heartbeats' ? '💓 Heartbeats' : t === 'incidents' ? `⚡ Incidents (${incidents.length})` : t === 'maintenance' ? '🔧 Maintenance' : t === 'badges' ? '🏷️ Badges' : '🔔 Notifications'}
+            {t === 'overview' ? <><IconDashboard size={13} /> Overview</> : t === 'heartbeats' ? <><IconHeart size={13} /> Heartbeats</> : t === 'incidents' ? <><IconZap size={13} /> Incidents ({incidents.length})</> : t === 'maintenance' ? <><IconWrench size={13} /> Maintenance</> : t === 'badges' ? <><IconTag size={13} /> Badges</> : <><IconBell size={13} /> Notifications</>}
           </button>
         ))}
       </div>
@@ -1397,7 +1398,7 @@ function BadgeEmbed({ monitorId }) {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Markdown</span>
             <button style={btnStyle} onClick={() => copy(uptimeMd, 'uptimeMd')}>
-              {copied === 'uptimeMd' ? '✅ Copied' : '📋 Copy'}
+              {copied === 'uptimeMd' ? <><IconCheckCircle size={12} /> Copied</> : <><IconClipboard size={12} /> Copy</>}
             </button>
           </div>
           <code style={codeStyle}>{uptimeMd}</code>
@@ -1406,7 +1407,7 @@ function BadgeEmbed({ monitorId }) {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>HTML</span>
             <button style={btnStyle} onClick={() => copy(uptimeHtml, 'uptimeHtml')}>
-              {copied === 'uptimeHtml' ? '✅ Copied' : '📋 Copy'}
+              {copied === 'uptimeHtml' ? <><IconCheckCircle size={12} /> Copied</> : <><IconClipboard size={12} /> Copy</>}
             </button>
           </div>
           <code style={codeStyle}>{uptimeHtml}</code>
@@ -1422,7 +1423,7 @@ function BadgeEmbed({ monitorId }) {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Markdown</span>
             <button style={btnStyle} onClick={() => copy(statusMd, 'statusMd')}>
-              {copied === 'statusMd' ? '✅ Copied' : '📋 Copy'}
+              {copied === 'statusMd' ? <><IconCheckCircle size={12} /> Copied</> : <><IconClipboard size={12} /> Copy</>}
             </button>
           </div>
           <code style={codeStyle}>{statusMd}</code>
@@ -1431,7 +1432,7 @@ function BadgeEmbed({ monitorId }) {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>HTML</span>
             <button style={btnStyle} onClick={() => copy(statusHtml, 'statusHtml')}>
-              {copied === 'statusHtml' ? '✅ Copied' : '📋 Copy'}
+              {copied === 'statusHtml' ? <><IconCheckCircle size={12} /> Copied</> : <><IconClipboard size={12} /> Copy</>}
             </button>
           </div>
           <code style={codeStyle}>{statusHtml}</code>

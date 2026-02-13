@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react'
 import { bulkCreateMonitors } from '../api'
+import { IconCheckCircle, IconAlertTriangle, IconLink, IconClipboard, IconFolder, IconFileText, IconLock, IconGlobe } from '../Icons'
 
 const EXAMPLE_JSON = `[
   {
@@ -114,8 +115,8 @@ export default function BulkImport({ onDone, onCancel }) {
       <div style={{ marginTop: 24 }}>
         <h2 className="section-title">
           {result.failed === 0
-            ? <span style={{ color: 'var(--success)' }}>✅ All {result.succeeded} Monitors Created!</span>
-            : <span style={{ color: 'var(--warning)' }}>⚠️ {result.succeeded}/{result.total} Created ({result.failed} failed)</span>
+            ? <span style={{ color: 'var(--success)' }}><IconCheckCircle size={16} style={{ marginRight: 6 }} />All {result.succeeded} Monitors Created!</span>
+            : <span style={{ color: 'var(--warning)' }}><IconAlertTriangle size={16} style={{ marginRight: 6 }} />{result.succeeded}/{result.total} Created ({result.failed} failed)</span>
           }
         </h2>
 
@@ -132,7 +133,7 @@ export default function BulkImport({ onDone, onCancel }) {
               </div>
               <div className="manage-key-banner" style={{ marginBottom: 16 }}>
                 <div style={{ fontWeight: 700, marginBottom: 8, color: 'var(--accent)' }}>
-                  🔗 Bookmark these manage links — they include your keys
+                  <IconLink size={14} style={{ marginRight: 6 }} />Bookmark these manage links — they include your keys
                 </div>
                 <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
                   Keys are also saved in this browser automatically.
@@ -166,7 +167,7 @@ export default function BulkImport({ onDone, onCancel }) {
                                 style={{ fontSize: '0.7rem', padding: '2px 8px' }}
                                 onClick={() => navigator.clipboard.writeText(manageLink)}
                               >
-                                📋
+                                <IconClipboard size={12} />
                               </button>
                             </div>
                           </td>
@@ -191,7 +192,7 @@ export default function BulkImport({ onDone, onCancel }) {
                     navigator.clipboard.writeText(JSON.stringify(data, null, 2));
                   }}
                 >
-                  📋 Copy All as JSON
+                  <IconClipboard size={14} style={{ marginRight: 4 }} />Copy All as JSON
                 </button>
               </div>
             </div>
@@ -239,14 +240,14 @@ export default function BulkImport({ onDone, onCancel }) {
             style={{ fontSize: '0.8rem' }}
             onClick={() => fileRef.current?.click()}
           >
-            📁 Upload JSON File
+            <IconFolder size={14} style={{ marginRight: 4 }} />Upload JSON File
           </button>
           <button
             className="btn btn-secondary"
             style={{ fontSize: '0.8rem' }}
             onClick={loadExample}
           >
-            📝 Load Example
+            <IconFileText size={14} style={{ marginRight: 4 }} />Load Example
           </button>
           <input
             ref={fileRef}
@@ -302,7 +303,7 @@ export default function BulkImport({ onDone, onCancel }) {
             borderRadius: 'var(--radius)', padding: '12px 16px', marginTop: 12,
           }}>
             <div style={{ fontWeight: 600, marginBottom: 8, fontSize: '0.9rem' }}>
-              ✅ {parsed.length} monitor{parsed.length !== 1 ? 's' : ''} ready to import
+              <IconCheckCircle size={14} style={{ marginRight: 6 }} />{parsed.length} monitor{parsed.length !== 1 ? 's' : ''} ready to import
             </div>
             <div style={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
@@ -327,7 +328,7 @@ export default function BulkImport({ onDone, onCancel }) {
                       </td>
                       <td style={tdStyle}>{(m.method || 'GET').toUpperCase()}</td>
                       <td style={tdStyle}>{m.interval_seconds || 600}s</td>
-                      <td style={tdStyle}>{m.is_public === false ? '🔒' : '🌐'}</td>
+                      <td style={tdStyle}>{m.is_public === false ? <IconLock size={14} /> : <IconGlobe size={14} />}</td>
                       <td style={tdStyle}>
                         {(m.tags || []).length > 0
                           ? m.tags.map(t => <span key={t} className="tag-badge" style={{ fontSize: '0.7rem', marginRight: 4 }}>{t}</span>)

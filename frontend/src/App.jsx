@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { IconDashboard, IconPackage } from './Icons'
 import Dashboard from './pages/Dashboard'
 import StatusPage from './pages/StatusPage'
 import MonitorDetail from './pages/MonitorDetail'
@@ -79,7 +80,7 @@ export default function App() {
               className={`nav-btn ${route.page === 'dashboard' ? 'active' : ''}`}
               onClick={() => navigate('/')}
             >
-              📊 Dashboard
+              <IconDashboard size={14} /> Dashboard
             </button>
             <button
               className={`nav-btn ${route.page === 'status' ? 'active' : ''}`}
@@ -97,7 +98,7 @@ export default function App() {
               className={`nav-btn ${route.page === 'import' ? 'active' : ''}`}
               onClick={() => navigate('/import')}
             >
-              📦 Bulk Import
+              <IconPackage size={14} /> Bulk Import
             </button>
           </nav>
         </div>
