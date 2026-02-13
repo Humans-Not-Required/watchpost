@@ -91,6 +91,33 @@ input, select, textarea {
   height: 28px;
 }
 
+.hamburger {
+  display: none;
+  flex-direction: column;
+  gap: 5px;
+  padding: 8px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+.hamburger span {
+  display: block;
+  width: 22px;
+  height: 2px;
+  background: var(--text-secondary);
+  border-radius: 2px;
+  transition: all 0.2s;
+}
+.hamburger.open span:nth-child(1) {
+  transform: translateY(7px) rotate(45deg);
+}
+.hamburger.open span:nth-child(2) {
+  opacity: 0;
+}
+.hamburger.open span:nth-child(3) {
+  transform: translateY(-7px) rotate(-45deg);
+}
+
 .header-nav {
   display: flex;
   gap: 8px;
@@ -943,13 +970,32 @@ input, select, textarea {
   .monitor-stats {
     gap: 16px;
   }
+  .hamburger {
+    display: flex;
+  }
   .header-nav {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    flex-direction: column;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border);
+    padding: 8px 16px;
     gap: 4px;
-    flex-wrap: wrap;
+  }
+  .header-nav.open {
+    display: flex;
+  }
+  .header-inner {
+    position: relative;
   }
   .nav-btn {
-    padding: 6px 10px;
-    font-size: 0.8rem;
+    padding: 10px 12px;
+    font-size: 0.9rem;
+    text-align: left;
+    width: 100%;
   }
   .dashboard-grid {
     grid-template-columns: 1fr 1fr;

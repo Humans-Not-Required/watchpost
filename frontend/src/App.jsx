@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import Dashboard from './pages/Dashboard'
 import StatusPage from './pages/StatusPage'
 import MonitorDetail from './pages/MonitorDetail'
@@ -30,12 +30,29 @@ function navigate(path) {
 
 export default function App() {
   const [route, setRoute] = useState(parseRoute);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef(null);
 
   useEffect(() => {
-    const onHash = () => setRoute(parseRoute());
+    const onHash = () => {
+      setRoute(parseRoute());
+      setMenuOpen(false);
+    };
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
+
+  // Close menu when clicking outside
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onClick = (e) => {
+      if (menuRef.current && !menuRef.current.contains(e.target)) {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener('click', onClick);
+    return () => document.removeEventListener('click', onClick);
+  }, [menuOpen]);
 
   return (
     <div>
@@ -50,7 +67,14 @@ export default function App() {
             </svg>
             Watchpost
           </div>
-          <nav className="header-nav">
+          <button
+            className={`hamburger ${menuOpen ? 'open' : ''}`}
+            onClick={(e) => { e.stopPropagation(); setMenuOpen(!menuOpen); }}
+            aria-label="Toggle navigation"
+          >
+            <span /><span /><span />
+          </button>
+          <nav ref={menuRef} className={`header-nav ${menuOpen ? 'open' : ''}`}>
             <button
               className={`nav-btn ${route.page === 'dashboard' ? 'active' : ''}`}
               onClick={() => navigate('/')}
