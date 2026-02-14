@@ -70,13 +70,14 @@
 3. **Public status page customization** — Custom branding, grouped monitors, custom domain support
 
 ### ⚠️ Jordan's Questions
-- **Task ef781225:** Jordan asked "What is this about?" — Need to clarify what this task refers to next time board manager picks it up.
-- **Task b446f607 (Follow 301 redirects):** Jordan directed "Watchers should follow 301!" — This is already implemented (commit a7fc268). Monitors follow redirects by default. Commented on board asking if there's a specific bug or if task can be closed.
+- ~~**Task ef781225:** Jordan asked "What is this about?"~~ — Stale, no further context. Board manager should close if no update.
+- ~~**Task b446f607 (Follow 301 redirects):** Completed (commit a7fc268). Monitors follow redirects by default.~~
 
 - Test suite: **93 tests passing** (`cargo test -- --test-threads=1`) — includes 7 badge tests, 3 dashboard tests, 7 maintenance window tests, 4 response time alert tests, 6 tag tests, 3 search/filter tests, 3 heartbeat retention tests, 2 notification toggle tests, 5 follow_redirects tests, 13 validation/coverage tests
 
 ### ✅ Completed (most recent)
 
+- **Custom SVG icons replacing emojis** (commit 1a6fd84) — Created Icons.jsx with 30+ hand-crafted SVG icon components using currentColor for seamless dark theme integration. Replaced all emojis across every page: nav bar, dashboard stat cards, status indicators, tabs, manage panel, badges, notifications, maintenance, create/bulk-import flows. Stroke-based, 16px default, inline-flex aligned. 93 tests passing.
 - **Mobile hamburger menu** — Replaced wrapping nav links with a hamburger menu on mobile (<640px). Three-line icon animates to X when open. Dropdown menu slides below header with full-width nav buttons. Closes on navigation, outside click, or toggle. Desktop layout unchanged. 93 tests passing.
 - **Fix broken uptime history chart** (commit e022e6a) — Fixed 3 bugs: (1) Y-axis generated 38+ cramped ticks when uptime dipped low — now uses niceStep() for ~4-8 clean labels; (2) Chart didn't fill missing dates, so 30d/90d range selectors showed same 2 data points — now fills full timeline with "no data" zones; (3) Y-axis always started at 90%, cramping wide ranges — now switches to 0-100% when data dips below 90%. Also added gap-aware line segments and tooltip overflow prevention. 93 tests passing.
 - **Mobile responsive 2x2 uptime stats** (commit 2fcf7b0) — Uptime stat boxes (24h/7d/30d/90d) on monitor detail now display as a 2x2 grid on mobile screens (<640px) instead of overflowing. Added `.uptime-stats-grid` CSS class with media query. Skeleton loading also responsive. 93 tests passing.
@@ -123,16 +124,5 @@
 ## Incoming Directions (Work Queue)
 
 <!-- WORK_QUEUE_DIRECTIONS_START -->
-- [ ] Watchpost: Change minimum check interval to 10 minutes — On WatchPost, let's change the minimum duration between checks to 10 minutes. (Jordan; 2026-02-13 07:52:03; task_id: 50271e88-30d5-4081-bee0-d4f330c26199)
-- [ ] Watchpost: Redesign manage UI - shareable links, private-by-default watchers — Please reevaluate how Watchpost does its UI for managing - I guess there's a view key and a manage key. The user shouldn't be expected to back up a key, there needs to be like links that they can click and copy first, and then there really needs to be - like this is supposed to be for multi-user, so you shouldn't be just showing random watchers on the front page unless they're explicitly public. It needs to be - I mean the watchers are probably going to be private by default. (Jordan; 2026-02-13 07:52:03; task_id: 42dca24f-74de-4a7d-8cda-a07eb7c7c27c)
-- [ ] Watchpost: manage key UI (pause/resume, delete, ack incidents) — When visiting a monitor detail page with ?key= query param, the UI now shows: management panel with Pause/Resume and Delete buttons, confirmation step for delete, and Acknowledge button on active incidents with note input. (Jordan; 2026-02-13T09:59:53.534Z; task_id: e8da63f5-538d-41e5-892a-32f944ffbd41)
-- [ ] Watchpost: monitor search/filter on status page — Triage check: verify if this was completed. If evidence in git/code that it's done, close it. If not, work on it. (Jordan; 2026-02-13T09:59:53.655Z; task_id: e9aa09a1-2263-43ed-aed6-83fef96bc8aa)
-- [ ] Watchpost: response time alerts — configurable per-monitor degraded threshold — Triage check: verify if this was completed. If evidence in git/code that it's done, close it. If not, work on it. (Jordan; 2026-02-13T09:59:53.834Z; task_id: dde47225-5eba-46f9-ab4a-9f2800b651d2)
-- [ ] Bulk monitor management (import/export) — POST /monitors/bulk (create up to 50 at once, partial success). GET /monitors/:id/export (auth required, returns importable config). Full roundtrip tested. 7 new tests (52 total). (Jordan; 2026-02-13T09:59:53.954Z; task_id: f7ae1fef-4a4f-43d3-a6d8-e361fe42eedf)
-- [ ] Watchpost: maintenance window UI — schedule, view, delete from frontend — Added Maintenance tab to monitor detail with: list windows (active/upcoming/completed), create form with datetime-local inputs, delete with manage key. Commit df53871. (Jordan; 2026-02-13T09:59:54.072Z; task_id: fd8e99e9-2aa2-417f-9d8e-1940db3f34b9)
-- [ ] Bulk import UI — paste JSON or upload file to create monitors in bulk — New BulkImport page in nav. Paste JSON array or upload .json file. Client-side validation, preview table, results with manage keys and copy button. Commit aa3d850. (Jordan; 2026-02-13T09:59:54.132Z; task_id: 91cacf07-0a37-4523-b2fc-23c785de5527)
-- [ ] Watchpost: uptime history chart — daily aggregate + per-monitor trends on dashboard — Triage check: verify if this was completed. If evidence in git/code that it's done, close it. If not, work on it. (Jordan; 2026-02-13T09:59:54.254Z; task_id: a5c171e5-21b1-4292-8f09-0851429da8ba)
-- [ ] Watchpost: embeddable SVG uptime & status badges — Triage check: verify if this was completed. If evidence in git/code that it's done, close it. If not, work on it. (Jordan; 2026-02-13T09:59:54.372Z; task_id: ff7ebf1d-310c-469d-a5f1-e540f6b21e70)
-- [ ] Watchpost: URL scheme + headers validation (13 new tests) — Added URL validation (must start with http:// or https://), headers validation (must be JSON object), on create/update/bulk paths. 13 new tests covering URL validation, headers, POST/HEAD methods, body_contains, interval/timeout/confirmation clamping. 88 tests total. (Jordan; 2026-02-13T09:59:54.496Z; task_id: c54d3426-2a82-44b1-96ad-be96bdf5e479)
-- [ ] Task hygiene: response time chart issue — Verify the response time chart on monitor detail page is already shipped (Overview tab; commit e4d7708 per STATUS), then add a proper task description and move the issue to Done/archive. (Jordan; 2026-02-13T18:40:08.402Z; task_id: 19dcffbd-39a8-426e-8303-63ca74bb2930)
+(All cleared — 12 directions triaged and confirmed completed 2026-02-14)
 <!-- WORK_QUEUE_DIRECTIONS_END -->
