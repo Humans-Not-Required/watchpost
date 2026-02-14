@@ -10,7 +10,6 @@ fn test_client() -> Client {
 
 fn test_client_with_db() -> (Client, String) {
     let db_path = format!("/tmp/watchpost_test_{}.db", uuid::Uuid::new_v4());
-    std::env::set_var("DATABASE_PATH", &db_path);
 
     let database = Arc::new(watchpost::db::Db::new(&db_path).expect("DB init failed"));
     let rate_limiter = watchpost::routes::RateLimiter::new(100, 3600);
