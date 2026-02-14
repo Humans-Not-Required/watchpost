@@ -141,6 +141,30 @@ input, select, textarea {
   font-weight: 600;
 }
 
+/* Branding Header */
+.branding-header {
+  text-align: center;
+  padding: 32px 16px 8px;
+}
+.branding-logo {
+  max-height: 48px;
+  max-width: 200px;
+  margin-bottom: 12px;
+  object-fit: contain;
+}
+.branding-title {
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+  letter-spacing: -0.02em;
+}
+.branding-description {
+  font-size: 0.95rem;
+  color: var(--text-secondary);
+  margin-bottom: 0;
+}
+
 /* Status Banner */
 .status-banner {
   padding: 16px;

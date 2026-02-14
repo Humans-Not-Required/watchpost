@@ -1,4 +1,4 @@
-use rocket::{get, post, patch, delete, serde::json::Json, State, http::Status};
+use rocket::{get, post, put, patch, delete, serde::json::Json, State, http::Status};
 use rocket::response::stream::{Event, EventStream};
 use rocket::http::ContentType;
 use crate::db::Db;
@@ -8,7 +8,7 @@ use crate::models::{
     StatusOverview, StatusMonitor, NotificationChannel, CreateNotification,
     BulkCreateMonitors, BulkCreateResponse, BulkError, ExportedMonitor,
     DashboardOverview, StatusCounts, DashboardIncident, SlowMonitor,
-    UptimeHistoryDay,
+    UptimeHistoryDay, StatusPageBranding, SettingsResponse, UpdateSettings,
 };
 use crate::auth::{ManageToken, ClientIp, hash_key, generate_key};
 use crate::sse::EventBroadcaster;
@@ -1057,7 +1057,10 @@ pub fn status_page(search: Option<&str>, status: Option<&str>, tag: Option<&str>
         "degraded".to_string()
     };
 
-    Ok(Json(StatusOverview { monitors, overall }))
+    let branding = load_branding(&conn);
+    let branding = if branding_is_empty(&branding) { None } else { Some(branding) };
+
+    Ok(Json(StatusOverview { monitors, overall, branding }))
 }
 
 // ── Notification Channels ──
@@ -1374,6 +1377,105 @@ pub fn list_groups(db: &State<Arc<Db>>) -> Result<Json<Vec<String>>, (Status, Js
     Ok(Json(groups))
 }
 
+// ── Settings (Status Page Branding) ──
+
+fn get_setting(conn: &rusqlite::Connection, key: &str) -> Option<String> {
+    conn.query_row(
+        "SELECT value FROM settings WHERE key = ?1",
+        params![key],
+        |row| row.get(0),
+    ).ok()
+}
+
+fn set_setting(conn: &rusqlite::Connection, key: &str, value: &str) -> Result<(), rusqlite::Error> {
+    conn.execute(
+        "INSERT INTO settings (key, value, updated_at) VALUES (?1, ?2, datetime('now'))
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+        params![key, value],
+    )?;
+    Ok(())
+}
+
+fn delete_setting(conn: &rusqlite::Connection, key: &str) -> Result<(), rusqlite::Error> {
+    conn.execute("DELETE FROM settings WHERE key = ?1", params![key])?;
+    Ok(())
+}
+
+fn load_branding(conn: &rusqlite::Connection) -> StatusPageBranding {
+    StatusPageBranding {
+        title: get_setting(conn, "branding_title"),
+        description: get_setting(conn, "branding_description"),
+        logo_url: get_setting(conn, "branding_logo_url"),
+    }
+}
+
+fn branding_is_empty(b: &StatusPageBranding) -> bool {
+    b.title.is_none() && b.description.is_none() && b.logo_url.is_none()
+}
+
+#[get("/settings")]
+pub fn get_settings(db: &State<Arc<Db>>) -> Result<Json<SettingsResponse>, (Status, Json<serde_json::Value>)> {
+    let conn = db.conn.lock().unwrap();
+    Ok(Json(SettingsResponse {
+        title: get_setting(&conn, "branding_title"),
+        description: get_setting(&conn, "branding_description"),
+        logo_url: get_setting(&conn, "branding_logo_url"),
+    }))
+}
+
+#[put("/settings", data = "<body>")]
+pub fn update_settings(
+    body: Json<UpdateSettings>,
+    token: ManageToken,
+    db: &State<Arc<Db>>,
+) -> Result<Json<SettingsResponse>, (Status, Json<serde_json::Value>)> {
+    let conn = db.conn.lock().unwrap();
+
+    // Verify admin key
+    let stored_hash: String = conn.query_row(
+        "SELECT value FROM settings WHERE key = 'admin_key_hash'",
+        [],
+        |row| row.get(0),
+    ).map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Admin key not configured"}))))?;
+
+    let provided_hash = hash_key(&token.0);
+    if provided_hash != stored_hash {
+        return Err((Status::Forbidden, Json(serde_json::json!({"error": "Invalid admin key"}))));
+    }
+
+    // Update each field: if provided as Some(""), remove the setting; if Some(val), set it; if None, leave unchanged
+    if let Some(ref title) = body.title {
+        if title.is_empty() {
+            delete_setting(&conn, "branding_title").ok();
+        } else {
+            set_setting(&conn, "branding_title", title)
+                .map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
+        }
+    }
+    if let Some(ref desc) = body.description {
+        if desc.is_empty() {
+            delete_setting(&conn, "branding_description").ok();
+        } else {
+            set_setting(&conn, "branding_description", desc)
+                .map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
+        }
+    }
+    if let Some(ref logo) = body.logo_url {
+        if logo.is_empty() {
+            delete_setting(&conn, "branding_logo_url").ok();
+        } else {
+            set_setting(&conn, "branding_logo_url", logo)
+                .map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
+        }
+    }
+
+    Ok(Json(SettingsResponse {
+        title: get_setting(&conn, "branding_title"),
+        description: get_setting(&conn, "branding_description"),
+        logo_url: get_setting(&conn, "branding_logo_url"),
+    }))
+}
+
 // ── llms.txt ──
 
 #[get("/llms.txt")]
@@ -1506,8 +1608,17 @@ GET /api/v1/monitors/:id/badge/uptime — SVG uptime badge (?period=24h|7d|30d|9
 GET /api/v1/monitors/:id/badge/status — SVG status badge (?label=)
 GET /api/v1/events — global SSE event stream
 GET /api/v1/monitors/:id/events — per-monitor SSE event stream
-GET /api/v1/status — public status page (supports ?tag= filter)
+GET /api/v1/settings — get status page branding (title, description, logo_url)
+PUT /api/v1/settings — update branding (admin key required)
+GET /api/v1/status — public status page (supports ?tag= filter, includes branding)
 GET /api/v1/health — service health
+
+## Status Page Branding
+GET /api/v1/settings — returns current branding: {"title": "...", "description": "...", "logo_url": "..."}
+PUT /api/v1/settings — update branding fields (admin key via Bearer header). Send only fields to change; empty string clears a field.
+  Body: {"title": "My Status Page", "description": "Service availability dashboard", "logo_url": "https://..."}
+  Auth: admin key (auto-generated on first run, printed to stdout)
+Branding is also included in GET /api/v1/status response as a "branding" field (omitted when no branding is set).
 
 ## Status Badges (SVG)
 GET /api/v1/monitors/:id/badge/uptime — SVG uptime badge (shields.io style)
@@ -2098,6 +2209,48 @@ const OPENAPI_JSON: &str = r##"{
         }
       }
     },
+    "/settings": {
+      "get": {
+        "summary": "Get status page branding",
+        "operationId": "getSettings",
+        "tags": ["settings"],
+        "responses": {
+          "200": {
+            "description": "Current branding settings",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Settings" }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Update status page branding",
+        "operationId": "updateSettings",
+        "tags": ["settings"],
+        "security": [{ "adminKey": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/UpdateSettings" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated branding settings",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Settings" }
+              }
+            }
+          },
+          "403": { "description": "Invalid admin key" }
+        }
+      }
+    },
     "/openapi.json": {
       "get": {
         "summary": "OpenAPI specification",
@@ -2115,6 +2268,11 @@ const OPENAPI_JSON: &str = r##"{
         "type": "http",
         "scheme": "bearer",
         "description": "Monitor manage_key. Also accepted as X-API-Key header or ?key= query param."
+      },
+      "adminKey": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Service admin key (auto-generated on first run, printed to stdout). Used for service-level settings."
       }
     },
     "schemas": {
@@ -2287,7 +2445,8 @@ const OPENAPI_JSON: &str = r##"{
         "type": "object",
         "properties": {
           "monitors": { "type": "array", "items": { "$ref": "#/components/schemas/StatusMonitor" } },
-          "overall": { "type": "string", "enum": ["operational", "degraded", "major_outage", "unknown"] }
+          "overall": { "type": "string", "enum": ["operational", "degraded", "major_outage", "unknown"] },
+          "branding": { "$ref": "#/components/schemas/Settings", "nullable": true, "description": "Custom branding (omitted when not configured)" }
         }
       },
       "StatusMonitor": {
@@ -2337,6 +2496,22 @@ const OPENAPI_JSON: &str = r##"{
           "ends_at": { "type": "string", "format": "date-time" },
           "active": { "type": "boolean", "description": "Whether the window is currently active" },
           "created_at": { "type": "string" }
+        }
+      },
+      "Settings": {
+        "type": "object",
+        "properties": {
+          "title": { "type": "string", "nullable": true, "description": "Custom status page title" },
+          "description": { "type": "string", "nullable": true, "description": "Custom status page description" },
+          "logo_url": { "type": "string", "nullable": true, "description": "Custom logo URL for status page" }
+        }
+      },
+      "UpdateSettings": {
+        "type": "object",
+        "properties": {
+          "title": { "type": "string", "description": "Set title (empty string clears)" },
+          "description": { "type": "string", "description": "Set description (empty string clears)" },
+          "logo_url": { "type": "string", "description": "Set logo URL (empty string clears)" }
         }
       },
       "Error": {

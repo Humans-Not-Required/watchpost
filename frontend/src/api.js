@@ -155,3 +155,15 @@ export async function bulkCreateMonitors(monitors) {
     body: JSON.stringify({ monitors }),
   });
 }
+
+export async function getSettings() {
+  return request('/settings');
+}
+
+export async function updateSettings(data, adminKey) {
+  return request('/settings', {
+    method: 'PUT',
+    body: JSON.stringify(data),
+    headers: { Authorization: `Bearer ${adminKey}` },
+  });
+}

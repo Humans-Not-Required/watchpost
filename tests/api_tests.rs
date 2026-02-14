@@ -44,6 +44,8 @@ fn test_client_with_db() -> (Client, String) {
             watchpost::routes::update_notification,
             watchpost::routes::list_tags,
             watchpost::routes::list_groups,
+            watchpost::routes::get_settings,
+            watchpost::routes::update_settings,
             watchpost::routes::create_maintenance_window,
             watchpost::routes::list_maintenance_windows,
             watchpost::routes::delete_maintenance_window,
@@ -66,6 +68,27 @@ fn test_client_with_db() -> (Client, String) {
 
     let client = Client::tracked(rocket).expect("valid rocket instance");
     (client, db_path)
+}
+
+/// Create a test client and set a known admin key, returning (client, admin_key)
+fn test_client_with_admin_key() -> (Client, String) {
+    let (client, db_path) = test_client_with_db();
+    let admin_key = "wp_test_admin_key_12345678";
+    let admin_hash = {
+        use sha2::{Sha256, Digest};
+        let mut hasher = Sha256::new();
+        hasher.update(admin_key.as_bytes());
+        hex::encode(hasher.finalize())
+    };
+    // Overwrite the auto-generated admin key hash
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    conn.execute(
+        "INSERT INTO settings (key, value, updated_at) VALUES ('admin_key_hash', ?1, datetime('now'))
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![admin_hash],
+    ).unwrap();
+    drop(conn);
+    (client, admin_key.to_string())
 }
 
 fn create_test_monitor(client: &Client) -> (String, String) {
@@ -2462,4 +2485,157 @@ fn test_bulk_create_with_group() {
     assert_eq!(body["created"][0]["monitor"]["group_name"], "Group1");
     assert_eq!(body["created"][1]["monitor"]["group_name"], "Group2");
     assert!(body["created"][2]["monitor"]["group_name"].is_null());
+}
+
+
+// ── Settings (Status Page Branding) ──
+
+#[test]
+fn test_get_settings_default_empty() {
+    let client = test_client();
+    let resp = client.get("/api/v1/settings").dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert!(body["title"].is_null());
+    assert!(body["description"].is_null());
+    assert!(body["logo_url"].is_null());
+}
+
+#[test]
+fn test_update_settings_requires_admin_key() {
+    let client = test_client();
+    let resp = client.put("/api/v1/settings")
+        .header(ContentType::JSON)
+        .body(r#"{"title": "My Status Page"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Unauthorized);
+}
+
+#[test]
+fn test_update_settings_rejects_wrong_key() {
+    let (client, _admin_key) = test_client_with_admin_key();
+    let resp = client.put("/api/v1/settings")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", "Bearer wp_wrong_key"))
+        .body(r#"{"title": "My Status Page"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Forbidden);
+}
+
+#[test]
+fn test_update_settings_with_valid_admin_key() {
+    let (client, admin_key) = test_client_with_admin_key();
+    let resp = client.put("/api/v1/settings")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", admin_key)))
+        .body(r#"{"title": "HNR Status", "description": "Humans Not Required service availability", "logo_url": "https://example.com/logo.png"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["title"], "HNR Status");
+    assert_eq!(body["description"], "Humans Not Required service availability");
+    assert_eq!(body["logo_url"], "https://example.com/logo.png");
+
+    // Verify GET returns the updated values
+    let resp = client.get("/api/v1/settings").dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["title"], "HNR Status");
+    assert_eq!(body["description"], "Humans Not Required service availability");
+    assert_eq!(body["logo_url"], "https://example.com/logo.png");
+}
+
+#[test]
+fn test_update_settings_partial_update() {
+    let (client, admin_key) = test_client_with_admin_key();
+
+    // Set title only
+    let resp = client.put("/api/v1/settings")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", admin_key)))
+        .body(r#"{"title": "My Page"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["title"], "My Page");
+    assert!(body["description"].is_null());
+
+    // Now set description without touching title
+    let resp = client.put("/api/v1/settings")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", admin_key)))
+        .body(r#"{"description": "Status dashboard"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["title"], "My Page");
+    assert_eq!(body["description"], "Status dashboard");
+}
+
+#[test]
+fn test_update_settings_clear_with_empty_string() {
+    let (client, admin_key) = test_client_with_admin_key();
+    let auth = format!("Bearer {}", admin_key);
+
+    // Set values
+    client.put("/api/v1/settings")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", auth.clone()))
+        .body(r#"{"title": "My Page", "description": "Some desc", "logo_url": "https://example.com/logo.png"}"#)
+        .dispatch();
+
+    // Clear title with empty string
+    let resp = client.put("/api/v1/settings")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", auth.clone()))
+        .body(r#"{"title": ""}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert!(body["title"].is_null());
+    assert_eq!(body["description"], "Some desc");
+    assert_eq!(body["logo_url"], "https://example.com/logo.png");
+}
+
+#[test]
+fn test_status_page_includes_branding() {
+    let (client, admin_key) = test_client_with_admin_key();
+    let auth = format!("Bearer {}", admin_key);
+
+    // Status page with no branding should not include branding field
+    let resp = client.get("/api/v1/status").dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert!(body.get("branding").is_none() || body["branding"].is_null());
+
+    // Set branding
+    client.put("/api/v1/settings")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", auth.clone()))
+        .body(r#"{"title": "HNR Status"}"#)
+        .dispatch();
+
+    // Status page should now include branding
+    let resp = client.get("/api/v1/status").dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["branding"]["title"], "HNR Status");
+}
+
+#[test]
+fn test_settings_no_auth_on_get() {
+    let (client, admin_key) = test_client_with_admin_key();
+
+    // Set some branding
+    client.put("/api/v1/settings")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", admin_key)))
+        .body(r#"{"title": "Public Page"}"#)
+        .dispatch();
+
+    // GET settings requires no auth
+    let resp = client.get("/api/v1/settings").dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["title"], "Public Page");
 }

@@ -94,6 +94,30 @@ impl Db {
         // Add group_name column to monitors (for organizing monitors into groups on status page)
         conn.execute_batch("ALTER TABLE monitors ADD COLUMN group_name TEXT;").ok();
 
+        // Settings table (key-value store for service-level config)
+        conn.execute_batch("
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+        ").ok();
+
+        // Auto-generate admin key if not set
+        let has_admin_key: bool = conn
+            .query_row("SELECT COUNT(*) FROM settings WHERE key = 'admin_key'", [], |r| r.get::<_, i64>(0))
+            .map(|c| c > 0)
+            .unwrap_or(false);
+        if !has_admin_key {
+            let admin_key = crate::auth::generate_key();
+            let admin_key_hash = crate::auth::hash_key(&admin_key);
+            conn.execute(
+                "INSERT INTO settings (key, value, updated_at) VALUES ('admin_key_hash', ?1, datetime('now'))",
+                rusqlite::params![admin_key_hash],
+            ).ok();
+            println!("🔑 Admin key (save this — shown once): {}", admin_key);
+        }
+
         // Maintenance windows table
         conn.execute_batch("
             CREATE TABLE IF NOT EXISTS maintenance_windows (

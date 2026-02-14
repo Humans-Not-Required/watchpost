@@ -72,6 +72,8 @@ fn rocket() -> _ {
             routes::update_notification,
             routes::list_tags,
             routes::list_groups,
+            routes::get_settings,
+            routes::update_settings,
             routes::create_maintenance_window,
             routes::list_maintenance_windows,
             routes::delete_maintenance_window,

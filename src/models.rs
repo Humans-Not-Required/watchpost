@@ -156,6 +156,8 @@ pub struct UptimeStats {
 pub struct StatusOverview {
     pub monitors: Vec<StatusMonitor>,
     pub overall: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branding: Option<StatusPageBranding>,
 }
 
 #[derive(Debug, Serialize)]
@@ -296,6 +298,30 @@ pub struct ExportedMonitor {
     pub tags: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub group_name: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct StatusPageBranding {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub logo_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateSettings {
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub logo_url: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SettingsResponse {
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub logo_url: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

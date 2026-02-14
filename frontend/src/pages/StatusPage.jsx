@@ -107,7 +107,7 @@ export default function StatusPage({ onSelect }) {
     );
   }
 
-  const { monitors, overall } = status;
+  const { monitors, overall, branding } = status;
 
   const filtered = monitors.filter((m) => {
     if (statusFilter && m.current_status !== statusFilter) return false;
@@ -135,6 +135,20 @@ export default function StatusPage({ onSelect }) {
 
   return (
     <div>
+      {branding && (branding.title || branding.logo_url || branding.description) && (
+        <div className="branding-header">
+          {branding.logo_url && (
+            <img
+              src={branding.logo_url}
+              alt={branding.title || 'Status'}
+              className="branding-logo"
+              onError={(e) => { e.target.style.display = 'none'; }}
+            />
+          )}
+          {branding.title && <h1 className="branding-title">{branding.title}</h1>}
+          {branding.description && <p className="branding-description">{branding.description}</p>}
+        </div>
+      )}
       <div className={`status-banner ${overall}`}>
         {STATUS_LABELS[overall] || overall}
       </div>
