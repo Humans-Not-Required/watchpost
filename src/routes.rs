@@ -120,10 +120,12 @@ pub fn create_monitor(
     let rt_threshold = data.response_time_threshold_ms.map(|v| v.max(100));
     let follow_redirects = data.follow_redirects.unwrap_or(true);
 
+    let group_name = data.group_name.as_deref().map(|g| g.trim()).filter(|g| !g.is_empty()).map(|g| g.to_string());
+
     let conn = db.conn.lock().unwrap();
     conn.execute(
-        "INSERT INTO monitors (id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, manage_key_hash, is_public, confirmation_threshold, tags, response_time_threshold_ms, follow_redirects)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+        "INSERT INTO monitors (id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, manage_key_hash, is_public, confirmation_threshold, tags, response_time_threshold_ms, follow_redirects, group_name)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
         params![
             id,
             data.name.trim(),
@@ -140,6 +142,7 @@ pub fn create_monitor(
             tags_str,
             rt_threshold,
             follow_redirects as i32,
+            group_name,
         ],
     ).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({
         "error": format!("DB error: {}", e), "code": "INTERNAL_ERROR"
@@ -235,10 +238,11 @@ pub fn bulk_create_monitors(
         let key_hash = hash_key(&manage_key);
         let tags_str = tags_to_string(&monitor_data.tags);
         let follow_redirects = monitor_data.follow_redirects.unwrap_or(true);
+        let group_name = monitor_data.group_name.as_deref().map(|g| g.trim()).filter(|g| !g.is_empty()).map(|g| g.to_string());
 
         match conn.execute(
-            "INSERT INTO monitors (id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, manage_key_hash, is_public, confirmation_threshold, tags, response_time_threshold_ms, follow_redirects)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+            "INSERT INTO monitors (id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, manage_key_hash, is_public, confirmation_threshold, tags, response_time_threshold_ms, follow_redirects, group_name)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             params![
                 id,
                 monitor_data.name.trim(),
@@ -255,6 +259,7 @@ pub fn bulk_create_monitors(
                 tags_str,
                 rt_threshold,
                 follow_redirects as i32,
+                group_name,
             ],
         ) {
             Ok(_) => {
@@ -316,17 +321,18 @@ pub fn export_monitor(
         response_time_threshold_ms: monitor.response_time_threshold_ms,
         follow_redirects: monitor.follow_redirects,
         tags: monitor.tags,
+        group_name: monitor.group_name,
     }))
 }
 
 // ── List Monitors (public only) ──
 
-#[get("/monitors?<search>&<status>&<tag>")]
-pub fn list_monitors(search: Option<&str>, status: Option<&str>, tag: Option<&str>, db: &State<Arc<Db>>) -> Result<Json<Vec<Monitor>>, (Status, Json<serde_json::Value>)> {
+#[get("/monitors?<search>&<status>&<tag>&<group>")]
+pub fn list_monitors(search: Option<&str>, status: Option<&str>, tag: Option<&str>, group: Option<&str>, db: &State<Arc<Db>>) -> Result<Json<Vec<Monitor>>, (Status, Json<serde_json::Value>)> {
     let conn = db.conn.lock().unwrap();
 
     let mut sql = String::from(
-        "SELECT id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, is_public, is_paused, current_status, last_checked_at, confirmation_threshold, created_at, updated_at, tags, response_time_threshold_ms, follow_redirects
+        "SELECT id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, is_public, is_paused, current_status, last_checked_at, confirmation_threshold, created_at, updated_at, tags, response_time_threshold_ms, follow_redirects, group_name
          FROM monitors WHERE is_public = 1"
     );
     let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
@@ -360,7 +366,14 @@ pub fn list_monitors(search: Option<&str>, status: Option<&str>, tag: Option<&st
             ));
         }
     }
-    sql.push_str(" ORDER BY name");
+    if let Some(g) = group {
+        let g = g.trim();
+        if !g.is_empty() {
+            param_values.push(Box::new(g.to_string()));
+            sql.push_str(&format!(" AND group_name = ?{}", param_values.len()));
+        }
+    }
+    sql.push_str(" ORDER BY group_name NULLS LAST, name");
 
     let mut stmt = conn.prepare(&sql)
         .map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
@@ -467,6 +480,17 @@ pub fn update_monitor(
     if let Some(follow) = data.follow_redirects {
         updates.push(format!("follow_redirects = ?{}", values.len() + 1));
         values.push(Box::new(follow as i32));
+    }
+
+    // group_name: Some("name") = set, Some("") = clear, None = no change
+    if let Some(ref gn) = data.group_name {
+        updates.push(format!("group_name = ?{}", values.len() + 1));
+        let trimmed = gn.trim();
+        if trimmed.is_empty() {
+            values.push(Box::new(None::<String>));
+        } else {
+            values.push(Box::new(trimmed.to_string()));
+        }
     }
 
     if updates.is_empty() {
@@ -920,11 +944,11 @@ pub fn monitor_uptime_history(
 
 // ── Status Page ──
 
-#[get("/status?<search>&<status>&<tag>")]
-pub fn status_page(search: Option<&str>, status: Option<&str>, tag: Option<&str>, db: &State<Arc<Db>>) -> Result<Json<StatusOverview>, (Status, Json<serde_json::Value>)> {
+#[get("/status?<search>&<status>&<tag>&<group>")]
+pub fn status_page(search: Option<&str>, status: Option<&str>, tag: Option<&str>, group: Option<&str>, db: &State<Arc<Db>>) -> Result<Json<StatusOverview>, (Status, Json<serde_json::Value>)> {
     let conn = db.conn.lock().unwrap();
 
-    let mut sql = String::from("SELECT id, name, url, current_status, last_checked_at, tags FROM monitors WHERE is_public = 1");
+    let mut sql = String::from("SELECT id, name, url, current_status, last_checked_at, tags, group_name FROM monitors WHERE is_public = 1");
     let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
     if let Some(q) = search {
@@ -955,7 +979,14 @@ pub fn status_page(search: Option<&str>, status: Option<&str>, tag: Option<&str>
             ));
         }
     }
-    sql.push_str(" ORDER BY name");
+    if let Some(g) = group {
+        let g = g.trim();
+        if !g.is_empty() {
+            param_values.push(Box::new(g.to_string()));
+            sql.push_str(&format!(" AND group_name = ?{}", param_values.len()));
+        }
+    }
+    sql.push_str(" ORDER BY group_name NULLS LAST, name");
 
     let mut stmt = conn.prepare(&sql)
         .map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
@@ -965,10 +996,11 @@ pub fn status_page(search: Option<&str>, status: Option<&str>, tag: Option<&str>
         let id: String = row.get(0)?;
         let status: String = row.get(3)?;
         let tags_str: String = row.get::<_, String>(5).unwrap_or_default();
-        Ok((id, row.get(1)?, row.get(2)?, status, row.get::<_, Option<String>>(4)?, tags_str))
+        let group_name: Option<String> = row.get::<_, Option<String>>(6).unwrap_or(None);
+        Ok((id, row.get(1)?, row.get(2)?, status, row.get::<_, Option<String>>(4)?, tags_str, group_name))
     }).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?
     .filter_map(|r| r.ok())
-    .map(|(id, name, url, status, last_checked, tags_str)| {
+    .map(|(id, name, url, status, last_checked, tags_str, group_name)| {
         // Calculate uptime (simplified inline)
         let total_24h: u32 = conn.query_row(
             "SELECT COUNT(*) FROM heartbeats WHERE monitor_id = ?1 AND checked_at > datetime('now', '-24 hours')",
@@ -1006,6 +1038,7 @@ pub fn status_page(search: Option<&str>, status: Option<&str>, tag: Option<&str>
             avg_response_ms_24h: avg_ms,
             active_incident,
             tags: parse_tags(&tags_str),
+            group_name,
         }
     })
     .collect();
@@ -1324,6 +1357,23 @@ pub fn list_tags(db: &State<Arc<Db>>) -> Result<Json<Vec<String>>, (Status, Json
     Ok(Json(all_tags.into_iter().collect()))
 }
 
+// ── List Groups ──
+
+#[get("/groups")]
+pub fn list_groups(db: &State<Arc<Db>>) -> Result<Json<Vec<String>>, (Status, Json<serde_json::Value>)> {
+    let conn = db.conn.lock().unwrap();
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT group_name FROM monitors WHERE is_public = 1 AND group_name IS NOT NULL AND group_name != '' ORDER BY group_name"
+    ).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
+
+    let groups: Vec<String> = stmt.query_map([], |row| row.get(0))
+        .map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(Json(groups))
+}
+
 // ── llms.txt ──
 
 #[get("/llms.txt")]
@@ -1395,6 +1445,14 @@ GET /api/v1/monitors/:id/events — per-monitor event stream
 
 Event types: check.completed, incident.created, incident.resolved
 
+## Monitor Groups
+POST /api/v1/monitors with "group_name": "Infrastructure" — assign monitors to a group on creation
+PATCH /api/v1/monitors/:id with "group_name": "APIs" — change group (empty string removes)
+GET /api/v1/groups — list all unique groups across public monitors
+GET /api/v1/monitors?group=Infrastructure — filter monitors by group
+GET /api/v1/status?group=Infrastructure — filter status page by group
+Groups organize monitors into sections on the status page. Grouped monitors are sorted by group name, then by name.
+
 ## Tags
 POST /api/v1/monitors with "tags": ["api", "prod"] — tag monitors on creation
 PATCH /api/v1/monitors/:id with "tags": ["api", "staging"] — update tags
@@ -1405,7 +1463,7 @@ GET /api/v1/status?tag=prod — filter status page by tag
 ## Search & Filter
 GET /api/v1/monitors?search=keyword — filter by name/URL
 GET /api/v1/monitors?status=up — filter by status (up/down/degraded/unknown)
-GET /api/v1/status?search=keyword&status=down — combined filters
+GET /api/v1/status?search=keyword&status=down&group=Infrastructure — combined filters
 
 ## Bulk Operations
 POST /api/v1/monitors/bulk — create up to 50 monitors at once
@@ -1443,6 +1501,7 @@ POST /api/v1/monitors/:id/maintenance — create maintenance window (auth)
 GET /api/v1/monitors/:id/maintenance — list maintenance windows
 DELETE /api/v1/maintenance/:id — delete maintenance window (auth)
 GET /api/v1/tags — list all unique tags (public monitors)
+GET /api/v1/groups — list all unique groups (public monitors)
 GET /api/v1/monitors/:id/badge/uptime — SVG uptime badge (?period=24h|7d|30d|90d, ?label=)
 GET /api/v1/monitors/:id/badge/status — SVG status badge (?label=)
 GET /api/v1/events — global SSE event stream
@@ -1502,7 +1561,8 @@ const OPENAPI_JSON: &str = r##"{
         "parameters": [
           { "name": "search", "in": "query", "schema": { "type": "string" }, "description": "Filter monitors by name or URL (case-insensitive substring match)" },
           { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["up", "down", "degraded", "unknown"] }, "description": "Filter by current status" },
-          { "name": "tag", "in": "query", "schema": { "type": "string" }, "description": "Filter monitors by tag" }
+          { "name": "tag", "in": "query", "schema": { "type": "string" }, "description": "Filter monitors by tag" },
+          { "name": "group", "in": "query", "schema": { "type": "string" }, "description": "Filter monitors by group name" }
         ],
         "responses": {
           "200": { "description": "List of public monitors", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Monitor" } } } } }
@@ -1891,7 +1951,8 @@ const OPENAPI_JSON: &str = r##"{
         "parameters": [
           { "name": "search", "in": "query", "schema": { "type": "string" }, "description": "Filter monitors by name or URL (case-insensitive substring match)" },
           { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["up", "down", "degraded", "unknown"] }, "description": "Filter by current status" },
-          { "name": "tag", "in": "query", "schema": { "type": "string" }, "description": "Filter monitors by tag" }
+          { "name": "tag", "in": "query", "schema": { "type": "string" }, "description": "Filter monitors by tag" },
+          { "name": "group", "in": "query", "schema": { "type": "string" }, "description": "Filter monitors by group name" }
         ],
         "responses": {
           "200": { "description": "Status overview", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/StatusOverview" } } } }
@@ -1906,6 +1967,17 @@ const OPENAPI_JSON: &str = r##"{
         "description": "Returns sorted list of unique tags across all public monitors.",
         "responses": {
           "200": { "description": "List of tags", "content": { "application/json": { "schema": { "type": "array", "items": { "type": "string" } } } } }
+        }
+      }
+    },
+    "/groups": {
+      "get": {
+        "summary": "List all unique monitor groups",
+        "operationId": "listGroups",
+        "tags": ["monitors"],
+        "description": "Returns sorted list of unique group names across all public monitors.",
+        "responses": {
+          "200": { "description": "List of group names", "content": { "application/json": { "schema": { "type": "array", "items": { "type": "string" } } } } }
         }
       }
     },
@@ -2065,7 +2137,8 @@ const OPENAPI_JSON: &str = r##"{
           "confirmation_threshold": { "type": "integer" },
           "response_time_threshold_ms": { "type": "integer", "nullable": true, "description": "Mark as degraded when response time exceeds this (ms). Null = disabled." },
           "follow_redirects": { "type": "boolean", "description": "Whether HTTP redirects are followed (default: true)" },
-          "tags": { "type": "array", "items": { "type": "string" }, "description": "Freeform tags for grouping monitors" },
+          "tags": { "type": "array", "items": { "type": "string" }, "description": "Freeform tags for filtering monitors" },
+          "group_name": { "type": "string", "nullable": true, "description": "Group name for organizing monitors into sections on the status page" },
           "created_at": { "type": "string" },
           "updated_at": { "type": "string" }
         }
@@ -2086,7 +2159,8 @@ const OPENAPI_JSON: &str = r##"{
           "confirmation_threshold": { "type": "integer", "minimum": 1, "maximum": 10, "default": 2 },
           "response_time_threshold_ms": { "type": "integer", "minimum": 100, "nullable": true, "description": "Alert when response time exceeds this threshold (ms). Null = disabled." },
           "follow_redirects": { "type": "boolean", "default": true, "description": "Follow HTTP redirects (301, 302, etc.) up to 10 hops. Default: true." },
-          "tags": { "type": "array", "items": { "type": "string" }, "description": "Freeform tags for grouping" }
+          "tags": { "type": "array", "items": { "type": "string" }, "description": "Freeform tags for filtering" },
+          "group_name": { "type": "string", "nullable": true, "description": "Group name for organizing monitors into sections on the status page. Empty string clears." }
         }
       },
       "BulkCreateMonitors": {
@@ -2228,7 +2302,8 @@ const OPENAPI_JSON: &str = r##"{
           "uptime_7d": { "type": "number" },
           "avg_response_ms_24h": { "type": "number", "nullable": true },
           "active_incident": { "type": "boolean" },
-          "tags": { "type": "array", "items": { "type": "string" } }
+          "tags": { "type": "array", "items": { "type": "string" } },
+          "group_name": { "type": "string", "nullable": true, "description": "Group section name" }
         }
       },
       "NotificationChannel": {
@@ -2442,7 +2517,7 @@ pub fn monitor_events<'a>(id: &'a str, broadcaster: &'a State<Arc<EventBroadcast
 
 fn get_monitor_from_db(conn: &rusqlite::Connection, id: &str) -> rusqlite::Result<Monitor> {
     conn.query_row(
-        "SELECT id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, is_public, is_paused, current_status, last_checked_at, confirmation_threshold, created_at, updated_at, tags, response_time_threshold_ms, follow_redirects
+        "SELECT id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, is_public, is_paused, current_status, last_checked_at, confirmation_threshold, created_at, updated_at, tags, response_time_threshold_ms, follow_redirects, group_name
          FROM monitors WHERE id = ?1",
         params![id],
         |row| Ok(row_to_monitor(row)),
@@ -2486,6 +2561,7 @@ fn row_to_monitor(row: &rusqlite::Row) -> Monitor {
         response_time_threshold_ms: row.get::<_, Option<u32>>(17).unwrap_or(None),
         follow_redirects: row.get::<_, i32>(18).unwrap_or(1) != 0,
         tags: parse_tags(&tags_str),
+        group_name: row.get::<_, Option<String>>(19).unwrap_or(None),
         created_at: row.get(14).unwrap(),
         updated_at: row.get(15).unwrap(),
     }

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
-import { getStatus, getTags } from '../api'
-import { IconCheckCircle, IconAlertTriangle, IconAlertCircle, IconClock, IconStatusDot } from '../Icons'
+import { getStatus, getTags, getGroups } from '../api'
+import { IconCheckCircle, IconAlertTriangle, IconAlertCircle, IconClock, IconStatusDot, IconFolder } from '../Icons'
 
 const STATUS_LABELS = {
   operational: <><IconCheckCircle size={16} style={{ marginRight: 6 }} />All Systems Operational</>,
@@ -45,6 +45,8 @@ export default function StatusPage({ onSelect }) {
   const [statusFilter, setStatusFilter] = useState(null);
   const [allTags, setAllTags] = useState([]);
   const [tagFilter, setTagFilter] = useState(null);
+  const [allGroups, setAllGroups] = useState([]);
+  const [groupFilter, setGroupFilter] = useState(null);
 
   useEffect(() => {
     let mounted = true;
@@ -69,6 +71,7 @@ export default function StatusPage({ onSelect }) {
 
   useEffect(() => {
     getTags().then(setAllTags).catch(() => {});
+    getGroups().then(setAllGroups).catch(() => {});
   }, [status]);
 
   if (loading) {
@@ -109,12 +112,26 @@ export default function StatusPage({ onSelect }) {
   const filtered = monitors.filter((m) => {
     if (statusFilter && m.current_status !== statusFilter) return false;
     if (tagFilter && !(m.tags || []).includes(tagFilter)) return false;
+    if (groupFilter && m.group_name !== groupFilter) return false;
     if (searchQuery.trim()) {
       const q = searchQuery.trim().toLowerCase();
       if (!m.name.toLowerCase().includes(q) && !m.url.toLowerCase().includes(q)) return false;
     }
     return true;
   });
+
+  // Group monitors by group_name for sectioned display
+  const groupedMonitors = [];
+  const seen = new Set();
+  for (const m of filtered) {
+    const g = m.group_name || null;
+    if (!seen.has(g)) {
+      seen.add(g);
+      groupedMonitors.push({ group: g, monitors: [] });
+    }
+    groupedMonitors.find(x => x.group === g).monitors.push(m);
+  }
+  const hasGroups = groupedMonitors.some(g => g.group !== null);
 
   return (
     <div>
@@ -147,6 +164,25 @@ export default function StatusPage({ onSelect }) {
               </button>
             ))}
           </div>
+          {allGroups.length > 0 && (
+            <div className="status-chips" style={{ marginTop: 8 }}>
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginRight: 4 }}>
+                <IconFolder size={12} style={{ marginRight: 2, verticalAlign: 'middle' }} />Groups:
+              </span>
+              {allGroups.map((g) => (
+                <button
+                  key={g}
+                  className={`chip chip-tag ${groupFilter === g ? 'chip-active' : ''}`}
+                  onClick={() => setGroupFilter(groupFilter === g ? null : g)}
+                >
+                  {g}
+                  <span className="chip-count">
+                    {monitors.filter((m) => m.group_name === g).length}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
           {allTags.length > 0 && (
             <div className="status-chips" style={{ marginTop: 8 }}>
               <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginRight: 4 }}>Tags:</span>
@@ -178,65 +214,75 @@ export default function StatusPage({ onSelect }) {
           <p>No monitors match your search{statusFilter ? ` and "${statusFilter}" filter` : ''}.</p>
         </div>
       ) : (
-        filtered.map((m) => (
-          <div
-            key={m.id}
-            className="card card-clickable"
-            onClick={() => onSelect(m.id)}
-          >
-            <div className="card-header">
-              <span className="card-title">{m.name}</span>
-              <span className={`badge ${m.current_status}`}>
-                <span className="badge-dot" />
-                {m.current_status}
-              </span>
-            </div>
-            {(m.tags || []).length > 0 && (
-              <div className="tag-list">
-                {m.tags.map((t) => (
-                  <span key={t} className="tag-badge" onClick={(e) => { e.stopPropagation(); setTagFilter(tagFilter === t ? null : t); }}>
-                    {t}
-                  </span>
-                ))}
+        groupedMonitors.map(({ group, monitors: groupMonitors }) => (
+          <div key={group || '__ungrouped'}>
+            {hasGroups && (
+              <div className="group-header">
+                <IconFolder size={14} style={{ marginRight: 6, opacity: 0.7 }} />
+                {group || 'Ungrouped'}
               </div>
             )}
-            <div className="monitor-stats">
-              <div className="monitor-stat">
-                <span className="monitor-stat-label">Uptime (24h)</span>
-                <span className="monitor-stat-value" style={{
-                  color: m.uptime_24h >= 99.5 ? 'var(--success)' :
-                         m.uptime_24h >= 95 ? 'var(--warning)' : 'var(--danger)'
-                }}>
-                  {formatUptime(m.uptime_24h)}
-                </span>
-              </div>
-              <div className="monitor-stat">
-                <span className="monitor-stat-label">Uptime (7d)</span>
-                <span className="monitor-stat-value">
-                  {formatUptime(m.uptime_7d)}
-                </span>
-              </div>
-              <div className="monitor-stat">
-                <span className="monitor-stat-label">Avg Response</span>
-                <span className="monitor-stat-value">
-                  {formatMs(m.avg_response_ms_24h)}
-                </span>
-              </div>
-              <div className="monitor-stat">
-                <span className="monitor-stat-label">Last Check</span>
-                <span className="monitor-stat-value">
-                  {formatTime(m.last_checked_at)}
-                </span>
-              </div>
-              {m.active_incident && (
-                <div className="monitor-stat">
-                  <span className="monitor-stat-label">Incident</span>
-                  <span className="monitor-stat-value" style={{ color: 'var(--danger)' }}>
-                    <IconAlertCircle size={12} style={{ color: 'var(--danger)' }} /> Active
+            {groupMonitors.map((m) => (
+              <div
+                key={m.id}
+                className="card card-clickable"
+                onClick={() => onSelect(m.id)}
+              >
+                <div className="card-header">
+                  <span className="card-title">{m.name}</span>
+                  <span className={`badge ${m.current_status}`}>
+                    <span className="badge-dot" />
+                    {m.current_status}
                   </span>
                 </div>
-              )}
-            </div>
+                {(m.tags || []).length > 0 && (
+                  <div className="tag-list">
+                    {m.tags.map((t) => (
+                      <span key={t} className="tag-badge" onClick={(e) => { e.stopPropagation(); setTagFilter(tagFilter === t ? null : t); }}>
+                        {t}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <div className="monitor-stats">
+                  <div className="monitor-stat">
+                    <span className="monitor-stat-label">Uptime (24h)</span>
+                    <span className="monitor-stat-value" style={{
+                      color: m.uptime_24h >= 99.5 ? 'var(--success)' :
+                             m.uptime_24h >= 95 ? 'var(--warning)' : 'var(--danger)'
+                    }}>
+                      {formatUptime(m.uptime_24h)}
+                    </span>
+                  </div>
+                  <div className="monitor-stat">
+                    <span className="monitor-stat-label">Uptime (7d)</span>
+                    <span className="monitor-stat-value">
+                      {formatUptime(m.uptime_7d)}
+                    </span>
+                  </div>
+                  <div className="monitor-stat">
+                    <span className="monitor-stat-label">Avg Response</span>
+                    <span className="monitor-stat-value">
+                      {formatMs(m.avg_response_ms_24h)}
+                    </span>
+                  </div>
+                  <div className="monitor-stat">
+                    <span className="monitor-stat-label">Last Check</span>
+                    <span className="monitor-stat-value">
+                      {formatTime(m.last_checked_at)}
+                    </span>
+                  </div>
+                  {m.active_incident && (
+                    <div className="monitor-stat">
+                      <span className="monitor-stat-label">Incident</span>
+                      <span className="monitor-stat-value" style={{ color: 'var(--danger)' }}>
+                        <IconAlertCircle size={12} style={{ color: 'var(--danger)' }} /> Active
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
           </div>
         ))
       )}

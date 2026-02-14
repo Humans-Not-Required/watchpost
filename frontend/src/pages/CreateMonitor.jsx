@@ -15,6 +15,7 @@ export default function CreateMonitor({ onCreated, onCancel }) {
     confirmation_threshold: 2,
     response_time_threshold_ms: '',
     tagsInput: '',
+    group_name: '',
   });
   const [copied, setCopied] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -48,6 +49,9 @@ export default function CreateMonitor({ onCreated, onCancel }) {
       const tags = form.tagsInput.split(',').map(t => t.trim()).filter(Boolean);
       if (tags.length > 0) {
         payload.tags = tags;
+      }
+      if (form.group_name.trim()) {
+        payload.group_name = form.group_name.trim();
       }
 
       const data = await createMonitor(payload);
@@ -296,16 +300,30 @@ export default function CreateMonitor({ onCreated, onCancel }) {
             <div className="form-help">Mark as degraded when response time exceeds this threshold. Leave empty to disable.</div>
           </div>
 
-          <div className="form-group">
-            <label className="form-label">Tags (optional)</label>
-            <input
-              className="form-input"
-              type="text"
-              placeholder="e.g. prod, api, critical"
-              value={form.tagsInput}
-              onChange={(e) => update('tagsInput', e.target.value)}
-            />
-            <div className="form-help">Comma-separated tags for grouping and filtering monitors</div>
+          <div className="form-row">
+            <div className="form-group">
+              <label className="form-label">Group (optional)</label>
+              <input
+                className="form-input"
+                type="text"
+                placeholder="e.g. Infrastructure, APIs"
+                value={form.group_name}
+                onChange={(e) => update('group_name', e.target.value)}
+              />
+              <div className="form-help">Organize monitors into sections on the status page</div>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Tags (optional)</label>
+              <input
+                className="form-input"
+                type="text"
+                placeholder="e.g. prod, api, critical"
+                value={form.tagsInput}
+                onChange={(e) => update('tagsInput', e.target.value)}
+              />
+              <div className="form-help">Comma-separated tags for filtering monitors</div>
+            </div>
           </div>
 
           <div className="form-group">

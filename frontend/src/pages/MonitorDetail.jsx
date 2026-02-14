@@ -760,6 +760,7 @@ function EditMonitorForm({ monitor, manageKey, onSaved, onCancel }) {
     body_contains: monitor.body_contains || '',
     is_public: monitor.is_public ?? true,
     tagsInput: (monitor.tags || []).join(', '),
+    group_name: monitor.group_name || '',
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -792,6 +793,9 @@ function EditMonitorForm({ monitor, manageKey, onSaved, onCancel }) {
       const newTags = form.tagsInput.split(',').map(t => t.trim()).filter(Boolean);
       const oldTags = (monitor.tags || []).join(',');
       if (newTags.join(',') !== oldTags) patch.tags = newTags;
+      const newGroup = form.group_name.trim();
+      const oldGroup = monitor.group_name || '';
+      if (newGroup !== oldGroup) patch.group_name = newGroup || '';
 
       if (Object.keys(patch).length === 0) {
         onCancel();
@@ -872,10 +876,17 @@ function EditMonitorForm({ monitor, manageKey, onSaved, onCancel }) {
         <input className="form-input" value={form.body_contains} onChange={e => set('body_contains', e.target.value)} placeholder="Optional text to match in response" />
       </div>
 
-      <div className="form-group">
-        <label className="form-label">Tags</label>
-        <input className="form-input" value={form.tagsInput} onChange={e => set('tagsInput', e.target.value)} placeholder="prod, api, critical" />
-        <div className="form-help">Comma-separated tags for grouping</div>
+      <div className="form-row">
+        <div className="form-group">
+          <label className="form-label">Group</label>
+          <input className="form-input" value={form.group_name} onChange={e => set('group_name', e.target.value)} placeholder="e.g. Infrastructure" />
+          <div className="form-help">Section name on status page</div>
+        </div>
+        <div className="form-group">
+          <label className="form-label">Tags</label>
+          <input className="form-input" value={form.tagsInput} onChange={e => set('tagsInput', e.target.value)} placeholder="prod, api, critical" />
+          <div className="form-help">Comma-separated tags for filtering</div>
+        </div>
       </div>
 
       <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -1166,9 +1177,14 @@ export default function MonitorDetail({ id, manageKey: urlKey, onBack }) {
           </div>
         </div>
 
-        {(monitor.tags || []).length > 0 && (
-          <div className="tag-list" style={{ marginBottom: 12 }}>
-            {monitor.tags.map((t) => (
+        {(monitor.group_name || (monitor.tags || []).length > 0) && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12, alignItems: 'center' }}>
+            {monitor.group_name && (
+              <span className="tag-badge" style={{ background: 'var(--accent)', color: '#000', fontWeight: 600 }}>
+                {monitor.group_name}
+              </span>
+            )}
+            {(monitor.tags || []).map((t) => (
               <span key={t} className="tag-badge">{t}</span>
             ))}
           </div>

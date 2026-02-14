@@ -118,6 +118,10 @@ export async function getTags() {
   return request('/tags');
 }
 
+export async function getGroups() {
+  return request('/groups');
+}
+
 export async function getMaintenanceWindows(monitorId) {
   return request(`/monitors/${monitorId}/maintenance`);
 }

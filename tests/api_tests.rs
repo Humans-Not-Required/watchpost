@@ -43,6 +43,7 @@ fn test_client_with_db() -> (Client, String) {
             watchpost::routes::delete_notification,
             watchpost::routes::update_notification,
             watchpost::routes::list_tags,
+            watchpost::routes::list_groups,
             watchpost::routes::create_maintenance_window,
             watchpost::routes::list_maintenance_windows,
             watchpost::routes::delete_maintenance_window,
@@ -2254,4 +2255,211 @@ fn test_email_cascade_on_monitor_delete() {
         .dispatch();
     // Monitor is deleted, so auth will fail (monitor not found)
     assert_ne!(resp.status(), Status::Ok);
+}
+
+// ── Monitor Groups ──
+
+#[test]
+fn test_create_monitor_with_group() {
+    let client = test_client();
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Grouped Service", "url": "https://example.com", "is_public": true, "group_name": "Infrastructure"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["monitor"]["group_name"], "Infrastructure");
+}
+
+#[test]
+fn test_create_monitor_without_group() {
+    let client = test_client();
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Ungrouped Service", "url": "https://example.com", "is_public": true}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert!(body["monitor"]["group_name"].is_null());
+}
+
+#[test]
+fn test_update_monitor_group_name() {
+    let client = test_client();
+    let (id, key) = create_test_monitor(&client);
+
+    // Set group
+    let resp = client.patch(format!("/api/v1/monitors/{}", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"group_name": "APIs"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+
+    // Verify
+    let resp = client.get(format!("/api/v1/monitors/{}", id)).dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["group_name"], "APIs");
+
+    // Clear group
+    let resp = client.patch(format!("/api/v1/monitors/{}", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"group_name": ""}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+
+    let resp = client.get(format!("/api/v1/monitors/{}", id)).dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert!(body["group_name"].is_null());
+}
+
+#[test]
+fn test_status_page_includes_group_name() {
+    let client = test_client();
+
+    // Create monitors in different groups
+    client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "API Gateway", "url": "https://api.example.com", "is_public": true, "group_name": "Core"}"#)
+        .dispatch();
+    client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Web App", "url": "https://app.example.com", "is_public": true, "group_name": "Frontend"}"#)
+        .dispatch();
+    client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Standalone", "url": "https://solo.example.com", "is_public": true}"#)
+        .dispatch();
+
+    let resp = client.get("/api/v1/status").dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let monitors = body["monitors"].as_array().unwrap();
+    assert_eq!(monitors.len(), 3);
+
+    // Grouped monitors come first (sorted by group_name NULLS LAST, then name)
+    assert_eq!(monitors[0]["group_name"], "Core");
+    assert_eq!(monitors[0]["name"], "API Gateway");
+    assert_eq!(monitors[1]["group_name"], "Frontend");
+    assert_eq!(monitors[1]["name"], "Web App");
+    assert!(monitors[2]["group_name"].is_null());
+    assert_eq!(monitors[2]["name"], "Standalone");
+}
+
+#[test]
+fn test_status_page_filter_by_group() {
+    let client = test_client();
+
+    client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Service A", "url": "https://a.example.com", "is_public": true, "group_name": "Backend"}"#)
+        .dispatch();
+    client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Service B", "url": "https://b.example.com", "is_public": true, "group_name": "Frontend"}"#)
+        .dispatch();
+
+    let resp = client.get("/api/v1/status?group=Backend").dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let monitors = body["monitors"].as_array().unwrap();
+    assert_eq!(monitors.len(), 1);
+    assert_eq!(monitors[0]["name"], "Service A");
+}
+
+#[test]
+fn test_list_monitors_filter_by_group() {
+    let client = test_client();
+
+    client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "DB Primary", "url": "https://db1.example.com", "is_public": true, "group_name": "Databases"}"#)
+        .dispatch();
+    client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Cache Redis", "url": "https://redis.example.com", "is_public": true, "group_name": "Caching"}"#)
+        .dispatch();
+
+    let resp = client.get("/api/v1/monitors?group=Databases").dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert_eq!(body.len(), 1);
+    assert_eq!(body[0]["name"], "DB Primary");
+    assert_eq!(body[0]["group_name"], "Databases");
+}
+
+#[test]
+fn test_list_groups_endpoint() {
+    let client = test_client();
+
+    // No groups yet
+    let resp = client.get("/api/v1/groups").dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: Vec<String> = resp.into_json().unwrap();
+    assert!(body.is_empty());
+
+    // Create monitors in groups
+    client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Svc1", "url": "https://a.com", "is_public": true, "group_name": "Backend"}"#)
+        .dispatch();
+    client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Svc2", "url": "https://b.com", "is_public": true, "group_name": "Frontend"}"#)
+        .dispatch();
+    client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Svc3", "url": "https://c.com", "is_public": true, "group_name": "Backend"}"#)
+        .dispatch();
+    // Ungrouped monitor
+    client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Svc4", "url": "https://d.com", "is_public": true}"#)
+        .dispatch();
+
+    let resp = client.get("/api/v1/groups").dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: Vec<String> = resp.into_json().unwrap();
+    assert_eq!(body.len(), 2);
+    assert!(body.contains(&"Backend".to_string()));
+    assert!(body.contains(&"Frontend".to_string()));
+}
+
+#[test]
+fn test_export_includes_group_name() {
+    let client = test_client();
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Export Test", "url": "https://example.com", "is_public": true, "group_name": "Infra"}"#)
+        .dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let id = body["monitor"]["id"].as_str().unwrap();
+    let key = body["manage_key"].as_str().unwrap();
+
+    let resp = client.get(format!("/api/v1/monitors/{}/export", id))
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["group_name"], "Infra");
+}
+
+#[test]
+fn test_bulk_create_with_group() {
+    let client = test_client();
+    let resp = client.post("/api/v1/monitors/bulk")
+        .header(ContentType::JSON)
+        .body(r#"{"monitors": [
+            {"name": "Bulk A", "url": "https://a.com", "is_public": true, "group_name": "Group1"},
+            {"name": "Bulk B", "url": "https://b.com", "is_public": true, "group_name": "Group2"},
+            {"name": "Bulk C", "url": "https://c.com", "is_public": true}
+        ]}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["succeeded"], 3);
+    assert_eq!(body["created"][0]["monitor"]["group_name"], "Group1");
+    assert_eq!(body["created"][1]["monitor"]["group_name"], "Group2");
+    assert!(body["created"][2]["monitor"]["group_name"].is_null());
 }

@@ -91,6 +91,9 @@ impl Db {
         // Add follow_redirects column to monitors (default true — follow 301/302/etc.)
         conn.execute_batch("ALTER TABLE monitors ADD COLUMN follow_redirects INTEGER NOT NULL DEFAULT 1;").ok();
 
+        // Add group_name column to monitors (for organizing monitors into groups on status page)
+        conn.execute_batch("ALTER TABLE monitors ADD COLUMN group_name TEXT;").ok();
+
         // Maintenance windows table
         conn.execute_batch("
             CREATE TABLE IF NOT EXISTS maintenance_windows (

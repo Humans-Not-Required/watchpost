@@ -1013,3 +1013,21 @@ input, select, textarea {
     align-items: flex-start;
   }
 }
+
+/* Group headers for status page */
+.group-header {
+  display: flex;
+  align-items: center;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-top: 20px;
+  margin-bottom: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.group-header:first-child {
+  margin-top: 0;
+}

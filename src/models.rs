@@ -33,6 +33,8 @@ pub struct Monitor {
     pub response_time_threshold_ms: Option<u32>,
     pub follow_redirects: bool,
     pub tags: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group_name: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -59,6 +61,7 @@ pub struct CreateMonitor {
     pub follow_redirects: Option<bool>,
     #[serde(default)]
     pub tags: Vec<String>,
+    pub group_name: Option<String>,
 }
 
 fn default_follow_redirects() -> Option<bool> { Some(true) }
@@ -83,6 +86,7 @@ pub struct UpdateMonitor {
     pub response_time_threshold_ms: Option<Option<u32>>,
     pub follow_redirects: Option<bool>,
     pub tags: Option<Vec<String>>,
+    pub group_name: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -168,6 +172,8 @@ pub struct StatusMonitor {
     pub avg_response_ms_24h: Option<f64>,
     pub active_incident: bool,
     pub tags: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group_name: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -288,6 +294,8 @@ pub struct ExportedMonitor {
     pub response_time_threshold_ms: Option<u32>,
     pub follow_redirects: bool,
     pub tags: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group_name: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
