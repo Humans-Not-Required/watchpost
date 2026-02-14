@@ -1372,7 +1372,22 @@ Triggers monitor.degraded / monitor.recovered webhook events.
 Set to null to disable. Minimum: 100ms.
 
 ## Notification Types
-webhook (POST JSON to URL), email
+webhook (POST JSON to URL), email (SMTP)
+
+### Webhook Notifications
+POST /api/v1/monitors/:id/notifications with {"name": "Slack", "channel_type": "webhook", "config": {"url": "https://hooks.slack.com/..."}}
+On incident, POSTs JSON with event, monitor info, and incident details to the URL.
+
+### Email Notifications
+POST /api/v1/monitors/:id/notifications with {"name": "Ops Email", "channel_type": "email", "config": {"address": "ops@example.com"}}
+Sends formatted email (HTML + plain text) on incident creation, resolution, degraded, and maintenance events.
+Requires SMTP server configuration via environment variables:
+  SMTP_HOST — SMTP server hostname (required to enable email)
+  SMTP_PORT — Port (default: 587)
+  SMTP_USERNAME — Auth username
+  SMTP_PASSWORD — Auth password
+  SMTP_FROM — Sender address (default: watchpost@<SMTP_HOST>)
+  SMTP_TLS — "starttls" (default), "tls", or "none"
 
 ## SSE Event Streams (real-time)
 GET /api/v1/events — global event stream (all monitors)

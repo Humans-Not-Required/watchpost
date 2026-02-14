@@ -29,6 +29,14 @@ ENV ROCKET_PORT=8000
 ENV STATIC_DIR=/app/frontend/dist
 ENV DATABASE_PATH=/app/data/watchpost.db
 
+# Email notification SMTP config (optional — email notifications disabled if SMTP_HOST not set)
+# ENV SMTP_HOST=smtp.example.com
+# ENV SMTP_PORT=587
+# ENV SMTP_USERNAME=user
+# ENV SMTP_PASSWORD=pass
+# ENV SMTP_FROM=watchpost@example.com
+# ENV SMTP_TLS=starttls
+
 EXPOSE 8000
 
 VOLUME ["/app/data"]

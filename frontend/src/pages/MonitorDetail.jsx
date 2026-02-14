@@ -387,16 +387,19 @@ function NotificationManager({ monitorId, manageKey }) {
 
   const handleAdd = async () => {
     if (!newName.trim() || !newUrl.trim()) {
-      setError('Name and URL are required');
+      setError(newType === 'email' ? 'Name and email address are required' : 'Name and URL are required');
       return;
     }
     setAdding(true);
     setError(null);
     try {
+      const config = newType === 'email'
+        ? { address: newUrl.trim() }
+        : { url: newUrl.trim() };
       await createNotification(monitorId, {
         name: newName.trim(),
         channel_type: newType,
-        config: { url: newUrl.trim() },
+        config,
       }, manageKey);
       setNewName('');
       setNewUrl('');
@@ -458,7 +461,7 @@ function NotificationManager({ monitorId, manageKey }) {
                 {ch.channel_type === 'webhook' ? <IconBell size={14} style={{ marginRight: 4 }} /> : <IconMail size={14} style={{ marginRight: 4 }} />}{ch.name}
               </div>
               <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: 2 }}>
-                {ch.channel_type} — {ch.config?.url || 'No URL'}
+                {ch.channel_type} — {ch.channel_type === 'email' ? (ch.config?.address || 'No address') : (ch.config?.url || 'No URL')}
               </div>
             </div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -516,6 +519,11 @@ function NotificationManager({ monitorId, manageKey }) {
               onChange={e => setNewUrl(e.target.value)}
               placeholder={newType === 'webhook' ? 'https://hooks.slack.com/...' : 'alerts@example.com'}
             />
+            {newType === 'email' && (
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 4 }}>
+                Requires SMTP configuration (SMTP_HOST, SMTP_USERNAME, SMTP_PASSWORD env vars)
+              </div>
+            )}
           </div>
 
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>

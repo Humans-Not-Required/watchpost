@@ -9,7 +9,7 @@ Monitors HTTP endpoints, tracks uptime, detects incidents, and sends structured 
 - **No signup.** Create a monitor, get a token. Done.
 - **Structured JSON everywhere.** Agents parse responses, not scrape HTML.
 - **SSE event streams.** Subscribe to real-time status changes.
-- **Webhook notifications.** Structured JSON payloads on incidents.
+- **Webhook + Email notifications.** Structured alerts via webhooks or email (SMTP).
 - **Self-describing.** OpenAPI spec, llms.txt, consistent error codes.
 - **Per-resource auth.** Tokens tied to monitors, not user accounts.
 
@@ -105,7 +105,31 @@ curl -X POST http://localhost:3007/api/v1/monitors/{id}/notifications \
   }'
 ```
 
-Webhooks fire on incident creation and resolution with structured JSON payloads.
+Webhooks fire on incident creation, resolution, degraded, and maintenance events.
+
+### Email Notifications
+
+```bash
+curl -X POST http://localhost:3007/api/v1/monitors/{id}/notifications \
+  -H "Authorization: Bearer {manage_key}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Ops Team",
+    "channel_type": "email",
+    "config": {"address": "ops@example.com"}
+  }'
+```
+
+Sends formatted HTML + plain text emails on incidents, recoveries, degraded status, and maintenance events. Requires SMTP configuration:
+
+| Env Var | Description | Default |
+|---------|-------------|---------|
+| `SMTP_HOST` | SMTP server hostname | *(required)* |
+| `SMTP_PORT` | SMTP port | `587` |
+| `SMTP_USERNAME` | Auth username | *(empty)* |
+| `SMTP_PASSWORD` | Auth password | *(empty)* |
+| `SMTP_FROM` | Sender address | `watchpost@<host>` |
+| `SMTP_TLS` | TLS mode: `starttls`, `tls`, `none` | `starttls` |
 
 ### Real-Time Events (SSE)
 

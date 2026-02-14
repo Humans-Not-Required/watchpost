@@ -376,6 +376,12 @@ async fn run_check(client: &reqwest::Client, db: &Db, broadcaster: &EventBroadca
         if !urls.is_empty() {
             notifications::fire_webhooks(client, &urls, payload).await;
         }
+
+        // Emails
+        let emails = notifications::get_email_addresses(db, &monitor.id);
+        if !emails.is_empty() {
+            notifications::fire_emails(&emails, payload).await;
+        }
     }
 
     // Always emit check.completed SSE event

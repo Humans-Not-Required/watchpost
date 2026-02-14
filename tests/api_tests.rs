@@ -2039,3 +2039,219 @@ fn test_export_includes_follow_redirects() {
     let body: serde_json::Value = resp.into_json().unwrap();
     assert_eq!(body["follow_redirects"], false);
 }
+
+// ─── Email Notification Tests ───────────────────────────────────────────────
+
+#[test]
+fn test_create_email_notification() {
+    let client = test_client();
+    let (id, key) = create_test_monitor(&client);
+
+    let resp = client.post(format!("/api/v1/monitors/{}/notifications", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"name": "Alert Email", "channel_type": "email", "config": {"address": "admin@example.com"}}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["channel_type"], "email");
+    assert_eq!(body["name"], "Alert Email");
+}
+
+#[test]
+fn test_email_notification_persists_in_list() {
+    let client = test_client();
+    let (id, key) = create_test_monitor(&client);
+
+    // Create email + webhook notifications
+    client.post(format!("/api/v1/monitors/{}/notifications", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"name": "Email Alert", "channel_type": "email", "config": {"address": "ops@example.com"}}"#)
+        .dispatch();
+
+    client.post(format!("/api/v1/monitors/{}/notifications", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"name": "Webhook Alert", "channel_type": "webhook", "config": {"url": "https://hooks.example.com"}}"#)
+        .dispatch();
+
+    // List should show both
+    let resp = client.get(format!("/api/v1/monitors/{}/notifications", id))
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert_eq!(body.len(), 2);
+
+    let types: Vec<&str> = body.iter()
+        .map(|n| n["channel_type"].as_str().unwrap())
+        .collect();
+    assert!(types.contains(&"email"));
+    assert!(types.contains(&"webhook"));
+}
+
+#[test]
+fn test_email_notification_toggle() {
+    let client = test_client();
+    let (id, key) = create_test_monitor(&client);
+
+    // Create email notification
+    let resp = client.post(format!("/api/v1/monitors/{}/notifications", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"name": "Email Alert", "channel_type": "email", "config": {"address": "ops@example.com"}}"#)
+        .dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let nid = body["id"].as_str().unwrap().to_string();
+    assert_eq!(body["is_enabled"], true);
+
+    // Disable
+    let resp = client.patch(format!("/api/v1/notifications/{}", nid))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"is_enabled": false}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+
+    // Verify disabled
+    let resp = client.get(format!("/api/v1/monitors/{}/notifications", id))
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .dispatch();
+    let body: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert_eq!(body[0]["is_enabled"], false);
+}
+
+#[test]
+fn test_email_notification_delete() {
+    let client = test_client();
+    let (id, key) = create_test_monitor(&client);
+
+    // Create
+    let resp = client.post(format!("/api/v1/monitors/{}/notifications", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"name": "Temp Email", "channel_type": "email", "config": {"address": "temp@example.com"}}"#)
+        .dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let nid = body["id"].as_str().unwrap().to_string();
+
+    // Delete
+    let resp = client.delete(format!("/api/v1/notifications/{}", nid))
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+
+    // Verify gone
+    let resp = client.get(format!("/api/v1/monitors/{}/notifications", id))
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .dispatch();
+    let body: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert_eq!(body.len(), 0);
+}
+
+#[test]
+fn test_email_addresses_fetched_from_db() {
+    // Test the get_email_addresses function directly
+    let db_path = format!("/tmp/watchpost_test_{}.db", uuid::Uuid::new_v4());
+    let db = Arc::new(watchpost::db::Db::new(&db_path).expect("DB init failed"));
+
+    // Create a monitor
+    let monitor_id = uuid::Uuid::new_v4().to_string();
+    {
+        let conn = db.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO monitors (id, name, url, manage_key_hash) VALUES (?1, ?2, ?3, ?4)",
+            params![monitor_id, "Test", "https://example.com", "fakehash"],
+        ).unwrap();
+    }
+
+    // No notifications yet
+    let emails = watchpost::notifications::get_email_addresses(&db, &monitor_id);
+    assert_eq!(emails.len(), 0);
+
+    // Add an email notification
+    {
+        let conn = db.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO notification_channels (id, monitor_id, name, channel_type, config) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![uuid::Uuid::new_v4().to_string(), monitor_id, "Email 1", "email", r#"{"address":"admin@example.com"}"#],
+        ).unwrap();
+    }
+    let emails = watchpost::notifications::get_email_addresses(&db, &monitor_id);
+    assert_eq!(emails, vec!["admin@example.com"]);
+
+    // Add a second email
+    {
+        let conn = db.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO notification_channels (id, monitor_id, name, channel_type, config) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![uuid::Uuid::new_v4().to_string(), monitor_id, "Email 2", "email", r#"{"address":"ops@example.com"}"#],
+        ).unwrap();
+    }
+    let emails = watchpost::notifications::get_email_addresses(&db, &monitor_id);
+    assert_eq!(emails.len(), 2);
+    assert!(emails.contains(&"admin@example.com".to_string()));
+    assert!(emails.contains(&"ops@example.com".to_string()));
+
+    // Add a disabled email — should NOT be returned
+    {
+        let conn = db.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO notification_channels (id, monitor_id, name, channel_type, config, is_enabled) VALUES (?1, ?2, ?3, ?4, ?5, 0)",
+            params![uuid::Uuid::new_v4().to_string(), monitor_id, "Disabled", "email", r#"{"address":"disabled@example.com"}"#],
+        ).unwrap();
+    }
+    let emails = watchpost::notifications::get_email_addresses(&db, &monitor_id);
+    assert_eq!(emails.len(), 2); // Still 2, disabled one excluded
+
+    // Add a webhook — should NOT appear in email list
+    {
+        let conn = db.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO notification_channels (id, monitor_id, name, channel_type, config) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![uuid::Uuid::new_v4().to_string(), monitor_id, "Hook", "webhook", r#"{"url":"https://hooks.example.com"}"#],
+        ).unwrap();
+    }
+    let emails = watchpost::notifications::get_email_addresses(&db, &monitor_id);
+    assert_eq!(emails.len(), 2); // Still 2, webhook excluded
+
+    // Clean up
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
+fn test_smtp_config_not_set() {
+    // When SMTP_HOST is not set, get_smtp_config returns None
+    // This is a static test — the OnceLock means we test current env state
+    // In CI/test environment, SMTP is not configured, so this should work
+    let config = watchpost::notifications::get_smtp_config();
+    // In test env, SMTP_HOST is not set, so config should be None
+    assert!(config.is_none(), "SMTP config should be None when SMTP_HOST is not set");
+}
+
+#[test]
+fn test_email_cascade_on_monitor_delete() {
+    let client = test_client();
+    let (id, key) = create_test_monitor(&client);
+
+    // Create email notification
+    client.post(format!("/api/v1/monitors/{}/notifications", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"name": "Cascade Email", "channel_type": "email", "config": {"address": "cascade@example.com"}}"#)
+        .dispatch();
+
+    // Delete monitor
+    let resp = client.delete(format!("/api/v1/monitors/{}", id))
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+
+    // Trying to list notifications for deleted monitor should return empty or 404
+    let resp = client.get(format!("/api/v1/monitors/{}/notifications", id))
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .dispatch();
+    // Monitor is deleted, so auth will fail (monitor not found)
+    assert_ne!(resp.status(), Status::Ok);
+}
