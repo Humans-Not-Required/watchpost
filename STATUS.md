@@ -73,7 +73,7 @@
 - ~~**Task ef781225:** Jordan asked "What is this about?"~~ — Stale, no further context. Board manager should close if no update.
 - ~~**Task b446f607 (Follow 301 redirects):** Completed (commit a7fc268). Monitors follow redirects by default.~~
 
-- Test suite: **93 tests passing** (`cargo test -- --test-threads=1`) — includes 7 badge tests, 3 dashboard tests, 7 maintenance window tests, 4 response time alert tests, 6 tag tests, 3 search/filter tests, 3 heartbeat retention tests, 2 notification toggle tests, 5 follow_redirects tests, 13 validation/coverage tests
+- Test suite: **93 tests passing** (`cargo test`) — parallel-safe, includes 7 badge tests, 3 dashboard tests, 7 maintenance window tests, 4 response time alert tests, 6 tag tests, 3 search/filter tests, 3 heartbeat retention tests, 2 notification toggle tests, 5 follow_redirects tests, 13 validation/coverage tests
 
 ### ✅ Completed (most recent)
 
@@ -106,7 +106,7 @@
 
 ### ⚠️ Gotchas
 
-- Tests should run with `--test-threads=1` (shared env vars / SQLite file path patterns)
+- Tests are now parallel-safe (each test gets its own DB via `test_client_with_db()`). No `--test-threads=1` needed.
 - Checker currently uses a single DB connection mutex; fine for MVP, revisit for higher concurrency.
 - CI workflow files may need `workflow` token scope to push — if CI doesn't trigger, manually add workflow via GitHub UI.
 - Frontend uses hash-based routing (#/monitor/:id) — no server-side route matching needed beyond SPA fallback.

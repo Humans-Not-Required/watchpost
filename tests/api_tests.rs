@@ -4,6 +4,11 @@ use rusqlite::params;
 use std::sync::Arc;
 
 fn test_client() -> Client {
+    let (client, _) = test_client_with_db();
+    client
+}
+
+fn test_client_with_db() -> (Client, String) {
     let db_path = format!("/tmp/watchpost_test_{}.db", uuid::Uuid::new_v4());
     std::env::set_var("DATABASE_PATH", &db_path);
 
@@ -59,7 +64,8 @@ fn test_client() -> Client {
             watchpost::catchers::internal_error,
         ]);
 
-    Client::tracked(rocket).expect("valid rocket instance")
+    let client = Client::tracked(rocket).expect("valid rocket instance");
+    (client, db_path)
 }
 
 fn create_test_monitor(client: &Client) -> (String, String) {
@@ -254,11 +260,10 @@ fn test_heartbeats_empty() {
 
 #[test]
 fn test_heartbeat_seq_pagination() {
-    let client = test_client();
+    let (client, db_path) = test_client_with_db();
     let (id, _) = create_test_monitor(&client);
 
     // Insert heartbeats directly via DB
-    let db_path = std::env::var("DATABASE_PATH").unwrap();
     let conn = rusqlite::Connection::open(&db_path).unwrap();
     for i in 1..=5 {
         conn.execute(
@@ -303,11 +308,10 @@ fn test_heartbeat_seq_pagination() {
 
 #[test]
 fn test_incident_seq_pagination() {
-    let client = test_client();
+    let (client, db_path) = test_client_with_db();
     let (id, _) = create_test_monitor(&client);
 
     // Insert incidents directly via DB
-    let db_path = std::env::var("DATABASE_PATH").unwrap();
     let conn = rusqlite::Connection::open(&db_path).unwrap();
     for i in 1..=3 {
         conn.execute(
@@ -1544,12 +1548,11 @@ fn test_monitor_uptime_history_empty() {
 
 #[test]
 fn test_uptime_history_with_heartbeats() {
-    let client = test_client();
+    let (client, db_path) = test_client_with_db();
     let (id, _key) = create_test_monitor(&client);
 
     // Manually insert heartbeats via DB
     {
-        let db_path = std::env::var("DATABASE_PATH").unwrap();
         let conn = rusqlite::Connection::open(&db_path).unwrap();
         conn.execute(
             "INSERT INTO heartbeats (id, monitor_id, status, response_time_ms, status_code, checked_at, seq)
@@ -1624,12 +1627,11 @@ fn test_uptime_badge_custom_label() {
 
 #[test]
 fn test_uptime_badge_with_heartbeats() {
-    let client = test_client();
+    let (client, db_path) = test_client_with_db();
     let (id, _key) = create_test_monitor(&client);
 
     // Insert heartbeats: 3 up, 1 down = 75% uptime
     {
-        let db_path = std::env::var("DATABASE_PATH").unwrap();
         let conn = rusqlite::Connection::open(&db_path).unwrap();
         for status in &["up", "up", "up", "down"] {
             conn.execute(

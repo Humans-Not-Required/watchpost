@@ -30,7 +30,7 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Run tests
-        run: cargo test -- --test-threads=1
+        run: cargo test
 
   build-and-push:
     needs: test
