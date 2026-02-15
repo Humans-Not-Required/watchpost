@@ -226,6 +226,7 @@ Heartbeats are the main storage cost. Default retention: 90 days. Older heartbea
 - ~~Seq-based cursor pagination~~ ✅ Shipped (heartbeats + incidents use `?after=<seq>`)
 - UDP checks
 - ~~Multi-region checking~~ ✅ Shipped (check locations + probe API)
+- ~~Multi-region consensus~~ ✅ Shipped (configurable threshold, incident lifecycle integration)
 - Custom incident severity
 - ~~SLA tracking~~ ✅ Shipped (per-monitor targets with error budget tracking)
 - Alerting rules (escalation)
@@ -289,4 +290,5 @@ Remote check locations allow distributed monitoring from multiple geographic reg
   - Updates `last_seen_at` on the location
 - `GET /api/v1/monitors/:id/locations` — Per-location status showing latest probe from each active location
 - Heartbeats include optional `location_id` field (null = local checker)
-- Future: consensus logic (monitor considered down only when N of M locations report failure)
+- Consensus: `consensus_threshold` field on monitors. When set, status is determined by aggregating results across all locations. Down only when N+ locations report failure.
+- `GET /api/v1/monitors/:id/consensus` — consensus status with per-location breakdown
