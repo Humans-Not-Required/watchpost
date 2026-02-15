@@ -6,6 +6,7 @@ import MonitorDetail from './pages/MonitorDetail'
 import CreateMonitor from './pages/CreateMonitor'
 import BulkImport from './pages/BulkImport'
 import Locations from './pages/Locations'
+import StatusPages from './pages/StatusPages'
 
 function parseRoute() {
   const hash = window.location.hash.slice(1) || '/';
@@ -24,6 +25,9 @@ function parseRoute() {
   if (path === '/import') return { page: 'import', key };
   if (path === '/status') return { page: 'status', key };
   if (path === '/locations') return { page: 'locations', key };
+  if (path === '/pages/new') return { page: 'status-pages', subpage: 'create', key };
+  if (path.startsWith('/pages/')) return { page: 'status-pages', subpage: 'view', slug: path.slice(7), key };
+  if (path === '/pages') return { page: 'status-pages', subpage: 'list', key };
   return { page: 'dashboard', key };
 }
 
@@ -108,6 +112,12 @@ export default function App() {
             >
               <IconGlobe size={14} /> Locations
             </button>
+            <button
+              className={`nav-btn ${route.page === 'status-pages' ? 'active' : ''}`}
+              onClick={() => navigate('/pages')}
+            >
+              Pages
+            </button>
           </nav>
         </div>
       </header>
@@ -139,6 +149,9 @@ export default function App() {
           />
         )}
         {route.page === 'locations' && <Locations />}
+        {route.page === 'status-pages' && (
+          <StatusPages route={route} onNavigate={(path) => navigate(path)} />
+        )}
       </main>
       <footer style={{ textAlign: 'center', padding: '12px 16px', fontSize: '0.7rem', color: '#475569' }}>
         Made for AI, by AI.{' '}

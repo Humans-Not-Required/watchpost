@@ -95,6 +95,14 @@ fn rocket() -> _ {
             routes::submit_probe,
             routes::monitor_location_status,
             routes::monitor_consensus,
+            routes::create_status_page,
+            routes::list_status_pages,
+            routes::get_status_page_detail,
+            routes::update_status_page,
+            routes::delete_status_page,
+            routes::add_page_monitors,
+            routes::remove_page_monitor,
+            routes::list_page_monitors,
         ])
         .register("/", catchers![
             catchers::bad_request,

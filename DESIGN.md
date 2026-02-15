@@ -292,3 +292,17 @@ Remote check locations allow distributed monitoring from multiple geographic reg
 - Heartbeats include optional `location_id` field (null = local checker)
 - Consensus: `consensus_threshold` field on monitors. When set, status is determined by aggregating results across all locations. Down only when N+ locations report failure.
 - `GET /api/v1/monitors/:id/consensus` — consensus status with per-location breakdown
+
+### Status Pages
+Named collections of monitors with their own branding, slug, and optional custom domain.
+Each status page gets its own manage_key (same per-resource auth pattern as monitors).
+- `POST /api/v1/status-pages` — Create a status page (returns manage_key)
+  - Fields: slug (UNIQUE, URL-safe), title, description, logo_url, custom_domain (UNIQUE nullable), is_public (default true)
+- `GET /api/v1/status-pages` — List public status pages
+- `GET /api/v1/status-pages/:slug_or_id` — Status page detail with monitors, uptime, overall status
+- `PATCH /api/v1/status-pages/:slug_or_id` — Update (manage_key auth)
+- `DELETE /api/v1/status-pages/:slug_or_id` — Delete (manage_key auth, CASCADE removes assignments, not monitors)
+- `POST /api/v1/status-pages/:slug_or_id/monitors` — Add monitors by ID array (manage_key auth, up to 100, duplicates ignored)
+- `DELETE /api/v1/status-pages/:slug_or_id/monitors/:monitor_id` — Remove monitor (manage_key auth)
+- `GET /api/v1/status-pages/:slug_or_id/monitors` — List monitors with status data (public)
+- DB tables: `status_pages` (branding + manage_key_hash) + `status_page_monitors` (join, CASCADE on both sides)

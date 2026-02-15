@@ -256,3 +256,32 @@ Consensus logic:
 Heartbeats from remote probes include a location_id field linking to the check location.
 Local checker heartbeats have location_id: null.
 GET /api/v1/monitors/:id/heartbeats — heartbeats include location_id when present.
+
+## Status Pages
+
+Named collections of monitors with their own branding, slug, and optional custom domain.
+Useful for organizing monitors into logical groups (e.g., "Production", "Staging", "Internal") with separate public-facing status pages.
+
+### CRUD
+POST /api/v1/status-pages — Create a new status page. Returns manage_key.
+  Required: slug (URL-safe identifier, a-z0-9_-), title
+  Optional: description, logo_url, custom_domain, is_public (default true)
+GET /api/v1/status-pages — List all public status pages
+GET /api/v1/status-pages/:slug_or_id — Get status page detail with monitors and overall status
+PATCH /api/v1/status-pages/:slug_or_id — Update (manage_key required). Can change slug, title, description, logo_url, custom_domain, is_public.
+DELETE /api/v1/status-pages/:slug_or_id — Delete (manage_key required). Monitors are not deleted.
+
+### Monitor Assignment
+POST /api/v1/status-pages/:slug_or_id/monitors — Add monitors (manage_key required)
+  Body: {"monitor_ids": ["id1", "id2", ...]} — up to 100 at once
+  Duplicate assignments are silently skipped.
+DELETE /api/v1/status-pages/:slug_or_id/monitors/:monitor_id — Remove monitor (manage_key required)
+GET /api/v1/status-pages/:slug_or_id/monitors — List monitors on a page (public)
+
+### How It Works
+- Each status page has its own manage_key (same pattern as monitors)
+- Pages can be accessed by slug or ID
+- Non-public pages are unlisted but still accessible by slug (like unlisted YouTube videos)
+- Deleting a status page removes assignments but not the monitors themselves
+- Deleting a monitor removes it from all status pages (CASCADE)
+- The detail endpoint returns monitor status data (uptime, response time, incidents) same as the global status page

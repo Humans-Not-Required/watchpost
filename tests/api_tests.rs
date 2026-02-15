@@ -66,6 +66,14 @@ fn test_client_with_db() -> (Client, String) {
             watchpost::routes::submit_probe,
             watchpost::routes::monitor_location_status,
             watchpost::routes::monitor_consensus,
+            watchpost::routes::create_status_page,
+            watchpost::routes::list_status_pages,
+            watchpost::routes::get_status_page_detail,
+            watchpost::routes::update_status_page,
+            watchpost::routes::delete_status_page,
+            watchpost::routes::add_page_monitors,
+            watchpost::routes::remove_page_monitor,
+            watchpost::routes::list_page_monitors,
         ])
         .register("/", rocket::catchers![
             watchpost::catchers::bad_request,
@@ -4825,4 +4833,470 @@ fn test_consensus_endpoint_has_location_details() {
     assert_eq!(locs[0]["region"], "ap-northeast-1");
     assert_eq!(locs[0]["last_status"], "up");
     assert_eq!(locs[0]["last_response_time_ms"], 200);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Status Pages tests
+// ═══════════════════════════════════════════════════════════════════
+
+fn create_test_status_page(client: &Client, slug: &str) -> (String, String) {
+    let resp = client.post("/api/v1/status-pages")
+        .header(ContentType::JSON)
+        .body(serde_json::json!({
+            "slug": slug,
+            "title": "Test Status Page"
+        }).to_string())
+        .dispatch();
+    assert_eq!(resp.status(), Status::Created);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let id = body["status_page"]["id"].as_str().unwrap().to_string();
+    let key = body["manage_key"].as_str().unwrap().to_string();
+    (id, key)
+}
+
+#[test]
+fn test_create_status_page() {
+    let client = test_client();
+    let resp = client.post("/api/v1/status-pages")
+        .header(ContentType::JSON)
+        .body(r#"{"slug": "production", "title": "Production Status", "description": "Our production services"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Created);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["status_page"]["slug"], "production");
+    assert_eq!(body["status_page"]["title"], "Production Status");
+    assert_eq!(body["status_page"]["description"], "Our production services");
+    assert_eq!(body["status_page"]["is_public"], true);
+    assert_eq!(body["status_page"]["monitor_count"], 0);
+    assert!(body["manage_key"].as_str().unwrap().starts_with("wp_"));
+}
+
+#[test]
+fn test_create_status_page_with_custom_domain() {
+    let client = test_client();
+    let resp = client.post("/api/v1/status-pages")
+        .header(ContentType::JSON)
+        .body(r#"{"slug": "prod", "title": "Production", "custom_domain": "status.example.com"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Created);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["status_page"]["custom_domain"], "status.example.com");
+}
+
+#[test]
+fn test_create_status_page_duplicate_slug() {
+    let client = test_client();
+    create_test_status_page(&client, "unique-slug");
+    let resp = client.post("/api/v1/status-pages")
+        .header(ContentType::JSON)
+        .body(r#"{"slug": "unique-slug", "title": "Another Page"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Conflict);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["code"], "SLUG_CONFLICT");
+}
+
+#[test]
+fn test_create_status_page_duplicate_domain() {
+    let client = test_client();
+    client.post("/api/v1/status-pages")
+        .header(ContentType::JSON)
+        .body(r#"{"slug": "page1", "title": "Page 1", "custom_domain": "status.test.com"}"#)
+        .dispatch();
+    let resp = client.post("/api/v1/status-pages")
+        .header(ContentType::JSON)
+        .body(r#"{"slug": "page2", "title": "Page 2", "custom_domain": "status.test.com"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Conflict);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["code"], "DOMAIN_CONFLICT");
+}
+
+#[test]
+fn test_create_status_page_invalid_slug() {
+    let client = test_client();
+    // Slug with spaces
+    let resp = client.post("/api/v1/status-pages")
+        .header(ContentType::JSON)
+        .body(r#"{"slug": "bad slug", "title": "Bad"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::BadRequest);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["code"], "VALIDATION_ERROR");
+}
+
+#[test]
+fn test_create_status_page_empty_title() {
+    let client = test_client();
+    let resp = client.post("/api/v1/status-pages")
+        .header(ContentType::JSON)
+        .body(r#"{"slug": "test", "title": "   "}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::BadRequest);
+}
+
+#[test]
+fn test_list_status_pages() {
+    let client = test_client();
+    create_test_status_page(&client, "alpha");
+    create_test_status_page(&client, "beta");
+    // Create a non-public page
+    client.post("/api/v1/status-pages")
+        .header(ContentType::JSON)
+        .body(r#"{"slug": "secret", "title": "Secret", "is_public": false}"#)
+        .dispatch();
+
+    let resp = client.get("/api/v1/status-pages").dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: Vec<serde_json::Value> = resp.into_json().unwrap();
+    // Should only show public pages
+    assert_eq!(body.len(), 2);
+}
+
+#[test]
+fn test_get_status_page_by_slug() {
+    let client = test_client();
+    let (id, _key) = create_test_status_page(&client, "my-page");
+
+    let resp = client.get("/api/v1/status-pages/my-page").dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["slug"], "my-page");
+    assert_eq!(body["id"], id);
+    assert_eq!(body["overall"], "unknown"); // no monitors
+    assert!(body["monitors"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn test_get_status_page_by_id() {
+    let client = test_client();
+    let (id, _key) = create_test_status_page(&client, "by-id-test");
+
+    let resp = client.get(format!("/api/v1/status-pages/{}", id)).dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["slug"], "by-id-test");
+}
+
+#[test]
+fn test_get_status_page_not_found() {
+    let client = test_client();
+    let resp = client.get("/api/v1/status-pages/nonexistent").dispatch();
+    assert_eq!(resp.status(), Status::NotFound);
+}
+
+#[test]
+fn test_update_status_page() {
+    let client = test_client();
+    let (_id, key) = create_test_status_page(&client, "updatable");
+
+    let resp = client.patch("/api/v1/status-pages/updatable")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("X-API-Key", key))
+        .body(r#"{"title": "Updated Title", "description": "New description"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["title"], "Updated Title");
+    assert_eq!(body["description"], "New description");
+}
+
+#[test]
+fn test_update_status_page_change_slug() {
+    let client = test_client();
+    let (_id, key) = create_test_status_page(&client, "old-slug");
+
+    let resp = client.patch("/api/v1/status-pages/old-slug")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("X-API-Key", key))
+        .body(r#"{"slug": "new-slug"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["slug"], "new-slug");
+
+    // Old slug should 404
+    let resp = client.get("/api/v1/status-pages/old-slug").dispatch();
+    assert_eq!(resp.status(), Status::NotFound);
+
+    // New slug should work
+    let resp = client.get("/api/v1/status-pages/new-slug").dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+}
+
+#[test]
+fn test_update_status_page_wrong_key() {
+    let client = test_client();
+    create_test_status_page(&client, "protected");
+
+    let resp = client.patch("/api/v1/status-pages/protected")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("X-API-Key", "wrong_key"))
+        .body(r#"{"title": "Hacked"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Forbidden);
+}
+
+#[test]
+fn test_delete_status_page() {
+    let client = test_client();
+    let (_id, key) = create_test_status_page(&client, "doomed");
+
+    let resp = client.delete("/api/v1/status-pages/doomed")
+        .header(rocket::http::Header::new("X-API-Key", key))
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+
+    // Verify deleted
+    let resp = client.get("/api/v1/status-pages/doomed").dispatch();
+    assert_eq!(resp.status(), Status::NotFound);
+}
+
+#[test]
+fn test_delete_status_page_wrong_key() {
+    let client = test_client();
+    create_test_status_page(&client, "survivor");
+
+    let resp = client.delete("/api/v1/status-pages/survivor")
+        .header(rocket::http::Header::new("X-API-Key", "wrong"))
+        .dispatch();
+    assert_eq!(resp.status(), Status::Forbidden);
+}
+
+#[test]
+fn test_add_monitors_to_status_page() {
+    let client = test_client();
+    let (page_id, page_key) = create_test_status_page(&client, "with-monitors");
+    let (mon_id1, _) = create_test_monitor(&client);
+    let (mon_id2, _) = create_test_monitor(&client);
+
+    let resp = client.post("/api/v1/status-pages/with-monitors/monitors")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("X-API-Key", page_key))
+        .body(serde_json::json!({"monitor_ids": [mon_id1, mon_id2]}).to_string())
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["added"], 2);
+    assert_eq!(body["total_monitors"], 2);
+}
+
+#[test]
+fn test_add_monitors_duplicate_ignored() {
+    let client = test_client();
+    let (_id, key) = create_test_status_page(&client, "dedup-test");
+    let (mon_id, _) = create_test_monitor(&client);
+
+    // First add
+    client.post("/api/v1/status-pages/dedup-test/monitors")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("X-API-Key", key.clone()))
+        .body(serde_json::json!({"monitor_ids": [&mon_id]}).to_string())
+        .dispatch();
+
+    // Second add of same monitor
+    let resp = client.post("/api/v1/status-pages/dedup-test/monitors")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("X-API-Key", key))
+        .body(serde_json::json!({"monitor_ids": [&mon_id]}).to_string())
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["added"], 0);
+    assert_eq!(body["skipped"], 1);
+    assert_eq!(body["total_monitors"], 1);
+}
+
+#[test]
+fn test_add_nonexistent_monitor() {
+    let client = test_client();
+    let (_id, key) = create_test_status_page(&client, "bad-monitors");
+
+    let resp = client.post("/api/v1/status-pages/bad-monitors/monitors")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("X-API-Key", key))
+        .body(r#"{"monitor_ids": ["nonexistent-id"]}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["added"], 0);
+    assert!(!body["errors"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn test_remove_monitor_from_page() {
+    let client = test_client();
+    let (_id, key) = create_test_status_page(&client, "removable");
+    let (mon_id, _) = create_test_monitor(&client);
+
+    // Add
+    client.post("/api/v1/status-pages/removable/monitors")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("X-API-Key", key.clone()))
+        .body(serde_json::json!({"monitor_ids": [&mon_id]}).to_string())
+        .dispatch();
+
+    // Remove
+    let resp = client.delete(format!("/api/v1/status-pages/removable/monitors/{}", mon_id))
+        .header(rocket::http::Header::new("X-API-Key", key))
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+}
+
+#[test]
+fn test_remove_unassigned_monitor() {
+    let client = test_client();
+    let (_id, key) = create_test_status_page(&client, "empty-page");
+
+    let resp = client.delete("/api/v1/status-pages/empty-page/monitors/nonexistent")
+        .header(rocket::http::Header::new("X-API-Key", key))
+        .dispatch();
+    assert_eq!(resp.status(), Status::NotFound);
+}
+
+#[test]
+fn test_status_page_with_monitors_shows_status() {
+    let client = test_client();
+    let (_page_id, page_key) = create_test_status_page(&client, "status-test");
+    let (mon_id, _mon_key) = create_test_monitor(&client);
+
+    // Add monitor to page
+    client.post("/api/v1/status-pages/status-test/monitors")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("X-API-Key", page_key))
+        .body(serde_json::json!({"monitor_ids": [&mon_id]}).to_string())
+        .dispatch();
+
+    // Get page detail
+    let resp = client.get("/api/v1/status-pages/status-test").dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["monitors"].as_array().unwrap().len(), 1);
+    assert_eq!(body["monitors"][0]["id"], mon_id);
+    assert!(body["overall"].as_str().is_some());
+}
+
+#[test]
+fn test_list_page_monitors() {
+    let client = test_client();
+    let (_id, key) = create_test_status_page(&client, "list-monitors");
+    let (mon_id, _) = create_test_monitor(&client);
+
+    client.post("/api/v1/status-pages/list-monitors/monitors")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("X-API-Key", key))
+        .body(serde_json::json!({"monitor_ids": [&mon_id]}).to_string())
+        .dispatch();
+
+    let resp = client.get("/api/v1/status-pages/list-monitors/monitors").dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert_eq!(body.len(), 1);
+    assert_eq!(body[0]["id"], mon_id);
+}
+
+#[test]
+fn test_delete_status_page_cascades() {
+    let client = test_client();
+    let (_id, key) = create_test_status_page(&client, "cascade-test");
+    let (mon_id, _) = create_test_monitor(&client);
+
+    // Add monitor to page
+    client.post("/api/v1/status-pages/cascade-test/monitors")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("X-API-Key", key.clone()))
+        .body(serde_json::json!({"monitor_ids": [&mon_id]}).to_string())
+        .dispatch();
+
+    // Delete page
+    let resp = client.delete("/api/v1/status-pages/cascade-test")
+        .header(rocket::http::Header::new("X-API-Key", key))
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+
+    // Monitor itself should still exist
+    let resp = client.get(format!("/api/v1/monitors/{}", mon_id)).dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+}
+
+#[test]
+fn test_delete_monitor_removes_from_pages() {
+    let client = test_client();
+    let (_page_id, page_key) = create_test_status_page(&client, "mon-delete-test");
+    let (mon_id, mon_key) = create_test_monitor(&client);
+
+    // Add monitor to page
+    client.post("/api/v1/status-pages/mon-delete-test/monitors")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("X-API-Key", page_key))
+        .body(serde_json::json!({"monitor_ids": [&mon_id]}).to_string())
+        .dispatch();
+
+    // Delete the monitor
+    client.delete(format!("/api/v1/monitors/{}", mon_id))
+        .header(rocket::http::Header::new("X-API-Key", mon_key))
+        .dispatch();
+
+    // Page should have 0 monitors
+    let resp = client.get("/api/v1/status-pages/mon-delete-test").dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert!(body["monitors"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn test_status_page_private_not_listed() {
+    let client = test_client();
+    client.post("/api/v1/status-pages")
+        .header(ContentType::JSON)
+        .body(r#"{"slug": "hidden", "title": "Hidden Page", "is_public": false}"#)
+        .dispatch();
+
+    let resp = client.get("/api/v1/status-pages").dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: Vec<serde_json::Value> = resp.into_json().unwrap();
+    // Should not appear in public listing
+    assert!(body.iter().all(|p| p["slug"] != "hidden"));
+
+    // But should be accessible by slug directly
+    let resp = client.get("/api/v1/status-pages/hidden").dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+}
+
+#[test]
+fn test_add_monitors_empty_list() {
+    let client = test_client();
+    let (_id, key) = create_test_status_page(&client, "empty-add");
+
+    let resp = client.post("/api/v1/status-pages/empty-add/monitors")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("X-API-Key", key))
+        .body(r#"{"monitor_ids": []}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::BadRequest);
+}
+
+#[test]
+fn test_add_monitors_requires_auth() {
+    let client = test_client();
+    create_test_status_page(&client, "auth-test");
+    let (mon_id, _) = create_test_monitor(&client);
+
+    let resp = client.post("/api/v1/status-pages/auth-test/monitors")
+        .header(ContentType::JSON)
+        .body(serde_json::json!({"monitor_ids": [&mon_id]}).to_string())
+        .dispatch();
+    assert_eq!(resp.status(), Status::Unauthorized);
+}
+
+#[test]
+fn test_create_status_page_with_logo() {
+    let client = test_client();
+    let resp = client.post("/api/v1/status-pages")
+        .header(ContentType::JSON)
+        .body(r#"{"slug": "branded", "title": "Branded Page", "logo_url": "https://example.com/logo.png", "description": "Our status"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Created);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["status_page"]["logo_url"], "https://example.com/logo.png");
 }

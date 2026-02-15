@@ -2040,8 +2040,13 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "error": { "type": "string" },
-                    "code": { "type": "string", "example": "CONSENSUS_NOT_CONFIGURED" }
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string",
+                      "example": "CONSENSUS_NOT_CONFIGURED"
+                    }
                   }
                 }
               }
@@ -2049,6 +2054,320 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/status-pages": {
+      "post": {
+        "summary": "Create a status page",
+        "tags": [
+          "Status Pages"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "slug",
+                  "title"
+                ],
+                "properties": {
+                  "slug": {
+                    "type": "string",
+                    "description": "URL-safe identifier (a-z, 0-9, hyphens, underscores)"
+                  },
+                  "title": {
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  "description": {
+                    "type": "string",
+                    "maxLength": 2000
+                  },
+                  "logo_url": {
+                    "type": "string",
+                    "maxLength": 2000
+                  },
+                  "custom_domain": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "is_public": {
+                    "type": "boolean",
+                    "default": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Status page created with manage_key"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "409": {
+            "description": "Slug or domain conflict"
+          }
+        }
+      },
+      "get": {
+        "summary": "List public status pages",
+        "tags": [
+          "Status Pages"
+        ],
+        "responses": {
+          "200": {
+            "description": "Array of public status pages"
+          }
+        }
+      }
+    },
+    "/status-pages/{slug_or_id}": {
+      "get": {
+        "summary": "Get status page detail with monitors",
+        "tags": [
+          "Status Pages"
+        ],
+        "parameters": [
+          {
+            "name": "slug_or_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Status page detail with monitors and overall status"
+          },
+          "404": {
+            "description": "Status page not found"
+          }
+        }
+      },
+      "patch": {
+        "summary": "Update status page",
+        "tags": [
+          "Status Pages"
+        ],
+        "security": [
+          {
+            "ManageKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "slug_or_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "slug": {
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "logo_url": {
+                    "type": "string"
+                  },
+                  "custom_domain": {
+                    "type": "string"
+                  },
+                  "is_public": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated status page"
+          },
+          "403": {
+            "description": "Invalid manage key"
+          },
+          "404": {
+            "description": "Status page not found"
+          },
+          "409": {
+            "description": "Slug or domain conflict"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete status page",
+        "tags": [
+          "Status Pages"
+        ],
+        "security": [
+          {
+            "ManageKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "slug_or_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Status page deleted"
+          },
+          "403": {
+            "description": "Invalid manage key"
+          },
+          "404": {
+            "description": "Status page not found"
+          }
+        }
+      }
+    },
+    "/status-pages/{slug_or_id}/monitors": {
+      "post": {
+        "summary": "Add monitors to status page",
+        "tags": [
+          "Status Pages"
+        ],
+        "security": [
+          {
+            "ManageKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "slug_or_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "monitor_ids"
+                ],
+                "properties": {
+                  "monitor_ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 100
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Monitors added (with added/skipped/errors counts)"
+          },
+          "400": {
+            "description": "Empty monitor_ids"
+          },
+          "403": {
+            "description": "Invalid manage key"
+          }
+        }
+      },
+      "get": {
+        "summary": "List monitors on a status page",
+        "tags": [
+          "Status Pages"
+        ],
+        "parameters": [
+          {
+            "name": "slug_or_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Array of monitor status objects"
+          },
+          "404": {
+            "description": "Status page not found"
+          }
+        }
+      }
+    },
+    "/status-pages/{slug_or_id}/monitors/{monitor_id}": {
+      "delete": {
+        "summary": "Remove monitor from status page",
+        "tags": [
+          "Status Pages"
+        ],
+        "security": [
+          {
+            "ManageKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "slug_or_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "monitor_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Monitor removed from status page"
+          },
+          "403": {
+            "description": "Invalid manage key"
+          },
+          "404": {
+            "description": "Monitor not assigned to this page"
           }
         }
       }
@@ -3037,7 +3356,12 @@
           },
           "effective_status": {
             "type": "string",
-            "enum": ["up", "down", "degraded", "unknown"],
+            "enum": [
+              "up",
+              "down",
+              "degraded",
+              "unknown"
+            ],
             "description": "Aggregate status determined by consensus logic"
           },
           "locations": {

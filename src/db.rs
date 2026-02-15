@@ -175,6 +175,36 @@ impl Db {
         // Add consensus_threshold column (nullable — null means no consensus, single-location behavior)
         conn.execute_batch("ALTER TABLE monitors ADD COLUMN consensus_threshold INTEGER;").ok();
 
+        // Status pages table (named collections of monitors with their own branding)
+        conn.execute_batch("
+            CREATE TABLE IF NOT EXISTS status_pages (
+                id TEXT PRIMARY KEY,
+                slug TEXT NOT NULL UNIQUE,
+                title TEXT NOT NULL,
+                description TEXT,
+                logo_url TEXT,
+                custom_domain TEXT UNIQUE,
+                is_public INTEGER NOT NULL DEFAULT 1,
+                manage_key_hash TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_status_pages_slug ON status_pages(slug);
+            CREATE INDEX IF NOT EXISTS idx_status_pages_domain ON status_pages(custom_domain);
+        ").ok();
+
+        // Status page ↔ monitor join table
+        conn.execute_batch("
+            CREATE TABLE IF NOT EXISTS status_page_monitors (
+                status_page_id TEXT NOT NULL REFERENCES status_pages(id) ON DELETE CASCADE,
+                monitor_id TEXT NOT NULL REFERENCES monitors(id) ON DELETE CASCADE,
+                added_at TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (status_page_id, monitor_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_spm_page ON status_page_monitors(status_page_id);
+            CREATE INDEX IF NOT EXISTS idx_spm_monitor ON status_page_monitors(monitor_id);
+        ").ok();
+
         // Backfill seq for existing heartbeats
         let needs_hb_backfill: i64 = conn
             .query_row("SELECT COUNT(*) FROM heartbeats WHERE seq IS NULL", [], |r| r.get(0))

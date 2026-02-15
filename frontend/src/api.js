@@ -220,6 +220,53 @@ export async function getMonitorLocations(monitorId) {
   return request(`/monitors/${monitorId}/locations`);
 }
 
+// ── Status Pages ──
+
+export async function getStatusPages() {
+  return request('/status-pages');
+}
+
+export async function getStatusPageDetail(slugOrId) {
+  return request(`/status-pages/${slugOrId}`);
+}
+
+export async function createStatusPageApi(data) {
+  return request('/status-pages', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateStatusPage(slugOrId, data, manageKey) {
+  return request(`/status-pages/${slugOrId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+    headers: { Authorization: `Bearer ${manageKey}` },
+  });
+}
+
+export async function deleteStatusPage(slugOrId, manageKey) {
+  return request(`/status-pages/${slugOrId}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${manageKey}` },
+  });
+}
+
+export async function addPageMonitors(slugOrId, monitorIds, manageKey) {
+  return request(`/status-pages/${slugOrId}/monitors`, {
+    method: 'POST',
+    body: JSON.stringify({ monitor_ids: monitorIds }),
+    headers: { Authorization: `Bearer ${manageKey}` },
+  });
+}
+
+export async function removePageMonitor(slugOrId, monitorId, manageKey) {
+  return request(`/status-pages/${slugOrId}/monitors/${monitorId}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${manageKey}` },
+  });
+}
+
 export async function getMonitorConsensus(monitorId) {
   const url = `${BASE}/monitors/${monitorId}/consensus`;
   const res = await fetch(url);

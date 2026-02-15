@@ -497,3 +497,74 @@ pub struct ConsensusLocationDetail {
     pub last_response_time_ms: u32,
     pub last_checked_at: String,
 }
+
+// ── Status Pages ──
+
+#[derive(Debug, Serialize, Clone)]
+pub struct StatusPage {
+    pub id: String,
+    pub slug: String,
+    pub title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub logo_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub custom_domain: Option<String>,
+    pub is_public: bool,
+    pub monitor_count: u32,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateStatusPage {
+    pub slug: String,
+    pub title: String,
+    pub description: Option<String>,
+    pub logo_url: Option<String>,
+    pub custom_domain: Option<String>,
+    #[serde(default = "default_true")]
+    pub is_public: bool,
+}
+
+fn default_true() -> bool { true }
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateStatusPage {
+    pub slug: Option<String>,
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub logo_url: Option<String>,
+    pub custom_domain: Option<String>,
+    pub is_public: Option<bool>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CreateStatusPageResponse {
+    pub status_page: StatusPage,
+    pub manage_key: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StatusPageDetail {
+    pub id: String,
+    pub slug: String,
+    pub title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub logo_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub custom_domain: Option<String>,
+    pub is_public: bool,
+    pub monitors: Vec<StatusMonitor>,
+    pub overall: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AddMonitorsToPage {
+    pub monitor_ids: Vec<String>,
+}
