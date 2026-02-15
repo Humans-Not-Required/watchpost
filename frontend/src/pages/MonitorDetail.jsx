@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
-import { getMonitor, getHeartbeats, getUptime, getIncidents, getMonitorSla, pauseMonitor, resumeMonitor, deleteMonitor, updateMonitor, acknowledgeIncident, getNotifications, createNotification, deleteNotification, updateNotification, getMaintenanceWindows, createMaintenanceWindow, deleteMaintenanceWindow, getIncidentNotes, createIncidentNote, getIncident, getMonitorUptimeHistory, getMonitorLocations, getMonitorConsensus, getAlertRules, setAlertRules, deleteAlertRules, getAlertLog } from '../api'
-import { IconTrendUp, IconCheckCircle, IconAlertCircle, IconAlertTriangle, IconBell, IconMail, IconPause, IconPlay, IconX, IconWrench, IconCalendar, IconKey, IconEdit, IconSave, IconLink, IconLock, IconGlobe, IconClipboard, IconTrash, IconDashboard, IconHeart, IconZap, IconTag, IconFileText, IconClock, IconPlus } from '../Icons'
+import { getMonitor, getHeartbeats, getUptime, getIncidents, getMonitorSla, pauseMonitor, resumeMonitor, deleteMonitor, updateMonitor, acknowledgeIncident, getNotifications, createNotification, deleteNotification, updateNotification, getMaintenanceWindows, createMaintenanceWindow, deleteMaintenanceWindow, getIncidentNotes, createIncidentNote, getIncident, getMonitorUptimeHistory, getMonitorLocations, getMonitorConsensus, getAlertRules, setAlertRules, deleteAlertRules, getAlertLog, getDependencies, addDependency, removeDependency, getDependents, getMonitors } from '../api'
+import { IconTrendUp, IconCheckCircle, IconAlertCircle, IconAlertTriangle, IconBell, IconMail, IconPause, IconPlay, IconX, IconWrench, IconCalendar, IconKey, IconEdit, IconSave, IconLink, IconLock, IconGlobe, IconClipboard, IconTrash, IconDashboard, IconHeart, IconZap, IconTag, IconFileText, IconClock, IconPlus, IconGitBranch } from '../Icons'
 
 function formatTime(ts) {
   if (!ts) return 'Never';
@@ -2507,13 +2507,13 @@ export default function MonitorDetail({ id, manageKey: urlKey, onBack }) {
 
       {/* Tabs */}
       <div style={{ display: 'flex', gap: 4, margin: '24px 0 16px', borderBottom: '1px solid var(--border)', paddingBottom: 8, flexWrap: 'wrap' }}>
-        {['overview', 'regions', 'heartbeats', 'incidents', 'maintenance', 'badges', ...(manageKey ? ['alerts', 'notifications'] : [])].map((t) => (
+        {['overview', 'regions', 'heartbeats', 'incidents', 'dependencies', 'maintenance', 'badges', ...(manageKey ? ['alerts', 'notifications'] : [])].map((t) => (
           <button
             key={t}
             className={`nav-btn ${tab === t ? 'active' : ''}`}
             onClick={() => setTab(t)}
           >
-            {t === 'overview' ? <><IconDashboard size={13} /> Overview</> : t === 'regions' ? <><IconGlobe size={13} /> Regions</> : t === 'heartbeats' ? <><IconHeart size={13} /> Heartbeats</> : t === 'incidents' ? <><IconZap size={13} /> Incidents ({incidents.length})</> : t === 'maintenance' ? <><IconWrench size={13} /> Maintenance</> : t === 'badges' ? <><IconTag size={13} /> Badges</> : t === 'alerts' ? <><IconAlertTriangle size={13} /> Alerts</> : <><IconBell size={13} /> Notifications</>}
+            {t === 'overview' ? <><IconDashboard size={13} /> Overview</> : t === 'regions' ? <><IconGlobe size={13} /> Regions</> : t === 'heartbeats' ? <><IconHeart size={13} /> Heartbeats</> : t === 'incidents' ? <><IconZap size={13} /> Incidents ({incidents.length})</> : t === 'dependencies' ? <><IconGitBranch size={13} /> Dependencies</> : t === 'maintenance' ? <><IconWrench size={13} /> Maintenance</> : t === 'badges' ? <><IconTag size={13} /> Badges</> : t === 'alerts' ? <><IconAlertTriangle size={13} /> Alerts</> : <><IconBell size={13} /> Notifications</>}
           </button>
         ))}
       </div>
@@ -2538,6 +2538,8 @@ export default function MonitorDetail({ id, manageKey: urlKey, onBack }) {
 
       {tab === 'incidents' && <IncidentList incidents={incidents} manageKey={manageKey} onAck={reload} />}
 
+      {tab === 'dependencies' && <DependencyManager monitorId={id} monitorName={monitor?.name || 'This Monitor'} manageKey={manageKey} />}
+
       {tab === 'maintenance' && <MaintenanceManager monitorId={id} manageKey={manageKey} />}
 
       {tab === 'badges' && <BadgeEmbed monitorId={id} />}
@@ -2545,6 +2547,352 @@ export default function MonitorDetail({ id, manageKey: urlKey, onBack }) {
       {tab === 'alerts' && manageKey && <AlertRulesManager monitorId={id} manageKey={manageKey} />}
 
       {tab === 'notifications' && manageKey && <NotificationManager monitorId={id} manageKey={manageKey} />}
+    </div>
+  );
+}
+
+function DependencyManager({ monitorId, monitorName, manageKey }) {
+  const [dependencies, setDependencies] = useState([]);
+  const [dependents, setDependents] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showAdd, setShowAdd] = useState(false);
+  const [allMonitors, setAllMonitors] = useState(null);
+  const [search, setSearch] = useState('');
+  const [adding, setAdding] = useState(false);
+  const [removing, setRemoving] = useState(null);
+  const [error, setError] = useState(null);
+
+  const loadData = async () => {
+    try {
+      const [deps, depts] = await Promise.all([
+        getDependencies(monitorId),
+        getDependents(monitorId),
+      ]);
+      setDependencies(deps);
+      setDependents(depts);
+    } catch (err) {
+      // silent
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { loadData(); }, [monitorId]);
+
+  useEffect(() => {
+    if (showAdd && allMonitors === null) {
+      getMonitors().then(data => {
+        const monitors = Array.isArray(data) ? data : (data.monitors || []);
+        setAllMonitors(monitors);
+      }).catch(() => setAllMonitors([]));
+    }
+  }, [showAdd, allMonitors]);
+
+  const statusColors = { up: '#00d4aa', down: '#ef4444', degraded: '#fbbf24', maintenance: '#8b5cf6', unknown: '#64748b' };
+
+  // Filter out: self, already-added dependencies
+  const depIds = new Set(dependencies.map(d => d.depends_on_id));
+  const available = (allMonitors || []).filter(m => m.id !== monitorId && !depIds.has(m.id));
+  const filtered = search.trim()
+    ? available.filter(m => m.name.toLowerCase().includes(search.toLowerCase()) || (m.url || '').toLowerCase().includes(search.toLowerCase()))
+    : available;
+
+  const handleAdd = async (depMonitorId) => {
+    if (!manageKey) return;
+    setError(null);
+    setAdding(true);
+    try {
+      await addDependency(monitorId, depMonitorId, manageKey);
+      setSearch('');
+      await loadData();
+      // Close picker if no more available
+      if (filtered.length <= 1) setShowAdd(false);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const handleRemove = async (depId) => {
+    if (!manageKey) return;
+    if (!window.confirm('Remove this dependency?')) return;
+    setError(null);
+    setRemoving(depId);
+    try {
+      await removeDependency(monitorId, depId, manageKey);
+      await loadData();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setRemoving(null);
+    }
+  };
+
+  if (loading) {
+    return <div style={{ color: 'var(--text-muted)', padding: '16px 0' }}>Loading dependencies...</div>;
+  }
+
+  const inputStyle = {
+    width: '100%',
+    background: 'var(--bg-secondary)',
+    color: 'var(--text-primary)',
+    border: '1px solid var(--border)',
+    borderRadius: 6,
+    padding: '8px 12px',
+    fontSize: '0.85rem',
+    boxSizing: 'border-box',
+  };
+
+  const DepRow = ({ dep, isDependent, canRemove }) => {
+    const name = isDependent ? dep.depends_on_name : dep.depends_on_name;
+    const targetId = isDependent ? dep.monitor_id : dep.depends_on_id;
+    const status = dep.depends_on_status || 'unknown';
+    const color = statusColors[status] || '#64748b';
+
+    return (
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '10px 14px', background: '#0f172a', borderRadius: 6,
+        border: `1px solid ${status === 'down' ? '#ef444440' : '#1e293b'}`,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ width: 8, height: 8, borderRadius: '50%', background: color, flexShrink: 0 }} />
+          <a
+            href={`#/monitor/${targetId}`}
+            style={{ fontSize: '0.85rem', color: 'var(--text-primary)', textDecoration: 'none' }}
+            title={`View ${name}`}
+          >
+            {name}
+          </a>
+          <span style={{
+            fontSize: '0.65rem', padding: '1px 6px', borderRadius: 4,
+            background: `${color}20`, color: color, fontWeight: 600, textTransform: 'uppercase',
+          }}>
+            {status}
+          </span>
+          {status === 'down' && !isDependent && (
+            <span style={{ fontSize: '0.7rem', color: '#fbbf24' }}>⚡ alerts suppressed</span>
+          )}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: '0.7rem', color: '#64748b' }}>{relativeTime(dep.created_at)}</span>
+          {canRemove && (
+            <button
+              className="btn"
+              style={{ fontSize: '0.65rem', padding: '2px 6px', color: '#f87171' }}
+              onClick={() => handleRemove(dep.id)}
+              disabled={removing === dep.id}
+              title="Remove dependency"
+            >
+              {removing === dep.id ? '...' : <IconX size={12} />}
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div>
+      {/* Upstream Dependencies */}
+      <div className="card" style={{ padding: 20, marginBottom: 16 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+          <h3 style={{ margin: 0, fontSize: '1rem' }}>
+            <IconGitBranch size={14} style={{ marginRight: 6 }} />
+            Depends On ({dependencies.length})
+          </h3>
+          {manageKey && (
+            <button
+              className="btn btn-primary"
+              style={{ fontSize: '0.75rem', padding: '4px 12px' }}
+              onClick={() => setShowAdd(!showAdd)}
+            >
+              {showAdd ? 'Done' : <><IconPlus size={12} /> Add</>}
+            </button>
+          )}
+        </div>
+
+        <p style={{ color: '#64748b', fontSize: '0.8rem', margin: '0 0 12px' }}>
+          When an upstream dependency is down, alerts for this monitor are suppressed.
+        </p>
+
+        {error && <div style={{ color: '#f87171', fontSize: '0.8rem', marginBottom: 8 }}>{error}</div>}
+
+        {dependencies.length === 0 ? (
+          <div style={{ color: '#64748b', fontSize: '0.85rem', padding: '8px 0' }}>
+            No upstream dependencies configured.
+            {manageKey && ' Add monitors that this service depends on.'}
+          </div>
+        ) : (
+          <div style={{ display: 'grid', gap: 6, marginBottom: showAdd ? 16 : 0 }}>
+            {dependencies.map(dep => (
+              <DepRow key={dep.id} dep={dep} isDependent={false} canRemove={!!manageKey} />
+            ))}
+          </div>
+        )}
+
+        {/* Add dependency picker */}
+        {showAdd && manageKey && (
+          <div style={{ borderTop: '1px solid #2a2a4a', paddingTop: 12, marginTop: 4 }}>
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search monitors to add as dependency..."
+              style={{ ...inputStyle, fontSize: '0.8rem', padding: '6px 10px', marginBottom: 8 }}
+            />
+            {allMonitors === null ? (
+              <div style={{ color: '#94a3b8', fontSize: '0.8rem', padding: 8 }}>Loading monitors...</div>
+            ) : filtered.length === 0 ? (
+              <div style={{ color: '#64748b', fontSize: '0.8rem', padding: 8 }}>
+                {available.length === 0 ? 'All monitors are already dependencies or unavailable.' : 'No matches.'}
+              </div>
+            ) : (
+              <div style={{ maxHeight: 240, overflowY: 'auto', display: 'grid', gap: 4 }}>
+                {filtered.slice(0, 50).map(m => {
+                  const color = statusColors[m.current_status] || '#64748b';
+                  return (
+                    <div key={m.id} style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      padding: '6px 10px', background: '#12122a', borderRadius: 4,
+                      border: '1px solid #1e293b', cursor: 'pointer',
+                    }}
+                      onClick={() => !adding && handleAdd(m.id)}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div style={{ width: 8, height: 8, borderRadius: '50%', background: color, flexShrink: 0 }} />
+                        <span style={{ fontSize: '0.8rem' }}>{m.name}</span>
+                        {m.url && <span style={{ fontSize: '0.65rem', color: '#475569', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.url}</span>}
+                      </div>
+                      <button
+                        className="btn btn-primary"
+                        style={{ fontSize: '0.65rem', padding: '2px 8px' }}
+                        disabled={adding}
+                      >
+                        {adding ? '...' : <><IconPlus size={10} /> Add</>}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Dependents (reverse lookup) */}
+      <div className="card" style={{ padding: 20 }}>
+        <h3 style={{ margin: '0 0 12px', fontSize: '1rem' }}>
+          <IconGitBranch size={14} style={{ marginRight: 6, transform: 'scaleX(-1)' }} />
+          Depended On By ({dependents.length})
+        </h3>
+        <p style={{ color: '#64748b', fontSize: '0.8rem', margin: '0 0 12px' }}>
+          Monitors that list this one as an upstream dependency.
+          {dependents.length > 0 && ' If this monitor goes down, their alerts will be suppressed.'}
+        </p>
+
+        {dependents.length === 0 ? (
+          <div style={{ color: '#64748b', fontSize: '0.85rem', padding: '8px 0' }}>
+            No monitors depend on this one.
+          </div>
+        ) : (
+          <div style={{ display: 'grid', gap: 6 }}>
+            {dependents.map(dep => {
+              // For dependents, the "depends_on_name" is actually the name of the dependent monitor
+              const targetId = dep.monitor_id;
+              const status = dep.depends_on_status || 'unknown';
+              const color = statusColors[status] || '#64748b';
+              return (
+                <div key={dep.id} style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  padding: '10px 14px', background: '#0f172a', borderRadius: 6,
+                  border: '1px solid #1e293b',
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <div style={{ width: 8, height: 8, borderRadius: '50%', background: color, flexShrink: 0 }} />
+                    <a
+                      href={`#/monitor/${targetId}`}
+                      style={{ fontSize: '0.85rem', color: 'var(--text-primary)', textDecoration: 'none' }}
+                    >
+                      {dep.depends_on_name}
+                    </a>
+                    <span style={{
+                      fontSize: '0.65rem', padding: '1px 6px', borderRadius: 4,
+                      background: `${color}20`, color: color, fontWeight: 600, textTransform: 'uppercase',
+                    }}>
+                      {status}
+                    </span>
+                  </div>
+                  <span style={{ fontSize: '0.7rem', color: '#64748b' }}>{relativeTime(dep.created_at)}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Dependency graph visualization */}
+      {(dependencies.length > 0 || dependents.length > 0) && (
+        <div className="card" style={{ padding: 20, marginTop: 16 }}>
+          <h3 style={{ margin: '0 0 16px', fontSize: '1rem' }}>
+            <IconLink size={14} style={{ marginRight: 6 }} />
+            Dependency Graph
+          </h3>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0 }}>
+            {/* Upstream */}
+            {dependencies.length > 0 && (
+              <>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'center' }}>
+                  {dependencies.map(dep => {
+                    const color = statusColors[dep.depends_on_status] || '#64748b';
+                    return (
+                      <div key={dep.id} style={{
+                        padding: '6px 12px', borderRadius: 6, fontSize: '0.75rem',
+                        background: `${color}15`, border: `1px solid ${color}40`, color: color,
+                        fontWeight: 600,
+                      }}>
+                        {dep.depends_on_name}
+                      </div>
+                    );
+                  })}
+                </div>
+                <div style={{ color: '#475569', fontSize: '0.8rem', padding: '6px 0' }}>↓ depends on</div>
+              </>
+            )}
+
+            {/* Current monitor */}
+            <div style={{
+              padding: '8px 16px', borderRadius: 8, fontSize: '0.85rem', fontWeight: 700,
+              background: 'var(--accent)', color: '#fff',
+              border: '2px solid var(--accent)',
+            }}>
+              {monitorName}
+            </div>
+
+            {/* Downstream */}
+            {dependents.length > 0 && (
+              <>
+                <div style={{ color: '#475569', fontSize: '0.8rem', padding: '6px 0' }}>↓ depended on by</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'center' }}>
+                  {dependents.map(dep => {
+                    const color = statusColors[dep.depends_on_status] || '#64748b';
+                    return (
+                      <div key={dep.id} style={{
+                        padding: '6px 12px', borderRadius: 6, fontSize: '0.75rem',
+                        background: `${color}15`, border: `1px solid ${color}40`, color: color,
+                        fontWeight: 600,
+                      }}>
+                        {dep.depends_on_name}
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

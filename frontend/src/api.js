@@ -305,6 +305,31 @@ export async function getAlertLog(monitorId, key, limit = 50, after = null) {
   });
 }
 
+// ── Monitor Dependencies ──
+
+export async function getDependencies(monitorId) {
+  return request(`/monitors/${monitorId}/dependencies`);
+}
+
+export async function addDependency(monitorId, dependsOnId, key) {
+  return request(`/monitors/${monitorId}/dependencies`, {
+    method: 'POST',
+    body: JSON.stringify({ depends_on_id: dependsOnId }),
+    headers: { Authorization: `Bearer ${key}` },
+  });
+}
+
+export async function removeDependency(monitorId, depId, key) {
+  return request(`/monitors/${monitorId}/dependencies/${depId}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${key}` },
+  });
+}
+
+export async function getDependents(monitorId) {
+  return request(`/monitors/${monitorId}/dependents`);
+}
+
 export async function getMonitorConsensus(monitorId) {
   const url = `${BASE}/monitors/${monitorId}/consensus`;
   const res = await fetch(url);
