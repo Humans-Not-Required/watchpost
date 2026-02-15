@@ -2,7 +2,6 @@ use crate::db::Db;
 use crate::notifications::{self, WebhookPayload, WebhookMonitor, WebhookIncident};
 use crate::sse::{EventBroadcaster, SseEvent};
 use rusqlite::params;
-use std::sync::Arc;
 
 /// Per-location latest heartbeat data used for consensus evaluation.
 struct LocationHeartbeat {
@@ -41,7 +40,7 @@ pub async fn evaluate_and_apply(
     {
         let conn = db.conn.lock().unwrap();
 
-        // Get monitor info
+        // Get monitor info (returns None if monitor doesn't exist or has no consensus configured)
         let monitor_info: Option<(String, String, u32, String)> = conn.query_row(
             "SELECT id, name, url, consensus_threshold, current_status FROM monitors WHERE id = ?1",
             params![monitor_id],
@@ -57,9 +56,9 @@ pub async fn evaluate_and_apply(
                     None => Ok(None),
                 }
             },
-        ).ok()??;
+        ).ok()?;
 
-        let (name, url, threshold, current_status) = monitor_info;
+        let (name, url, threshold, current_status) = monitor_info?;
 
         // Get latest heartbeat per location (including local where location_id IS NULL)
         // Uses a window function to get the most recent heartbeat for each location
