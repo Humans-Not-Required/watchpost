@@ -154,6 +154,12 @@ GET /api/v1/settings — get status page branding (title, description, logo_url)
 PUT /api/v1/settings — update branding (admin key required)
 GET /api/v1/status — public status page (supports ?tag= filter, includes branding)
 GET /api/v1/health — service health
+POST /api/v1/locations — register check location (admin key required, returns probe_key)
+GET /api/v1/locations — list check locations
+GET /api/v1/locations/:id — get check location
+DELETE /api/v1/locations/:id — remove check location (admin key required)
+POST /api/v1/probe — submit probe results from remote location (probe_key auth)
+GET /api/v1/monitors/:id/locations — per-location status for a monitor
 
 ## Status Page Branding
 GET /api/v1/settings — returns current branding: {"title": "...", "description": "...", "logo_url": "..."}
@@ -200,3 +206,33 @@ Schedule downtime so checks still run but incidents are suppressed.
 POST /api/v1/monitors/:id/maintenance with {"title": "Deploy v2", "starts_at": "2026-02-10T14:00:00Z", "ends_at": "2026-02-10T15:00:00Z"}
 During an active window, monitor status shows "maintenance" instead of "down".
 Heartbeats are still recorded. No incidents created. SSE events: maintenance.started, maintenance.ended.
+
+## Multi-Region Check Locations
+Register remote check locations to submit probe results from multiple geographic regions.
+This enables distributed monitoring: agents in different regions report back their check results,
+giving you a multi-perspective view of service health.
+
+### Managing Check Locations (admin key required)
+POST /api/v1/locations — Register a check location (returns probe_key)
+  Body: {"name": "US East", "region": "us-east-1"}
+  The probe_key is shown once — save it! Remote probes authenticate with it.
+GET /api/v1/locations — List all check locations (no auth)
+GET /api/v1/locations/:id — Get a specific check location (no auth)
+DELETE /api/v1/locations/:id — Remove a check location (admin key required)
+
+### Submitting Probe Results (probe_key auth)
+POST /api/v1/probe — Submit check results from a remote location
+  Auth: probe_key via Bearer header, X-API-Key, or ?key= param
+  Body: {"results": [{"monitor_id": "...", "status": "up|down|degraded", "response_time_ms": 123, "status_code": 200, "error_message": null, "checked_at": "2026-02-15T12:00:00"}]}
+  Max 100 results per submission. Each result is validated independently (partial success possible).
+  Response: {"accepted": N, "rejected": N, "errors": [...]}
+
+### Per-Location Status
+GET /api/v1/monitors/:id/locations — Per-location status for a monitor
+  Returns the latest probe result from each active check location for the given monitor.
+  Response: [{"location_id": "...", "location_name": "US East", "region": "us-east-1", "last_status": "up", "last_response_time_ms": 50, "last_checked_at": "..."}]
+
+### Heartbeat Location Tracking
+Heartbeats from remote probes include a location_id field linking to the check location.
+Local checker heartbeats have location_id: null.
+GET /api/v1/monitors/:id/heartbeats — heartbeats include location_id when present.

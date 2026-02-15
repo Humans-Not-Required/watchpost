@@ -87,6 +87,12 @@ fn rocket() -> _ {
             routes::monitor_sla,
             routes::global_events,
             routes::monitor_events,
+            routes::create_location,
+            routes::list_locations,
+            routes::get_location,
+            routes::delete_location,
+            routes::submit_probe,
+            routes::monitor_location_status,
         ])
         .register("/", catchers![
             catchers::bad_request,

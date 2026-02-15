@@ -15,6 +15,7 @@ mod system;
 mod badges;
 mod sla;
 mod stream;
+mod locations;
 
 // Re-export all route handlers so main.rs can use routes::* unchanged
 pub use monitors::{create_monitor, bulk_create_monitors, export_monitor, list_monitors, get_monitor, update_monitor, delete_monitor, pause_monitor, resume_monitor};
@@ -31,6 +32,7 @@ pub use system::{health, llms_txt, openapi_spec, spa_fallback};
 pub use badges::{monitor_uptime_badge, monitor_status_badge};
 pub use sla::monitor_sla;
 pub use stream::{global_events, monitor_events};
+pub use locations::{create_location, list_locations, get_location, delete_location, submit_probe, monitor_location_status};
 
 use rocket::{http::Status, serde::json::Json};
 use crate::models::Monitor;

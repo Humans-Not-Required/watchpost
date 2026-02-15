@@ -125,6 +125,8 @@ pub struct Heartbeat {
     pub error_message: Option<String>,
     pub checked_at: String,
     pub seq: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub location_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -397,4 +399,70 @@ pub struct UptimeHistoryDay {
     pub up_checks: u32,
     pub down_checks: u32,
     pub avg_response_ms: Option<f64>,
+}
+
+// ── Check Locations (Multi-Region) ──
+
+#[derive(Debug, Serialize, Clone)]
+pub struct CheckLocation {
+    pub id: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
+    pub is_active: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_seen_at: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateCheckLocation {
+    pub name: String,
+    pub region: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CreateCheckLocationResponse {
+    pub location: CheckLocation,
+    pub probe_key: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ProbeResult {
+    pub monitor_id: String,
+    pub status: String,
+    pub response_time_ms: u32,
+    pub status_code: Option<u16>,
+    pub error_message: Option<String>,
+    pub checked_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ProbeSubmission {
+    pub results: Vec<ProbeResult>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ProbeSubmissionResponse {
+    pub accepted: usize,
+    pub rejected: usize,
+    pub errors: Vec<ProbeError>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ProbeError {
+    pub index: usize,
+    pub monitor_id: String,
+    pub error: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MonitorLocationStatus {
+    pub location_id: String,
+    pub location_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
+    pub last_status: String,
+    pub last_response_time_ms: u32,
+    pub last_checked_at: String,
 }

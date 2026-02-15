@@ -155,6 +155,23 @@ impl Db {
             CREATE INDEX IF NOT EXISTS idx_incident_notes_incident ON incident_notes(incident_id, created_at ASC);
         ").ok();
 
+        // Check locations table (multi-region probing)
+        conn.execute_batch("
+            CREATE TABLE IF NOT EXISTS check_locations (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                region TEXT,
+                probe_key_hash TEXT NOT NULL,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                last_seen_at TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+        ").ok();
+
+        // Add location_id to heartbeats (nullable — null means local checker)
+        conn.execute_batch("ALTER TABLE heartbeats ADD COLUMN location_id TEXT REFERENCES check_locations(id) ON DELETE SET NULL;").ok();
+        conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_heartbeats_location ON heartbeats(location_id, monitor_id, checked_at DESC);").ok();
+
         // Backfill seq for existing heartbeats
         let needs_hb_backfill: i64 = conn
             .query_row("SELECT COUNT(*) FROM heartbeats WHERE seq IS NULL", [], |r| r.get(0))

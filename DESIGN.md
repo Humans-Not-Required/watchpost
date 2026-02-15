@@ -225,7 +225,7 @@ Heartbeats are the main storage cost. Default retention: 90 days. Older heartbea
 - ~~Notification toggle~~ ✅ Shipped (per-monitor notification enable/disable)
 - ~~Seq-based cursor pagination~~ ✅ Shipped (heartbeats + incidents use `?after=<seq>`)
 - UDP checks
-- Multi-region checking
+- ~~Multi-region checking~~ ✅ Shipped (check locations + probe API)
 - Custom incident severity
 - ~~SLA tracking~~ ✅ Shipped (per-monitor targets with error budget tracking)
 - Alerting rules (escalation)
@@ -276,3 +276,17 @@ Heartbeats are the main storage cost. Default retention: 90 days. Older heartbea
 ### Response Time Alerts
 - Configurable response time thresholds per monitor
 - Alerts fire when response time exceeds threshold
+
+### Multi-Region Check Locations
+Remote check locations allow distributed monitoring from multiple geographic regions.
+- `POST /api/v1/locations` — Register a check location (admin key required, returns `probe_key`)
+- `GET /api/v1/locations` — List all check locations (public)
+- `GET /api/v1/locations/:id` — Get a specific check location
+- `DELETE /api/v1/locations/:id` — Remove a check location (admin key required)
+- `POST /api/v1/probe` — Submit probe results from a remote location (probe_key auth)
+  - Up to 100 results per submission, partial success supported
+  - Results stored as heartbeats with `location_id` linking to the check location
+  - Updates `last_seen_at` on the location
+- `GET /api/v1/monitors/:id/locations` — Per-location status showing latest probe from each active location
+- Heartbeats include optional `location_id` field (null = local checker)
+- Future: consensus logic (monitor considered down only when N of M locations report failure)

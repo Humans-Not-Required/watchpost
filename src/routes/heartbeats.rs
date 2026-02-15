@@ -31,12 +31,13 @@ pub fn get_heartbeats(
             error_message: row.get(5)?,
             checked_at: row.get(6)?,
             seq: row.get(7)?,
+            location_id: row.get(8)?,
         })
     };
 
     let heartbeats: Vec<Heartbeat> = if let Some(after_seq) = after {
         let mut stmt = conn.prepare(
-            "SELECT id, monitor_id, status, response_time_ms, status_code, error_message, checked_at, seq
+            "SELECT id, monitor_id, status, response_time_ms, status_code, error_message, checked_at, seq, location_id
              FROM heartbeats WHERE monitor_id = ?1 AND seq > ?2 ORDER BY seq ASC LIMIT ?3"
         ).map_err(err_map)?;
         let results: Vec<Heartbeat> = stmt.query_map(params![id, after_seq, limit], row_to_hb)
@@ -46,7 +47,7 @@ pub fn get_heartbeats(
         results
     } else {
         let mut stmt = conn.prepare(
-            "SELECT id, monitor_id, status, response_time_ms, status_code, error_message, checked_at, seq
+            "SELECT id, monitor_id, status, response_time_ms, status_code, error_message, checked_at, seq, location_id
              FROM heartbeats WHERE monitor_id = ?1 ORDER BY seq DESC LIMIT ?2"
         ).map_err(err_map)?;
         let results: Vec<Heartbeat> = stmt.query_map(params![id, limit], row_to_hb)

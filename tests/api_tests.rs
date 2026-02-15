@@ -59,6 +59,12 @@ fn test_client_with_db() -> (Client, String) {
             watchpost::routes::monitor_sla,
             watchpost::routes::global_events,
             watchpost::routes::monitor_events,
+            watchpost::routes::create_location,
+            watchpost::routes::list_locations,
+            watchpost::routes::get_location,
+            watchpost::routes::delete_location,
+            watchpost::routes::submit_probe,
+            watchpost::routes::monitor_location_status,
         ])
         .register("/", rocket::catchers![
             watchpost::catchers::bad_request,
@@ -3713,4 +3719,566 @@ fn test_incident_note_default_author() {
     assert_eq!(resp.status(), Status::Created);
     let body: serde_json::Value = resp.into_json().unwrap();
     assert_eq!(body["author"], "anonymous");
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Multi-Region Check Locations Tests
+// ══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_create_location_requires_admin_key() {
+    let client = test_client();
+    let resp = client.post("/api/v1/locations")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "US East"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Unauthorized);
+}
+
+#[test]
+fn test_create_location_invalid_admin_key() {
+    let (client, _admin_key) = test_client_with_admin_key();
+    let resp = client.post("/api/v1/locations")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", "Bearer wrong_key"))
+        .body(r#"{"name": "US East"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Forbidden);
+}
+
+#[test]
+fn test_create_location_success() {
+    let (client, admin_key) = test_client_with_admin_key();
+    let resp = client.post("/api/v1/locations")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", admin_key)))
+        .body(r#"{"name": "US East", "region": "us-east-1"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["location"]["name"], "US East");
+    assert_eq!(body["location"]["region"], "us-east-1");
+    assert!(body["location"]["is_active"].as_bool().unwrap());
+    assert!(body["probe_key"].as_str().unwrap().starts_with("wp_"));
+}
+
+#[test]
+fn test_create_location_duplicate_name() {
+    let (client, admin_key) = test_client_with_admin_key();
+    let auth = rocket::http::Header::new("Authorization", format!("Bearer {}", admin_key));
+
+    // Create first
+    let resp = client.post("/api/v1/locations")
+        .header(ContentType::JSON)
+        .header(auth.clone())
+        .body(r#"{"name": "US East"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+
+    // Duplicate
+    let resp = client.post("/api/v1/locations")
+        .header(ContentType::JSON)
+        .header(auth)
+        .body(r#"{"name": "US East"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Conflict);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["code"], "DUPLICATE_NAME");
+}
+
+#[test]
+fn test_create_location_empty_name() {
+    let (client, admin_key) = test_client_with_admin_key();
+    let resp = client.post("/api/v1/locations")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", admin_key)))
+        .body(r#"{"name": ""}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::BadRequest);
+}
+
+#[test]
+fn test_list_locations_empty() {
+    let client = test_client();
+    let resp = client.get("/api/v1/locations").dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert!(body.is_empty());
+}
+
+#[test]
+fn test_list_locations_with_entries() {
+    let (client, admin_key) = test_client_with_admin_key();
+    let auth = rocket::http::Header::new("Authorization", format!("Bearer {}", admin_key));
+
+    // Create two locations
+    client.post("/api/v1/locations")
+        .header(ContentType::JSON)
+        .header(auth.clone())
+        .body(r#"{"name": "US East", "region": "us-east-1"}"#)
+        .dispatch();
+    client.post("/api/v1/locations")
+        .header(ContentType::JSON)
+        .header(auth)
+        .body(r#"{"name": "EU West", "region": "eu-west-1"}"#)
+        .dispatch();
+
+    let resp = client.get("/api/v1/locations").dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert_eq!(body.len(), 2);
+}
+
+#[test]
+fn test_get_location() {
+    let (client, admin_key) = test_client_with_admin_key();
+    let auth = rocket::http::Header::new("Authorization", format!("Bearer {}", admin_key));
+
+    let resp = client.post("/api/v1/locations")
+        .header(ContentType::JSON)
+        .header(auth)
+        .body(r#"{"name": "US East", "region": "us-east-1"}"#)
+        .dispatch();
+    let created: serde_json::Value = resp.into_json().unwrap();
+    let id = created["location"]["id"].as_str().unwrap();
+
+    let resp = client.get(format!("/api/v1/locations/{}", id)).dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["name"], "US East");
+    assert_eq!(body["region"], "us-east-1");
+}
+
+#[test]
+fn test_get_location_not_found() {
+    let client = test_client();
+    let resp = client.get("/api/v1/locations/nonexistent").dispatch();
+    assert_eq!(resp.status(), Status::NotFound);
+}
+
+#[test]
+fn test_delete_location() {
+    let (client, admin_key) = test_client_with_admin_key();
+    let auth = rocket::http::Header::new("Authorization", format!("Bearer {}", admin_key));
+
+    let resp = client.post("/api/v1/locations")
+        .header(ContentType::JSON)
+        .header(auth.clone())
+        .body(r#"{"name": "US East"}"#)
+        .dispatch();
+    let created: serde_json::Value = resp.into_json().unwrap();
+    let id = created["location"]["id"].as_str().unwrap();
+
+    let resp = client.delete(format!("/api/v1/locations/{}", id))
+        .header(auth)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+
+    // Verify deleted
+    let resp = client.get(format!("/api/v1/locations/{}", id)).dispatch();
+    assert_eq!(resp.status(), Status::NotFound);
+}
+
+#[test]
+fn test_delete_location_requires_admin_key() {
+    let (client, admin_key) = test_client_with_admin_key();
+    let auth = rocket::http::Header::new("Authorization", format!("Bearer {}", admin_key));
+
+    let resp = client.post("/api/v1/locations")
+        .header(ContentType::JSON)
+        .header(auth)
+        .body(r#"{"name": "US East"}"#)
+        .dispatch();
+    let created: serde_json::Value = resp.into_json().unwrap();
+    let id = created["location"]["id"].as_str().unwrap();
+
+    // Try without key
+    let resp = client.delete(format!("/api/v1/locations/{}", id)).dispatch();
+    assert_eq!(resp.status(), Status::Unauthorized);
+}
+
+#[test]
+fn test_submit_probe_success() {
+    let (client, admin_key) = test_client_with_admin_key();
+    let auth = rocket::http::Header::new("Authorization", format!("Bearer {}", admin_key));
+
+    // Create a location
+    let resp = client.post("/api/v1/locations")
+        .header(ContentType::JSON)
+        .header(auth.clone())
+        .body(r#"{"name": "US East", "region": "us-east-1"}"#)
+        .dispatch();
+    let loc: serde_json::Value = resp.into_json().unwrap();
+    let probe_key = loc["probe_key"].as_str().unwrap().to_string();
+
+    // Create a monitor
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Test API", "url": "http://example.com"}"#)
+        .dispatch();
+    let mon: serde_json::Value = resp.into_json().unwrap();
+    let monitor_id = mon["monitor"]["id"].as_str().unwrap();
+
+    // Submit probe results
+    let probe_body = serde_json::json!({
+        "results": [{
+            "monitor_id": monitor_id,
+            "status": "up",
+            "response_time_ms": 123,
+            "status_code": 200
+        }]
+    });
+    let resp = client.post("/api/v1/probe")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", probe_key)))
+        .body(probe_body.to_string())
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["accepted"], 1);
+    assert_eq!(body["rejected"], 0);
+}
+
+#[test]
+fn test_submit_probe_invalid_key() {
+    let client = test_client();
+    let resp = client.post("/api/v1/probe")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", "Bearer invalid_key"))
+        .body(r#"{"results": []}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Unauthorized);
+}
+
+#[test]
+fn test_submit_probe_empty_results() {
+    let (client, admin_key) = test_client_with_admin_key();
+    let auth = rocket::http::Header::new("Authorization", format!("Bearer {}", admin_key));
+
+    let resp = client.post("/api/v1/locations")
+        .header(ContentType::JSON)
+        .header(auth)
+        .body(r#"{"name": "US East"}"#)
+        .dispatch();
+    let loc: serde_json::Value = resp.into_json().unwrap();
+    let probe_key = loc["probe_key"].as_str().unwrap().to_string();
+
+    let resp = client.post("/api/v1/probe")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", probe_key)))
+        .body(r#"{"results": []}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::BadRequest);
+}
+
+#[test]
+fn test_submit_probe_invalid_status() {
+    let (client, admin_key) = test_client_with_admin_key();
+    let auth = rocket::http::Header::new("Authorization", format!("Bearer {}", admin_key));
+
+    let resp = client.post("/api/v1/locations")
+        .header(ContentType::JSON)
+        .header(auth.clone())
+        .body(r#"{"name": "US East"}"#)
+        .dispatch();
+    let loc: serde_json::Value = resp.into_json().unwrap();
+    let probe_key = loc["probe_key"].as_str().unwrap().to_string();
+
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Test", "url": "http://example.com"}"#)
+        .dispatch();
+    let mon: serde_json::Value = resp.into_json().unwrap();
+    let monitor_id = mon["monitor"]["id"].as_str().unwrap();
+
+    let probe_body = serde_json::json!({
+        "results": [{
+            "monitor_id": monitor_id,
+            "status": "invalid_status",
+            "response_time_ms": 100
+        }]
+    });
+    let resp = client.post("/api/v1/probe")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", probe_key)))
+        .body(probe_body.to_string())
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["accepted"], 0);
+    assert_eq!(body["rejected"], 1);
+    assert!(body["errors"][0]["error"].as_str().unwrap().contains("Invalid status"));
+}
+
+#[test]
+fn test_submit_probe_nonexistent_monitor() {
+    let (client, admin_key) = test_client_with_admin_key();
+    let auth = rocket::http::Header::new("Authorization", format!("Bearer {}", admin_key));
+
+    let resp = client.post("/api/v1/locations")
+        .header(ContentType::JSON)
+        .header(auth)
+        .body(r#"{"name": "US East"}"#)
+        .dispatch();
+    let loc: serde_json::Value = resp.into_json().unwrap();
+    let probe_key = loc["probe_key"].as_str().unwrap().to_string();
+
+    let probe_body = serde_json::json!({
+        "results": [{
+            "monitor_id": "nonexistent-id",
+            "status": "up",
+            "response_time_ms": 100
+        }]
+    });
+    let resp = client.post("/api/v1/probe")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", probe_key)))
+        .body(probe_body.to_string())
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["accepted"], 0);
+    assert_eq!(body["rejected"], 1);
+    assert!(body["errors"][0]["error"].as_str().unwrap().contains("Monitor not found"));
+}
+
+#[test]
+fn test_submit_probe_mixed_results() {
+    let (client, admin_key) = test_client_with_admin_key();
+    let auth = rocket::http::Header::new("Authorization", format!("Bearer {}", admin_key));
+
+    // Create location
+    let resp = client.post("/api/v1/locations")
+        .header(ContentType::JSON)
+        .header(auth.clone())
+        .body(r#"{"name": "US East"}"#)
+        .dispatch();
+    let loc: serde_json::Value = resp.into_json().unwrap();
+    let probe_key = loc["probe_key"].as_str().unwrap().to_string();
+
+    // Create a monitor
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Test", "url": "http://example.com"}"#)
+        .dispatch();
+    let mon: serde_json::Value = resp.into_json().unwrap();
+    let monitor_id = mon["monitor"]["id"].as_str().unwrap();
+
+    // Submit mixed (1 valid, 1 invalid monitor, 1 invalid status)
+    let probe_body = serde_json::json!({
+        "results": [
+            {"monitor_id": monitor_id, "status": "up", "response_time_ms": 100},
+            {"monitor_id": "fake-id", "status": "up", "response_time_ms": 100},
+            {"monitor_id": monitor_id, "status": "broken", "response_time_ms": 100}
+        ]
+    });
+    let resp = client.post("/api/v1/probe")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", probe_key)))
+        .body(probe_body.to_string())
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["accepted"], 1);
+    assert_eq!(body["rejected"], 2);
+    assert_eq!(body["errors"].as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn test_submit_probe_updates_last_seen() {
+    let (client, admin_key) = test_client_with_admin_key();
+    let auth = rocket::http::Header::new("Authorization", format!("Bearer {}", admin_key));
+
+    // Create location
+    let resp = client.post("/api/v1/locations")
+        .header(ContentType::JSON)
+        .header(auth.clone())
+        .body(r#"{"name": "US East"}"#)
+        .dispatch();
+    let loc: serde_json::Value = resp.into_json().unwrap();
+    let probe_key = loc["probe_key"].as_str().unwrap().to_string();
+    let location_id = loc["location"]["id"].as_str().unwrap().to_string();
+
+    // Verify no last_seen initially
+    let resp = client.get(format!("/api/v1/locations/{}", location_id)).dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert!(body["last_seen_at"].is_null());
+
+    // Create monitor and submit probe
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Test", "url": "http://example.com"}"#)
+        .dispatch();
+    let mon: serde_json::Value = resp.into_json().unwrap();
+    let monitor_id = mon["monitor"]["id"].as_str().unwrap();
+
+    let probe_body = serde_json::json!({
+        "results": [{"monitor_id": monitor_id, "status": "up", "response_time_ms": 50}]
+    });
+    client.post("/api/v1/probe")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", probe_key)))
+        .body(probe_body.to_string())
+        .dispatch();
+
+    // Verify last_seen updated
+    let resp = client.get(format!("/api/v1/locations/{}", location_id)).dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert!(!body["last_seen_at"].is_null());
+}
+
+#[test]
+fn test_monitor_location_status_no_probes() {
+    let client = test_client();
+
+    // Create a monitor
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Test", "url": "http://example.com"}"#)
+        .dispatch();
+    let mon: serde_json::Value = resp.into_json().unwrap();
+    let monitor_id = mon["monitor"]["id"].as_str().unwrap();
+
+    let resp = client.get(format!("/api/v1/monitors/{}/locations", monitor_id)).dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert!(body.is_empty());
+}
+
+#[test]
+fn test_monitor_location_status_with_probes() {
+    let (client, admin_key) = test_client_with_admin_key();
+    let auth = rocket::http::Header::new("Authorization", format!("Bearer {}", admin_key));
+
+    // Create two locations
+    let resp = client.post("/api/v1/locations")
+        .header(ContentType::JSON)
+        .header(auth.clone())
+        .body(r#"{"name": "US East", "region": "us-east-1"}"#)
+        .dispatch();
+    let loc1: serde_json::Value = resp.into_json().unwrap();
+    let probe_key1 = loc1["probe_key"].as_str().unwrap().to_string();
+
+    let resp = client.post("/api/v1/locations")
+        .header(ContentType::JSON)
+        .header(auth.clone())
+        .body(r#"{"name": "EU West", "region": "eu-west-1"}"#)
+        .dispatch();
+    let loc2: serde_json::Value = resp.into_json().unwrap();
+    let probe_key2 = loc2["probe_key"].as_str().unwrap().to_string();
+
+    // Create a monitor
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Test API", "url": "http://example.com"}"#)
+        .dispatch();
+    let mon: serde_json::Value = resp.into_json().unwrap();
+    let monitor_id = mon["monitor"]["id"].as_str().unwrap();
+
+    // Submit probes from both locations
+    let probe_body = serde_json::json!({
+        "results": [{"monitor_id": monitor_id, "status": "up", "response_time_ms": 50, "status_code": 200}]
+    });
+    client.post("/api/v1/probe")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", probe_key1)))
+        .body(probe_body.to_string())
+        .dispatch();
+
+    let probe_body2 = serde_json::json!({
+        "results": [{"monitor_id": monitor_id, "status": "degraded", "response_time_ms": 3000, "status_code": 200}]
+    });
+    client.post("/api/v1/probe")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", probe_key2)))
+        .body(probe_body2.to_string())
+        .dispatch();
+
+    // Check per-location status
+    let resp = client.get(format!("/api/v1/monitors/{}/locations", monitor_id)).dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert_eq!(body.len(), 2);
+
+    // Check one is up and one is degraded
+    let statuses: Vec<&str> = body.iter().map(|l| l["last_status"].as_str().unwrap()).collect();
+    assert!(statuses.contains(&"up"));
+    assert!(statuses.contains(&"degraded"));
+}
+
+#[test]
+fn test_monitor_location_status_not_found() {
+    let client = test_client();
+    let resp = client.get("/api/v1/monitors/nonexistent/locations").dispatch();
+    assert_eq!(resp.status(), Status::NotFound);
+}
+
+#[test]
+fn test_probe_heartbeats_have_location_id() {
+    let (client, admin_key) = test_client_with_admin_key();
+    let auth = rocket::http::Header::new("Authorization", format!("Bearer {}", admin_key));
+
+    // Create location
+    let resp = client.post("/api/v1/locations")
+        .header(ContentType::JSON)
+        .header(auth.clone())
+        .body(r#"{"name": "US East"}"#)
+        .dispatch();
+    let loc: serde_json::Value = resp.into_json().unwrap();
+    let probe_key = loc["probe_key"].as_str().unwrap().to_string();
+    let location_id = loc["location"]["id"].as_str().unwrap().to_string();
+
+    // Create monitor
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Test", "url": "http://example.com"}"#)
+        .dispatch();
+    let mon: serde_json::Value = resp.into_json().unwrap();
+    let monitor_id = mon["monitor"]["id"].as_str().unwrap();
+
+    // Submit probe
+    let probe_body = serde_json::json!({
+        "results": [{"monitor_id": monitor_id, "status": "up", "response_time_ms": 50}]
+    });
+    client.post("/api/v1/probe")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", probe_key)))
+        .body(probe_body.to_string())
+        .dispatch();
+
+    // Check heartbeats — should include location_id
+    let resp = client.get(format!("/api/v1/monitors/{}/heartbeats", monitor_id)).dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let heartbeats = body.as_array().unwrap();
+    assert_eq!(heartbeats.len(), 1);
+    assert_eq!(heartbeats[0]["location_id"].as_str().unwrap(), location_id);
+}
+
+#[test]
+fn test_submit_probe_over_limit() {
+    let (client, admin_key) = test_client_with_admin_key();
+    let auth = rocket::http::Header::new("Authorization", format!("Bearer {}", admin_key));
+
+    let resp = client.post("/api/v1/locations")
+        .header(ContentType::JSON)
+        .header(auth)
+        .body(r#"{"name": "US East"}"#)
+        .dispatch();
+    let loc: serde_json::Value = resp.into_json().unwrap();
+    let probe_key = loc["probe_key"].as_str().unwrap().to_string();
+
+    // Try to submit 101 results
+    let results: Vec<serde_json::Value> = (0..101).map(|i| serde_json::json!({
+        "monitor_id": format!("fake-{}", i),
+        "status": "up",
+        "response_time_ms": 100
+    })).collect();
+
+    let resp = client.post("/api/v1/probe")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", probe_key)))
+        .body(serde_json::json!({"results": results}).to_string())
+        .dispatch();
+    assert_eq!(resp.status(), Status::BadRequest);
 }
