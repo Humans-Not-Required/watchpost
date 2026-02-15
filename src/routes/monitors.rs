@@ -108,10 +108,20 @@ pub fn create_monitor(
     }
     let sla_period_days = data.sla_period_days.map(|d| d.clamp(1, 365));
 
+    // Validate consensus_threshold
+    let consensus_threshold = data.consensus_threshold;
+    if let Some(ct) = consensus_threshold {
+        if ct < 1 {
+            return Err((Status::BadRequest, Json(serde_json::json!({
+                "error": "consensus_threshold must be at least 1", "code": "VALIDATION_ERROR"
+            }))));
+        }
+    }
+
     let conn = db.conn.lock().unwrap();
     conn.execute(
-        "INSERT INTO monitors (id, name, url, monitor_type, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, manage_key_hash, is_public, confirmation_threshold, tags, response_time_threshold_ms, follow_redirects, group_name, dns_record_type, dns_expected, sla_target, sla_period_days)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
+        "INSERT INTO monitors (id, name, url, monitor_type, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, manage_key_hash, is_public, confirmation_threshold, tags, response_time_threshold_ms, follow_redirects, group_name, dns_record_type, dns_expected, sla_target, sla_period_days, consensus_threshold)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
         params![
             id,
             data.name.trim(),
@@ -134,6 +144,7 @@ pub fn create_monitor(
             dns_expected,
             sla_target,
             sla_period_days,
+            consensus_threshold,
         ],
     ).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({
         "error": format!("DB error: {}", e), "code": "INTERNAL_ERROR"
@@ -260,10 +271,17 @@ pub fn bulk_create_monitors(
             }
         }
         let bulk_sla_period = monitor_data.sla_period_days.map(|d| d.clamp(1, 365));
+        let bulk_consensus = monitor_data.consensus_threshold;
+        if let Some(ct) = bulk_consensus {
+            if ct < 1 {
+                errors.push(BulkError { index: idx, error: "consensus_threshold must be at least 1".into(), code: "VALIDATION_ERROR".into() });
+                continue;
+            }
+        }
 
         match conn.execute(
-            "INSERT INTO monitors (id, name, url, monitor_type, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, manage_key_hash, is_public, confirmation_threshold, tags, response_time_threshold_ms, follow_redirects, group_name, dns_record_type, dns_expected, sla_target, sla_period_days)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
+            "INSERT INTO monitors (id, name, url, monitor_type, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, manage_key_hash, is_public, confirmation_threshold, tags, response_time_threshold_ms, follow_redirects, group_name, dns_record_type, dns_expected, sla_target, sla_period_days, consensus_threshold)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
             params![
                 id,
                 monitor_data.name.trim(),
@@ -286,6 +304,7 @@ pub fn bulk_create_monitors(
                 bulk_dns_expected,
                 bulk_sla_target,
                 bulk_sla_period,
+                bulk_consensus,
             ],
         ) {
             Ok(_) => {
@@ -353,6 +372,7 @@ pub fn export_monitor(
         sla_period_days: monitor.sla_period_days,
         tags: monitor.tags,
         group_name: monitor.group_name,
+        consensus_threshold: monitor.consensus_threshold,
     }))
 }
 
@@ -363,7 +383,7 @@ pub fn list_monitors(search: Option<&str>, status: Option<&str>, tag: Option<&st
     let conn = db.conn.lock().unwrap();
 
     let mut sql = String::from(
-        "SELECT id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, is_public, is_paused, current_status, last_checked_at, confirmation_threshold, created_at, updated_at, tags, response_time_threshold_ms, follow_redirects, group_name, monitor_type, dns_record_type, dns_expected, sla_target, sla_period_days
+        "SELECT id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, is_public, is_paused, current_status, last_checked_at, confirmation_threshold, created_at, updated_at, tags, response_time_threshold_ms, follow_redirects, group_name, monitor_type, dns_record_type, dns_expected, sla_target, sla_period_days, consensus_threshold
          FROM monitors WHERE is_public = 1"
     );
     let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
@@ -586,6 +606,21 @@ pub fn update_monitor(
         updates.push(format!("sla_period_days = ?{}", values.len() + 1));
         match period_opt {
             Some(val) => values.push(Box::new(Some((*val).clamp(1, 365)))),
+            None => values.push(Box::new(None::<u32>)),
+        }
+    }
+
+    if let Some(ref ct_opt) = data.consensus_threshold {
+        updates.push(format!("consensus_threshold = ?{}", values.len() + 1));
+        match ct_opt {
+            Some(val) => {
+                if *val < 1 {
+                    return Err((Status::BadRequest, Json(serde_json::json!({
+                        "error": "consensus_threshold must be at least 1", "code": "VALIDATION_ERROR"
+                    }))));
+                }
+                values.push(Box::new(Some(*val)));
+            }
             None => values.push(Box::new(None::<u32>)),
         }
     }

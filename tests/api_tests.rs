@@ -65,6 +65,7 @@ fn test_client_with_db() -> (Client, String) {
             watchpost::routes::delete_location,
             watchpost::routes::submit_probe,
             watchpost::routes::monitor_location_status,
+            watchpost::routes::monitor_consensus,
         ])
         .register("/", rocket::catchers![
             watchpost::catchers::bad_request,
@@ -4281,4 +4282,547 @@ fn test_submit_probe_over_limit() {
         .body(serde_json::json!({"results": results}).to_string())
         .dispatch();
     assert_eq!(resp.status(), Status::BadRequest);
+}
+
+// ── Multi-Region Consensus Tests ──
+
+#[test]
+fn test_create_monitor_with_consensus_threshold() {
+    let client = test_client();
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Consensus Service", "url": "https://example.com", "consensus_threshold": 2}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["monitor"]["consensus_threshold"], 2);
+}
+
+#[test]
+fn test_create_monitor_consensus_threshold_null() {
+    let client = test_client();
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "No Consensus", "url": "https://example.com"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert!(body["monitor"]["consensus_threshold"].is_null());
+}
+
+#[test]
+fn test_create_monitor_consensus_threshold_zero_rejected() {
+    let client = test_client();
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Bad Threshold", "url": "https://example.com", "consensus_threshold": 0}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::BadRequest);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["code"], "VALIDATION_ERROR");
+}
+
+#[test]
+fn test_update_monitor_consensus_threshold() {
+    let client = test_client();
+    let (id, key) = create_test_monitor(&client);
+
+    // Set consensus_threshold
+    let resp = client.patch(format!("/api/v1/monitors/{}", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"consensus_threshold": 3}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+
+    // Verify
+    let resp = client.get(format!("/api/v1/monitors/{}", id)).dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["consensus_threshold"], 3);
+}
+
+#[test]
+fn test_update_monitor_clear_consensus_threshold() {
+    let client = test_client();
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Clear Test", "url": "https://example.com", "consensus_threshold": 2}"#)
+        .dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let id = body["monitor"]["id"].as_str().unwrap().to_string();
+    let key = body["manage_key"].as_str().unwrap().to_string();
+
+    // Clear consensus_threshold by setting to null
+    let resp = client.patch(format!("/api/v1/monitors/{}", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"consensus_threshold": null}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+
+    // Verify it's null
+    let resp = client.get(format!("/api/v1/monitors/{}", id)).dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert!(body["consensus_threshold"].is_null());
+}
+
+#[test]
+fn test_consensus_endpoint_not_configured() {
+    let client = test_client();
+    let (id, _key) = create_test_monitor(&client);
+
+    let resp = client.get(format!("/api/v1/monitors/{}/consensus", id)).dispatch();
+    assert_eq!(resp.status(), Status::BadRequest);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["code"], "CONSENSUS_NOT_CONFIGURED");
+}
+
+#[test]
+fn test_consensus_endpoint_monitor_not_found() {
+    let client = test_client();
+    let resp = client.get("/api/v1/monitors/nonexistent-id/consensus").dispatch();
+    assert_eq!(resp.status(), Status::NotFound);
+}
+
+#[test]
+fn test_consensus_with_probes() {
+    let (client, admin_key) = test_client_with_admin_key();
+    let auth = rocket::http::Header::new("Authorization", format!("Bearer {}", admin_key));
+
+    // Create a monitor with consensus_threshold = 2
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Consensus Monitor", "url": "https://example.com", "consensus_threshold": 2}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let mon: serde_json::Value = resp.into_json().unwrap();
+    let monitor_id = mon["monitor"]["id"].as_str().unwrap();
+
+    // Create two check locations
+    let resp = client.post("/api/v1/locations")
+        .header(ContentType::JSON)
+        .header(auth.clone())
+        .body(r#"{"name": "US East", "region": "us-east-1"}"#)
+        .dispatch();
+    let loc1: serde_json::Value = resp.into_json().unwrap();
+    let probe_key_1 = loc1["probe_key"].as_str().unwrap().to_string();
+
+    let resp = client.post("/api/v1/locations")
+        .header(ContentType::JSON)
+        .header(auth.clone())
+        .body(r#"{"name": "EU West", "region": "eu-west-1"}"#)
+        .dispatch();
+    let loc2: serde_json::Value = resp.into_json().unwrap();
+    let probe_key_2 = loc2["probe_key"].as_str().unwrap().to_string();
+
+    // Submit probe: Location 1 reports UP
+    let resp = client.post("/api/v1/probe")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", probe_key_1)))
+        .body(serde_json::json!({
+            "results": [{"monitor_id": monitor_id, "status": "up", "response_time_ms": 100, "status_code": 200}]
+        }).to_string())
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+
+    // Submit probe: Location 2 reports UP
+    let resp = client.post("/api/v1/probe")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", probe_key_2)))
+        .body(serde_json::json!({
+            "results": [{"monitor_id": monitor_id, "status": "up", "response_time_ms": 150, "status_code": 200}]
+        }).to_string())
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+
+    // Check consensus — should be UP (0 down, threshold 2)
+    let resp = client.get(format!("/api/v1/monitors/{}/consensus", monitor_id)).dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["consensus_threshold"], 2);
+    assert_eq!(body["effective_status"], "up");
+    assert_eq!(body["up_count"], 2);
+    assert_eq!(body["down_count"], 0);
+    assert_eq!(body["total_locations"], 2);
+}
+
+#[test]
+fn test_consensus_one_down_not_enough() {
+    let (client, admin_key) = test_client_with_admin_key();
+    let auth = rocket::http::Header::new("Authorization", format!("Bearer {}", admin_key));
+
+    // Create monitor with consensus_threshold = 2
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Threshold 2", "url": "https://example.com", "consensus_threshold": 2}"#)
+        .dispatch();
+    let mon: serde_json::Value = resp.into_json().unwrap();
+    let monitor_id = mon["monitor"]["id"].as_str().unwrap();
+
+    // Create two locations
+    let resp = client.post("/api/v1/locations")
+        .header(ContentType::JSON)
+        .header(auth.clone())
+        .body(r#"{"name": "Loc A"}"#)
+        .dispatch();
+    let loc1: serde_json::Value = resp.into_json().unwrap();
+    let key1 = loc1["probe_key"].as_str().unwrap().to_string();
+
+    let resp = client.post("/api/v1/locations")
+        .header(ContentType::JSON)
+        .header(auth.clone())
+        .body(r#"{"name": "Loc B"}"#)
+        .dispatch();
+    let loc2: serde_json::Value = resp.into_json().unwrap();
+    let key2 = loc2["probe_key"].as_str().unwrap().to_string();
+
+    // Location A: DOWN
+    client.post("/api/v1/probe")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key1)))
+        .body(serde_json::json!({
+            "results": [{"monitor_id": monitor_id, "status": "down", "response_time_ms": 0, "error_message": "Connection refused"}]
+        }).to_string())
+        .dispatch();
+
+    // Location B: UP
+    client.post("/api/v1/probe")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key2)))
+        .body(serde_json::json!({
+            "results": [{"monitor_id": monitor_id, "status": "up", "response_time_ms": 100, "status_code": 200}]
+        }).to_string())
+        .dispatch();
+
+    // Monitor should still be UP (only 1 down, threshold is 2)
+    let resp = client.get(format!("/api/v1/monitors/{}/consensus", monitor_id)).dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["effective_status"], "up");
+    assert_eq!(body["down_count"], 1);
+    assert_eq!(body["up_count"], 1);
+
+    // Check that monitor status wasn't changed to down
+    let resp = client.get(format!("/api/v1/monitors/{}", monitor_id)).dispatch();
+    let mon: serde_json::Value = resp.into_json().unwrap();
+    // Status should be "up" (consensus says up since 1 < threshold 2)
+    assert_eq!(mon["current_status"], "up");
+}
+
+#[test]
+fn test_consensus_both_down_triggers_incident() {
+    let (client, admin_key) = test_client_with_admin_key();
+    let auth = rocket::http::Header::new("Authorization", format!("Bearer {}", admin_key));
+
+    // Create monitor with consensus_threshold = 2
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Both Down", "url": "https://example.com", "consensus_threshold": 2}"#)
+        .dispatch();
+    let mon: serde_json::Value = resp.into_json().unwrap();
+    let monitor_id = mon["monitor"]["id"].as_str().unwrap();
+    let manage_key = mon["manage_key"].as_str().unwrap();
+
+    // First, set status to "up" by submitting UP probes
+    let resp = client.post("/api/v1/locations")
+        .header(ContentType::JSON)
+        .header(auth.clone())
+        .body(r#"{"name": "Region 1"}"#)
+        .dispatch();
+    let loc1: serde_json::Value = resp.into_json().unwrap();
+    let key1 = loc1["probe_key"].as_str().unwrap().to_string();
+
+    let resp = client.post("/api/v1/locations")
+        .header(ContentType::JSON)
+        .header(auth.clone())
+        .body(r#"{"name": "Region 2"}"#)
+        .dispatch();
+    let loc2: serde_json::Value = resp.into_json().unwrap();
+    let key2 = loc2["probe_key"].as_str().unwrap().to_string();
+
+    // Both UP first
+    client.post("/api/v1/probe")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key1)))
+        .body(serde_json::json!({
+            "results": [{"monitor_id": monitor_id, "status": "up", "response_time_ms": 50, "status_code": 200}]
+        }).to_string())
+        .dispatch();
+    client.post("/api/v1/probe")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key2)))
+        .body(serde_json::json!({
+            "results": [{"monitor_id": monitor_id, "status": "up", "response_time_ms": 60, "status_code": 200}]
+        }).to_string())
+        .dispatch();
+
+    // Verify UP
+    let resp = client.get(format!("/api/v1/monitors/{}", monitor_id)).dispatch();
+    let mon: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(mon["current_status"], "up");
+
+    // Now both report DOWN
+    client.post("/api/v1/probe")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key1)))
+        .body(serde_json::json!({
+            "results": [{"monitor_id": monitor_id, "status": "down", "response_time_ms": 0, "error_message": "Timeout"}]
+        }).to_string())
+        .dispatch();
+    client.post("/api/v1/probe")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key2)))
+        .body(serde_json::json!({
+            "results": [{"monitor_id": monitor_id, "status": "down", "response_time_ms": 0, "error_message": "Timeout"}]
+        }).to_string())
+        .dispatch();
+
+    // Consensus should now say DOWN (2 >= threshold 2)
+    let resp = client.get(format!("/api/v1/monitors/{}/consensus", monitor_id)).dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["effective_status"], "down");
+    assert_eq!(body["down_count"], 2);
+
+    // Monitor status should be DOWN
+    let resp = client.get(format!("/api/v1/monitors/{}", monitor_id)).dispatch();
+    let mon: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(mon["current_status"], "down");
+
+    // An incident should have been created
+    let resp = client.get(format!("/api/v1/monitors/{}/incidents", monitor_id)).dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let incidents: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert!(!incidents.is_empty(), "Incident should have been created");
+    assert!(incidents[0]["cause"].as_str().unwrap().contains("Consensus"));
+    assert!(incidents[0]["resolved_at"].is_null());
+}
+
+#[test]
+fn test_consensus_recovery_resolves_incident() {
+    let (client, admin_key) = test_client_with_admin_key();
+    let auth = rocket::http::Header::new("Authorization", format!("Bearer {}", admin_key));
+
+    // Create monitor with consensus_threshold = 2
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Recovery Test", "url": "https://example.com", "consensus_threshold": 2}"#)
+        .dispatch();
+    let mon: serde_json::Value = resp.into_json().unwrap();
+    let monitor_id = mon["monitor"]["id"].as_str().unwrap();
+
+    let resp = client.post("/api/v1/locations")
+        .header(ContentType::JSON)
+        .header(auth.clone())
+        .body(r#"{"name": "Region A"}"#)
+        .dispatch();
+    let loc1: serde_json::Value = resp.into_json().unwrap();
+    let key1 = loc1["probe_key"].as_str().unwrap().to_string();
+
+    let resp = client.post("/api/v1/locations")
+        .header(ContentType::JSON)
+        .header(auth.clone())
+        .body(r#"{"name": "Region B"}"#)
+        .dispatch();
+    let loc2: serde_json::Value = resp.into_json().unwrap();
+    let key2 = loc2["probe_key"].as_str().unwrap().to_string();
+
+    // Both UP to establish baseline
+    for key in [&key1, &key2] {
+        client.post("/api/v1/probe")
+            .header(ContentType::JSON)
+            .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+            .body(serde_json::json!({
+                "results": [{"monitor_id": monitor_id, "status": "up", "response_time_ms": 50, "status_code": 200}]
+            }).to_string())
+            .dispatch();
+    }
+
+    // Both DOWN to create incident
+    for key in [&key1, &key2] {
+        client.post("/api/v1/probe")
+            .header(ContentType::JSON)
+            .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+            .body(serde_json::json!({
+                "results": [{"monitor_id": monitor_id, "status": "down", "response_time_ms": 0, "error_message": "Error"}]
+            }).to_string())
+            .dispatch();
+    }
+
+    // Verify DOWN
+    let resp = client.get(format!("/api/v1/monitors/{}", monitor_id)).dispatch();
+    let mon: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(mon["current_status"], "down");
+
+    // Now both recover
+    for key in [&key1, &key2] {
+        client.post("/api/v1/probe")
+            .header(ContentType::JSON)
+            .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+            .body(serde_json::json!({
+                "results": [{"monitor_id": monitor_id, "status": "up", "response_time_ms": 60, "status_code": 200}]
+            }).to_string())
+            .dispatch();
+    }
+
+    // Monitor should be back UP
+    let resp = client.get(format!("/api/v1/monitors/{}", monitor_id)).dispatch();
+    let mon: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(mon["current_status"], "up");
+
+    // Incident should be resolved
+    let resp = client.get(format!("/api/v1/monitors/{}/incidents", monitor_id)).dispatch();
+    let incidents: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert!(!incidents.is_empty());
+    assert!(incidents[0]["resolved_at"].is_string(), "Incident should be resolved");
+}
+
+#[test]
+fn test_consensus_degraded_status() {
+    let (client, admin_key) = test_client_with_admin_key();
+    let auth = rocket::http::Header::new("Authorization", format!("Bearer {}", admin_key));
+
+    // Create monitor with consensus_threshold = 2
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Degraded Test", "url": "https://example.com", "consensus_threshold": 2}"#)
+        .dispatch();
+    let mon: serde_json::Value = resp.into_json().unwrap();
+    let monitor_id = mon["monitor"]["id"].as_str().unwrap();
+
+    let resp = client.post("/api/v1/locations")
+        .header(ContentType::JSON)
+        .header(auth.clone())
+        .body(r#"{"name": "Loc 1"}"#)
+        .dispatch();
+    let loc1: serde_json::Value = resp.into_json().unwrap();
+    let key1 = loc1["probe_key"].as_str().unwrap().to_string();
+
+    let resp = client.post("/api/v1/locations")
+        .header(ContentType::JSON)
+        .header(auth.clone())
+        .body(r#"{"name": "Loc 2"}"#)
+        .dispatch();
+    let loc2: serde_json::Value = resp.into_json().unwrap();
+    let key2 = loc2["probe_key"].as_str().unwrap().to_string();
+
+    // Both UP first
+    for key in [&key1, &key2] {
+        client.post("/api/v1/probe")
+            .header(ContentType::JSON)
+            .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+            .body(serde_json::json!({
+                "results": [{"monitor_id": monitor_id, "status": "up", "response_time_ms": 50, "status_code": 200}]
+            }).to_string())
+            .dispatch();
+    }
+
+    // One degraded, one down → should be degraded (down+degraded >= threshold)
+    client.post("/api/v1/probe")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key1)))
+        .body(serde_json::json!({
+            "results": [{"monitor_id": monitor_id, "status": "degraded", "response_time_ms": 5000, "status_code": 200}]
+        }).to_string())
+        .dispatch();
+    client.post("/api/v1/probe")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key2)))
+        .body(serde_json::json!({
+            "results": [{"monitor_id": monitor_id, "status": "down", "response_time_ms": 0, "error_message": "Timeout"}]
+        }).to_string())
+        .dispatch();
+
+    let resp = client.get(format!("/api/v1/monitors/{}/consensus", monitor_id)).dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["effective_status"], "degraded");
+    assert_eq!(body["down_count"], 1);
+    assert_eq!(body["degraded_count"], 1);
+}
+
+#[test]
+fn test_consensus_in_list_and_export() {
+    let (client, admin_key) = test_client_with_admin_key();
+
+    // Create monitor with consensus_threshold
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Export Test", "url": "https://example.com", "is_public": true, "consensus_threshold": 3}"#)
+        .dispatch();
+    let mon: serde_json::Value = resp.into_json().unwrap();
+    let id = mon["monitor"]["id"].as_str().unwrap();
+    let key = mon["manage_key"].as_str().unwrap();
+
+    // Check it appears in list
+    let resp = client.get("/api/v1/monitors").dispatch();
+    let list: Vec<serde_json::Value> = resp.into_json().unwrap();
+    let found = list.iter().find(|m| m["id"].as_str() == Some(id)).unwrap();
+    assert_eq!(found["consensus_threshold"], 3);
+
+    // Check export
+    let resp = client.get(format!("/api/v1/monitors/{}/export", id))
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let exported: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(exported["consensus_threshold"], 3);
+}
+
+#[test]
+fn test_bulk_create_with_consensus_threshold() {
+    let client = test_client();
+    let resp = client.post("/api/v1/monitors/bulk")
+        .header(ContentType::JSON)
+        .body(serde_json::json!({
+            "monitors": [
+                {"name": "Bulk 1", "url": "https://a.com", "consensus_threshold": 2},
+                {"name": "Bulk 2", "url": "https://b.com"}
+            ]
+        }).to_string())
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["succeeded"], 2);
+    assert_eq!(body["created"][0]["monitor"]["consensus_threshold"], 2);
+    assert!(body["created"][1]["monitor"]["consensus_threshold"].is_null());
+}
+
+#[test]
+fn test_consensus_endpoint_has_location_details() {
+    let (client, admin_key) = test_client_with_admin_key();
+    let auth = rocket::http::Header::new("Authorization", format!("Bearer {}", admin_key));
+
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Detail Test", "url": "https://example.com", "consensus_threshold": 1}"#)
+        .dispatch();
+    let mon: serde_json::Value = resp.into_json().unwrap();
+    let monitor_id = mon["monitor"]["id"].as_str().unwrap();
+
+    let resp = client.post("/api/v1/locations")
+        .header(ContentType::JSON)
+        .header(auth.clone())
+        .body(r#"{"name": "Tokyo", "region": "ap-northeast-1"}"#)
+        .dispatch();
+    let loc: serde_json::Value = resp.into_json().unwrap();
+    let probe_key = loc["probe_key"].as_str().unwrap().to_string();
+
+    // Submit a probe
+    client.post("/api/v1/probe")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", probe_key)))
+        .body(serde_json::json!({
+            "results": [{"monitor_id": monitor_id, "status": "up", "response_time_ms": 200, "status_code": 200}]
+        }).to_string())
+        .dispatch();
+
+    // Check consensus endpoint returns location details
+    let resp = client.get(format!("/api/v1/monitors/{}/consensus", monitor_id)).dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["total_locations"], 1);
+    let locs = body["locations"].as_array().unwrap();
+    assert_eq!(locs.len(), 1);
+    assert_eq!(locs[0]["location_name"], "Tokyo");
+    assert_eq!(locs[0]["region"], "ap-northeast-1");
+    assert_eq!(locs[0]["last_status"], "up");
+    assert_eq!(locs[0]["last_response_time_ms"], 200);
 }
