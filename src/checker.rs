@@ -16,6 +16,26 @@ fn retention_days() -> u32 {
         .unwrap_or(90)
 }
 
+/// Probe stale threshold: auto-disable locations that haven't reported in this many minutes.
+/// Configurable via PROBE_STALE_MINUTES env var. Default: 30.
+fn probe_stale_minutes() -> u32 {
+    std::env::var("PROBE_STALE_MINUTES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(30)
+}
+
+/// Check for stale probe locations and auto-disable them.
+/// Returns the number of locations disabled.
+pub fn disable_stale_locations(db: &Db, stale_minutes: u32) -> usize {
+    let conn = db.conn.lock().unwrap();
+    conn.execute(
+        "UPDATE check_locations SET is_active = 0 WHERE is_active = 1 AND last_seen_at IS NOT NULL AND last_seen_at < datetime('now', ?1)",
+        params![format!("-{} minutes", stale_minutes)],
+    )
+    .unwrap_or(0)
+}
+
 /// Prune old heartbeats. Returns the number of rows deleted.
 pub fn prune_heartbeats(db: &Db, days: u32) -> usize {
     let conn = db.conn.lock().unwrap();
@@ -95,6 +115,8 @@ pub async fn run_checker(db: Arc<Db>, broadcaster: Arc<EventBroadcaster>, shutdo
 
     // Track last retention run so we only prune once per hour
     let mut last_retention = std::time::Instant::now() - Duration::from_secs(3600);
+    // Track last probe health check (every 5 minutes)
+    let mut last_probe_health = std::time::Instant::now() - Duration::from_secs(300);
 
     loop {
         // Run heartbeat retention every hour
@@ -105,6 +127,16 @@ pub async fn run_checker(db: Arc<Db>, broadcaster: Arc<EventBroadcaster>, shutdo
                 println!("🗑️  Retention: pruned {} heartbeats older than {} days", deleted, days);
             }
             last_retention = std::time::Instant::now();
+        }
+
+        // Run probe health check every 5 minutes
+        if last_probe_health.elapsed() >= Duration::from_secs(300) {
+            let stale_minutes = probe_stale_minutes();
+            let disabled = disable_stale_locations(&db, stale_minutes);
+            if disabled > 0 {
+                println!("🔌 Probe health: auto-disabled {} stale locations (>{} min)", disabled, stale_minutes);
+            }
+            last_probe_health = std::time::Instant::now();
         }
 
         // Find the next monitor due for a check

@@ -420,6 +420,35 @@ pub struct CheckLocation {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_seen_at: Option<String>,
     pub created_at: String,
+    /// Computed health status: "healthy" (active + seen recently), "stale" (active but no recent report),
+    /// "disabled" (is_active=false), or "new" (never reported).
+    pub health_status: String,
+}
+
+impl CheckLocation {
+    /// Compute health status based on is_active, last_seen_at, and stale threshold.
+    pub fn compute_health(is_active: bool, last_seen_at: &Option<String>, stale_minutes: u32) -> String {
+        if !is_active {
+            return "disabled".to_string();
+        }
+        match last_seen_at {
+            None => "new".to_string(),
+            Some(ts) => {
+                // Parse last_seen_at and compare with now
+                if let Ok(seen) = chrono::NaiveDateTime::parse_from_str(ts, "%Y-%m-%d %H:%M:%S") {
+                    let now = chrono::Utc::now().naive_utc();
+                    let elapsed = now.signed_duration_since(seen);
+                    if elapsed.num_minutes() > stale_minutes as i64 {
+                        "stale".to_string()
+                    } else {
+                        "healthy".to_string()
+                    }
+                } else {
+                    "unknown".to_string()
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]

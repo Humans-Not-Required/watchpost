@@ -304,16 +304,27 @@ export default function Locations() {
                         {loc.region}
                       </span>
                     )}
-                    <span style={{
-                      fontSize: '0.75rem',
-                      padding: '2px 8px',
-                      borderRadius: 12,
-                      background: loc.is_active ? 'rgba(0,212,170,0.1)' : 'rgba(255,71,87,0.1)',
-                      color: loc.is_active ? 'var(--success)' : 'var(--danger)',
-                      fontWeight: 500,
-                    }}>
-                      {loc.is_active ? 'Active' : 'Inactive'}
-                    </span>
+                    {(() => {
+                      const healthColors = {
+                        healthy: { bg: 'rgba(0,212,170,0.1)', fg: '#00d4aa', label: '● Healthy' },
+                        new: { bg: 'rgba(96,165,250,0.1)', fg: '#60a5fa', label: '◌ New' },
+                        stale: { bg: 'rgba(251,191,36,0.1)', fg: '#fbbf24', label: '⚠ Stale' },
+                        disabled: { bg: 'rgba(239,68,68,0.1)', fg: '#ef4444', label: '✕ Disabled' },
+                      };
+                      const h = healthColors[loc.health_status] || healthColors.disabled;
+                      return (
+                        <span style={{
+                          fontSize: '0.75rem',
+                          padding: '2px 8px',
+                          borderRadius: 12,
+                          background: h.bg,
+                          color: h.fg,
+                          fontWeight: 500,
+                        }}>
+                          {h.label}
+                        </span>
+                      );
+                    })()}
                   </div>
                   <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: 6, display: 'flex', gap: 16, flexWrap: 'wrap' }}>
                     <span title={formatTime(loc.last_seen_at)}>

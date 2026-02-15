@@ -249,9 +249,18 @@ giving you a multi-perspective view of service health.
 POST /api/v1/locations — Register a check location (returns probe_key)
   Body: {"name": "US East", "region": "us-east-1"}
   The probe_key is shown once — save it! Remote probes authenticate with it.
-GET /api/v1/locations — List all check locations (no auth)
-GET /api/v1/locations/:id — Get a specific check location (no auth)
+GET /api/v1/locations — List all check locations (no auth). Each includes health_status field.
+GET /api/v1/locations/:id — Get a specific check location (no auth). Includes health_status.
 DELETE /api/v1/locations/:id — Remove a check location (admin key required)
+
+### Probe Health Tracking
+Locations include a `health_status` field computed from their reporting status:
+  - "healthy" — active and reported recently (within PROBE_STALE_MINUTES, default 30)
+  - "new" — active but has never submitted a probe result
+  - "stale" — active but hasn't reported within the threshold
+  - "disabled" — manually disabled or auto-disabled due to staleness
+Stale locations are auto-disabled every 5 minutes by the checker loop.
+Configure threshold: PROBE_STALE_MINUTES env var (default: 30 minutes).
 
 ### Submitting Probe Results (probe_key auth)
 POST /api/v1/probe — Submit check results from a remote location

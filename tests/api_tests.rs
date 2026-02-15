@@ -6309,3 +6309,198 @@ fn test_dependency_multiple_chain() {
     let deps: Vec<serde_json::Value> = resp.into_json().unwrap();
     assert_eq!(deps.len(), 1);
 }
+
+// ── Probe Health Tests ──
+
+#[test]
+fn test_location_health_status_new() {
+    let (client, admin_key) = test_client_with_admin_key();
+    let auth = rocket::http::Header::new("Authorization", format!("Bearer {}", admin_key));
+
+    // Create a location — should be "new" (never reported)
+    let resp = client.post("/api/v1/locations")
+        .header(ContentType::JSON)
+        .header(auth.clone())
+        .body(r#"{"name": "US East", "region": "us-east-1"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["location"]["health_status"], "new");
+
+    // Also check via list
+    let resp = client.get("/api/v1/locations").dispatch();
+    let locs: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert_eq!(locs.len(), 1);
+    assert_eq!(locs[0]["health_status"], "new");
+
+    // And via get
+    let id = body["location"]["id"].as_str().unwrap();
+    let resp = client.get(format!("/api/v1/locations/{}", id)).dispatch();
+    let loc: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(loc["health_status"], "new");
+}
+
+#[test]
+fn test_location_health_status_healthy_after_probe() {
+    let (client, admin_key) = test_client_with_admin_key();
+    let auth = rocket::http::Header::new("Authorization", format!("Bearer {}", admin_key));
+
+    // Create a monitor first
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name":"Health Test","url":"http://example.com","interval_seconds":600}"#)
+        .dispatch();
+    let mon: serde_json::Value = resp.into_json().unwrap();
+    let monitor_id = mon["monitor"]["id"].as_str().unwrap();
+
+    // Create a location
+    let resp = client.post("/api/v1/locations")
+        .header(ContentType::JSON)
+        .header(auth.clone())
+        .body(r#"{"name": "EU West"}"#)
+        .dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let probe_key = body["probe_key"].as_str().unwrap().to_string();
+    let location_id = body["location"]["id"].as_str().unwrap().to_string();
+
+    // Submit a probe result — updates last_seen_at
+    let resp = client.post("/api/v1/probe")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", probe_key)))
+        .body(serde_json::json!({
+            "results": [{
+                "monitor_id": monitor_id,
+                "status": "up",
+                "response_time_ms": 100
+            }]
+        }).to_string())
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+
+    // Now check health — should be "healthy"
+    let resp = client.get(format!("/api/v1/locations/{}", location_id)).dispatch();
+    let loc: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(loc["health_status"], "healthy");
+}
+
+#[test]
+fn test_location_health_status_disabled() {
+    let (client, admin_key) = test_client_with_admin_key();
+    let auth = rocket::http::Header::new("Authorization", format!("Bearer {}", admin_key));
+
+    // Create location
+    let resp = client.post("/api/v1/locations")
+        .header(ContentType::JSON)
+        .header(auth.clone())
+        .body(r#"{"name": "Asia Pacific"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let loc_id = body["location"]["id"].as_str().unwrap().to_string();
+
+    // Manually disable it
+    {
+        let db = client.rocket().state::<Arc<watchpost::db::Db>>().unwrap();
+        let conn = db.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE check_locations SET is_active = 0 WHERE id = ?1",
+            params![loc_id],
+        ).unwrap();
+    }
+
+    // Check health — should be "disabled"
+    let resp = client.get(format!("/api/v1/locations/{}", loc_id)).dispatch();
+    let loc: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(loc["health_status"], "disabled");
+}
+
+#[test]
+fn test_disable_stale_locations() {
+    let (client, admin_key) = test_client_with_admin_key();
+    let auth = rocket::http::Header::new("Authorization", format!("Bearer {}", admin_key));
+    let db = client.rocket().state::<Arc<watchpost::db::Db>>().unwrap();
+
+    // Create a location
+    let resp = client.post("/api/v1/locations")
+        .header(ContentType::JSON)
+        .header(auth.clone())
+        .body(r#"{"name": "Stale Location"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let loc_id = body["location"]["id"].as_str().unwrap().to_string();
+
+    // Manually set last_seen_at to 60 minutes ago
+    {
+        let conn = db.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE check_locations SET last_seen_at = datetime('now', '-60 minutes') WHERE id = ?1",
+            params![loc_id],
+        ).unwrap();
+    }
+
+    // Run disable_stale_locations with 30 min threshold
+    let disabled = watchpost::checker::disable_stale_locations(db, 30);
+    assert_eq!(disabled, 1);
+
+    // Verify it's disabled
+    let resp = client.get(format!("/api/v1/locations/{}", loc_id)).dispatch();
+    let loc: serde_json::Value = resp.into_json().unwrap();
+    assert!(!loc["is_active"].as_bool().unwrap());
+    assert_eq!(loc["health_status"], "disabled");
+}
+
+#[test]
+fn test_disable_stale_locations_does_not_affect_recent() {
+    let (client, admin_key) = test_client_with_admin_key();
+    let auth = rocket::http::Header::new("Authorization", format!("Bearer {}", admin_key));
+    let db = client.rocket().state::<Arc<watchpost::db::Db>>().unwrap();
+
+    // Create location
+    let resp = client.post("/api/v1/locations")
+        .header(ContentType::JSON)
+        .header(auth.clone())
+        .body(r#"{"name": "Fresh Location"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let loc_id = body["location"]["id"].as_str().unwrap().to_string();
+
+    // Set last_seen_at to 5 minutes ago (within threshold)
+    {
+        let conn = db.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE check_locations SET last_seen_at = datetime('now', '-5 minutes') WHERE id = ?1",
+            params![loc_id],
+        ).unwrap();
+    }
+
+    // Run with 30 min threshold — should not disable
+    let disabled = watchpost::checker::disable_stale_locations(db, 30);
+    assert_eq!(disabled, 0);
+
+    // Still active
+    let resp = client.get(format!("/api/v1/locations/{}", loc_id)).dispatch();
+    let loc: serde_json::Value = resp.into_json().unwrap();
+    assert!(loc["is_active"].as_bool().unwrap());
+    assert_eq!(loc["health_status"], "healthy");
+}
+
+#[test]
+fn test_disable_stale_locations_does_not_affect_never_seen() {
+    let (client, admin_key) = test_client_with_admin_key();
+    let auth = rocket::http::Header::new("Authorization", format!("Bearer {}", admin_key));
+    let db = client.rocket().state::<Arc<watchpost::db::Db>>().unwrap();
+
+    // Create location (never reported)
+    let resp = client.post("/api/v1/locations")
+        .header(ContentType::JSON)
+        .header(auth.clone())
+        .body(r#"{"name": "New Location"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+
+    // Run with any threshold — should not disable locations that never reported
+    let disabled = watchpost::checker::disable_stale_locations(db, 30);
+    assert_eq!(disabled, 0);
+}

@@ -12,6 +12,13 @@ use crate::models::{
     MonitorLocationStatus, ConsensusStatus,
 };
 
+fn stale_threshold_minutes() -> u32 {
+    std::env::var("PROBE_STALE_MINUTES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(30)
+}
+
 // ── Verify admin key against settings table ──
 fn verify_admin_key(conn: &rusqlite::Connection, token: &str) -> Result<(), (Status, Json<serde_json::Value>)> {
     let stored_hash: String = conn.query_row(
@@ -92,12 +99,14 @@ pub fn create_location(
         "error": format!("Failed to create location: {}", e), "code": "SERVER_ERROR"
     }))))?;
 
+    let last_seen_at: Option<String> = None;
     let location = CheckLocation {
         id,
         name: name.to_string(),
         region: body.region.clone(),
+        health_status: CheckLocation::compute_health(true, &last_seen_at, stale_threshold_minutes()),
         is_active: true,
-        last_seen_at: None,
+        last_seen_at,
         created_at: chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string(),
     };
 
@@ -115,13 +124,18 @@ pub fn list_locations(db: &State<Arc<Db>>) -> Json<Vec<CheckLocation>> {
         "SELECT id, name, region, is_active, last_seen_at, created_at FROM check_locations ORDER BY created_at ASC"
     ).unwrap();
 
+    let stale_min = stale_threshold_minutes();
     let locations = stmt.query_map([], |row| {
+        let is_active = row.get::<_, i32>(3)? != 0;
+        let last_seen_at: Option<String> = row.get(4)?;
+        let health_status = CheckLocation::compute_health(is_active, &last_seen_at, stale_min);
         Ok(CheckLocation {
             id: row.get(0)?,
             name: row.get(1)?,
             region: row.get(2)?,
-            is_active: row.get::<_, i32>(3)? != 0,
-            last_seen_at: row.get(4)?,
+            is_active,
+            last_seen_at,
+            health_status,
             created_at: row.get(5)?,
         })
     }).unwrap().filter_map(|r| r.ok()).collect();
@@ -136,17 +150,24 @@ pub fn get_location(
     db: &State<Arc<Db>>,
 ) -> Result<Json<CheckLocation>, (Status, Json<serde_json::Value>)> {
     let conn = db.conn.lock().unwrap();
+    let stale_min = stale_threshold_minutes();
     let location = conn.query_row(
         "SELECT id, name, region, is_active, last_seen_at, created_at FROM check_locations WHERE id = ?1",
         params![id],
-        |row| Ok(CheckLocation {
-            id: row.get(0)?,
-            name: row.get(1)?,
-            region: row.get(2)?,
-            is_active: row.get::<_, i32>(3)? != 0,
-            last_seen_at: row.get(4)?,
-            created_at: row.get(5)?,
-        }),
+        |row| {
+            let is_active = row.get::<_, i32>(3)? != 0;
+            let last_seen_at: Option<String> = row.get(4)?;
+            let health_status = CheckLocation::compute_health(is_active, &last_seen_at, stale_min);
+            Ok(CheckLocation {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                region: row.get(2)?,
+                is_active,
+                last_seen_at,
+                health_status,
+                created_at: row.get(5)?,
+            })
+        },
     ).map_err(|_| (Status::NotFound, Json(serde_json::json!({
         "error": "Check location not found", "code": "NOT_FOUND"
     }))))?;
