@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
-import { getMonitor, getHeartbeats, getUptime, getIncidents, getMonitorSla, pauseMonitor, resumeMonitor, deleteMonitor, updateMonitor, acknowledgeIncident, getNotifications, createNotification, deleteNotification, updateNotification, getMaintenanceWindows, createMaintenanceWindow, deleteMaintenanceWindow, getIncidentNotes, createIncidentNote, getIncident, getMonitorUptimeHistory, getMonitorLocations, getMonitorConsensus } from '../api'
-import { IconTrendUp, IconCheckCircle, IconAlertCircle, IconBell, IconMail, IconPause, IconPlay, IconX, IconWrench, IconCalendar, IconKey, IconEdit, IconSave, IconLink, IconLock, IconGlobe, IconClipboard, IconTrash, IconDashboard, IconHeart, IconZap, IconTag, IconFileText, IconClock, IconPlus } from '../Icons'
+import { getMonitor, getHeartbeats, getUptime, getIncidents, getMonitorSla, pauseMonitor, resumeMonitor, deleteMonitor, updateMonitor, acknowledgeIncident, getNotifications, createNotification, deleteNotification, updateNotification, getMaintenanceWindows, createMaintenanceWindow, deleteMaintenanceWindow, getIncidentNotes, createIncidentNote, getIncident, getMonitorUptimeHistory, getMonitorLocations, getMonitorConsensus, getAlertRules, setAlertRules, deleteAlertRules, getAlertLog } from '../api'
+import { IconTrendUp, IconCheckCircle, IconAlertCircle, IconAlertTriangle, IconBell, IconMail, IconPause, IconPlay, IconX, IconWrench, IconCalendar, IconKey, IconEdit, IconSave, IconLink, IconLock, IconGlobe, IconClipboard, IconTrash, IconDashboard, IconHeart, IconZap, IconTag, IconFileText, IconClock, IconPlus } from '../Icons'
 
 function formatTime(ts) {
   if (!ts) return 'Never';
@@ -1167,6 +1167,392 @@ function MaintenanceManager({ monitorId, manageKey }) {
   );
 }
 
+// ── Alert Rules Manager ──
+
+function AlertRulesManager({ monitorId, manageKey }) {
+  const [rules, setRules] = useState(null); // null = not loaded, object = rules, 'none' = no rules
+  const [log, setLog] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [logLoading, setLogLoading] = useState(true);
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState(null);
+  const [form, setForm] = useState({
+    repeat_interval_minutes: 0,
+    max_repeats: 10,
+    escalation_after_minutes: 0,
+  });
+
+  const loadRules = async () => {
+    try {
+      const data = await getAlertRules(monitorId, manageKey);
+      if (data) {
+        setRules(data);
+        setForm({
+          repeat_interval_minutes: data.repeat_interval_minutes,
+          max_repeats: data.max_repeats,
+          escalation_after_minutes: data.escalation_after_minutes,
+        });
+      } else {
+        setRules('none');
+      }
+    } catch {
+      setRules('none');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadLog = async () => {
+    try {
+      const data = await getAlertLog(monitorId, manageKey, 50);
+      setLog(data);
+    } catch {
+      setLog([]);
+    } finally {
+      setLogLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadRules();
+    loadLog();
+  }, [monitorId]);
+
+  const handleSave = async () => {
+    setError(null);
+    const ri = Number(form.repeat_interval_minutes);
+    const mr = Number(form.max_repeats);
+    const ea = Number(form.escalation_after_minutes);
+
+    if (ri > 0 && ri < 5) {
+      setError('Repeat interval must be 0 (disabled) or at least 5 minutes');
+      return;
+    }
+    if (mr > 100) {
+      setError('Max repeats must be 100 or less');
+      return;
+    }
+    if (ea > 0 && ea < 5) {
+      setError('Escalation time must be 0 (disabled) or at least 5 minutes');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const data = await setAlertRules(monitorId, {
+        repeat_interval_minutes: ri,
+        max_repeats: mr,
+        escalation_after_minutes: ea,
+      }, manageKey);
+      setRules(data);
+      setEditing(false);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!window.confirm('Remove all alert rules for this monitor?')) return;
+    setDeleting(true);
+    try {
+      await deleteAlertRules(monitorId, manageKey);
+      setRules('none');
+      setForm({ repeat_interval_minutes: 0, max_repeats: 10, escalation_after_minutes: 0 });
+      setEditing(false);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const set = (key, value) => setForm(f => ({ ...f, [key]: value }));
+
+  if (loading) {
+    return <div style={{ color: 'var(--text-muted)', padding: '16px 0' }}>Loading alert rules...</div>;
+  }
+
+  const hasRules = rules && rules !== 'none';
+
+  return (
+    <div>
+      {/* Current rules display */}
+      {hasRules && !editing && (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <IconAlertTriangle size={16} style={{ color: 'var(--warning, #ffa502)' }} />
+              <span style={{ fontWeight: 600, fontSize: '0.95rem' }}>Alert Rules</span>
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                className="btn btn-secondary"
+                style={{ fontSize: '0.8rem', padding: '5px 12px' }}
+                onClick={() => setEditing(true)}
+              >
+                <IconEdit size={12} /> Edit
+              </button>
+              <button
+                className="btn btn-danger"
+                style={{ fontSize: '0.8rem', padding: '5px 12px' }}
+                disabled={deleting}
+                onClick={handleDelete}
+              >
+                {deleting ? '...' : <><IconTrash size={12} /> Remove</>}
+              </button>
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
+            <div style={{
+              background: 'rgba(255,255,255,0.02)',
+              borderRadius: 8,
+              padding: '12px 16px',
+              border: '1px solid var(--border)',
+            }}>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>
+                Repeat Notifications
+              </div>
+              <div style={{ fontSize: '1.1rem', fontWeight: 600, color: rules.repeat_interval_minutes > 0 ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                {rules.repeat_interval_minutes > 0 ? `Every ${rules.repeat_interval_minutes}m` : 'Disabled'}
+              </div>
+            </div>
+            <div style={{
+              background: 'rgba(255,255,255,0.02)',
+              borderRadius: 8,
+              padding: '12px 16px',
+              border: '1px solid var(--border)',
+            }}>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>
+                Max Repeats
+              </div>
+              <div style={{ fontSize: '1.1rem', fontWeight: 600 }}>
+                {rules.repeat_interval_minutes > 0 ? rules.max_repeats : '—'}
+              </div>
+            </div>
+            <div style={{
+              background: 'rgba(255,255,255,0.02)',
+              borderRadius: 8,
+              padding: '12px 16px',
+              border: '1px solid var(--border)',
+            }}>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>
+                Escalation
+              </div>
+              <div style={{ fontSize: '1.1rem', fontWeight: 600, color: rules.escalation_after_minutes > 0 ? 'var(--warning, #ffa502)' : 'var(--text-muted)' }}>
+                {rules.escalation_after_minutes > 0 ? `After ${rules.escalation_after_minutes}m` : 'Disabled'}
+              </div>
+            </div>
+          </div>
+
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 12 }}>
+            Last updated: {formatTime(rules.updated_at)}
+          </div>
+        </div>
+      )}
+
+      {/* No rules state */}
+      {!hasRules && !editing && (
+        <div style={{ textAlign: 'center', padding: '32px 0' }}>
+          <IconBell size={36} style={{ color: 'var(--text-muted)', marginBottom: 12 }} />
+          <div style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', marginBottom: 4 }}>No alert rules configured</div>
+          <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: 16 }}>
+            Set up repeat notifications and escalation policies for incidents
+          </div>
+          <button
+            className="btn btn-primary"
+            style={{ fontSize: '0.85rem', padding: '8px 20px' }}
+            onClick={() => setEditing(true)}
+          >
+            <IconPlus size={14} /> Configure Alert Rules
+          </button>
+        </div>
+      )}
+
+      {/* Edit/Create form */}
+      {editing && (
+        <div className="card" style={{ borderColor: 'var(--accent)', marginBottom: 16 }}>
+          <h4 style={{ fontSize: '0.95rem', fontWeight: 600, marginBottom: 16 }}>
+            <IconAlertTriangle size={15} style={{ marginRight: 6 }} />
+            {hasRules ? 'Edit Alert Rules' : 'Configure Alert Rules'}
+          </h4>
+
+          {error && (
+            <div style={{
+              background: 'var(--danger-bg)',
+              border: '1px solid var(--danger)',
+              borderRadius: 'var(--radius)',
+              padding: '8px 12px',
+              marginBottom: 14,
+              fontSize: '0.85rem',
+              color: 'var(--danger)',
+            }}>
+              {error}
+            </div>
+          )}
+
+          <div className="form-group">
+            <label className="form-label">Repeat Notification Interval (minutes)</label>
+            <input
+              className="form-input"
+              type="number"
+              min="0"
+              max="1440"
+              value={form.repeat_interval_minutes}
+              onChange={e => set('repeat_interval_minutes', e.target.value)}
+            />
+            <div className="form-help">
+              Re-send notifications every N minutes while an incident is open. Set to 0 to disable repeats (only initial notification fires).
+            </div>
+          </div>
+
+          <div className="form-group">
+            <label className="form-label">Max Repeat Notifications</label>
+            <input
+              className="form-input"
+              type="number"
+              min="1"
+              max="100"
+              value={form.max_repeats}
+              onChange={e => set('max_repeats', e.target.value)}
+              disabled={Number(form.repeat_interval_minutes) === 0}
+            />
+            <div className="form-help">
+              Maximum number of repeat notifications per incident. Prevents alert fatigue during long outages.
+            </div>
+          </div>
+
+          <div className="form-group">
+            <label className="form-label">Escalation After (minutes)</label>
+            <input
+              className="form-input"
+              type="number"
+              min="0"
+              max="1440"
+              value={form.escalation_after_minutes}
+              onChange={e => set('escalation_after_minutes', e.target.value)}
+            />
+            <div className="form-help">
+              Send an escalation notification if the incident is not acknowledged within this time. Set to 0 to disable escalation.
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
+            <button
+              className="btn btn-secondary"
+              style={{ fontSize: '0.85rem', padding: '6px 14px' }}
+              onClick={() => {
+                setEditing(false);
+                setError(null);
+                if (hasRules) {
+                  setForm({
+                    repeat_interval_minutes: rules.repeat_interval_minutes,
+                    max_repeats: rules.max_repeats,
+                    escalation_after_minutes: rules.escalation_after_minutes,
+                  });
+                }
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              className="btn btn-primary"
+              style={{ fontSize: '0.85rem', padding: '6px 14px' }}
+              disabled={saving}
+              onClick={handleSave}
+            >
+              {saving ? 'Saving...' : <><IconSave size={13} /> Save Rules</>}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Alert Log */}
+      <div style={{ marginTop: hasRules || editing ? 0 : 16 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+          <h4 style={{ fontSize: '0.95rem', fontWeight: 600, margin: 0 }}>
+            <IconFileText size={14} style={{ marginRight: 6 }} />
+            Alert Log
+          </h4>
+          <button
+            className="btn btn-secondary"
+            style={{ fontSize: '0.75rem', padding: '4px 10px' }}
+            onClick={() => { setLogLoading(true); loadLog(); }}
+          >
+            Refresh
+          </button>
+        </div>
+
+        {logLoading ? (
+          <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', padding: '8px 0' }}>Loading alert log...</div>
+        ) : log.length === 0 ? (
+          <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', padding: '16px 0', textAlign: 'center' }}>
+            No alerts have been sent for this monitor yet
+          </div>
+        ) : (
+          <div style={{ overflow: 'auto' }}>
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Type</th>
+                  <th>Event</th>
+                  <th>Channel</th>
+                  <th>Sent</th>
+                </tr>
+              </thead>
+              <tbody>
+                {log.map((entry) => {
+                  const typeColor = entry.alert_type === 'escalation' ? 'var(--warning, #ffa502)'
+                    : entry.alert_type === 'reminder' ? 'var(--accent)'
+                    : entry.alert_type === 'resolved' ? 'var(--success)'
+                    : 'var(--danger)';
+                  const typeIcon = entry.alert_type === 'escalation' ? <IconAlertTriangle size={12} />
+                    : entry.alert_type === 'reminder' ? <IconClock size={12} />
+                    : entry.alert_type === 'resolved' ? <IconCheckCircle size={12} />
+                    : <IconAlertCircle size={12} />;
+                  return (
+                    <tr key={entry.id}>
+                      <td>
+                        <span style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 4,
+                          padding: '2px 8px',
+                          borderRadius: 10,
+                          fontSize: '0.75rem',
+                          fontWeight: 600,
+                          background: typeColor + '22',
+                          color: typeColor,
+                        }}>
+                          {typeIcon}
+                          {entry.alert_type}
+                        </span>
+                      </td>
+                      <td style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {entry.event}
+                      </td>
+                      <td style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
+                        {entry.channel_id ? entry.channel_id.slice(0, 8) + '…' : '—'}
+                      </td>
+                      <td style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }} title={formatTime(entry.sent_at)}>
+                        {relativeTime(entry.sent_at)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 const HTTP_METHODS = ['GET', 'POST', 'HEAD', 'PUT', 'DELETE', 'PATCH'];
 
 function EditMonitorForm({ monitor, manageKey, onSaved, onCancel }) {
@@ -2121,13 +2507,13 @@ export default function MonitorDetail({ id, manageKey: urlKey, onBack }) {
 
       {/* Tabs */}
       <div style={{ display: 'flex', gap: 4, margin: '24px 0 16px', borderBottom: '1px solid var(--border)', paddingBottom: 8, flexWrap: 'wrap' }}>
-        {['overview', 'regions', 'heartbeats', 'incidents', 'maintenance', 'badges', ...(manageKey ? ['notifications'] : [])].map((t) => (
+        {['overview', 'regions', 'heartbeats', 'incidents', 'maintenance', 'badges', ...(manageKey ? ['alerts', 'notifications'] : [])].map((t) => (
           <button
             key={t}
             className={`nav-btn ${tab === t ? 'active' : ''}`}
             onClick={() => setTab(t)}
           >
-            {t === 'overview' ? <><IconDashboard size={13} /> Overview</> : t === 'regions' ? <><IconGlobe size={13} /> Regions</> : t === 'heartbeats' ? <><IconHeart size={13} /> Heartbeats</> : t === 'incidents' ? <><IconZap size={13} /> Incidents ({incidents.length})</> : t === 'maintenance' ? <><IconWrench size={13} /> Maintenance</> : t === 'badges' ? <><IconTag size={13} /> Badges</> : <><IconBell size={13} /> Notifications</>}
+            {t === 'overview' ? <><IconDashboard size={13} /> Overview</> : t === 'regions' ? <><IconGlobe size={13} /> Regions</> : t === 'heartbeats' ? <><IconHeart size={13} /> Heartbeats</> : t === 'incidents' ? <><IconZap size={13} /> Incidents ({incidents.length})</> : t === 'maintenance' ? <><IconWrench size={13} /> Maintenance</> : t === 'badges' ? <><IconTag size={13} /> Badges</> : t === 'alerts' ? <><IconAlertTriangle size={13} /> Alerts</> : <><IconBell size={13} /> Notifications</>}
           </button>
         ))}
       </div>
@@ -2155,6 +2541,8 @@ export default function MonitorDetail({ id, manageKey: urlKey, onBack }) {
       {tab === 'maintenance' && <MaintenanceManager monitorId={id} manageKey={manageKey} />}
 
       {tab === 'badges' && <BadgeEmbed monitorId={id} />}
+
+      {tab === 'alerts' && manageKey && <AlertRulesManager monitorId={id} manageKey={manageKey} />}
 
       {tab === 'notifications' && manageKey && <NotificationManager monitorId={id} manageKey={manageKey} />}
     </div>

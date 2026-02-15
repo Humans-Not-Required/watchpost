@@ -267,6 +267,44 @@ export async function removePageMonitor(slugOrId, monitorId, manageKey) {
   });
 }
 
+// ── Alert Rules ──
+
+export async function getAlertRules(monitorId, key) {
+  const url = `${BASE}/monitors/${monitorId}/alert-rules`;
+  const res = await fetch(url, {
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+  });
+  if (res.status === 404) return null; // no rules configured
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(body.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function setAlertRules(monitorId, data, key) {
+  return request(`/monitors/${monitorId}/alert-rules`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+    headers: { Authorization: `Bearer ${key}` },
+  });
+}
+
+export async function deleteAlertRules(monitorId, key) {
+  return request(`/monitors/${monitorId}/alert-rules`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${key}` },
+  });
+}
+
+export async function getAlertLog(monitorId, key, limit = 50, after = null) {
+  const params = [`limit=${limit}`];
+  if (after) params.push(`after=${encodeURIComponent(after)}`);
+  return request(`/monitors/${monitorId}/alert-log?${params.join('&')}`, {
+    headers: { Authorization: `Bearer ${key}` },
+  });
+}
+
 export async function getMonitorConsensus(monitorId) {
   const url = `${BASE}/monitors/${monitorId}/consensus`;
   const res = await fetch(url);
