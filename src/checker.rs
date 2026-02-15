@@ -26,6 +26,41 @@ pub fn prune_heartbeats(db: &Db, days: u32) -> usize {
     .unwrap_or(0)
 }
 
+// ─── Monitor Check Model ────────────────────────────────────────────────────
+
+struct MonitorCheck {
+    id: String,
+    name: String,
+    url: String,
+    method: String,
+    timeout_ms: u32,
+    expected_status: u16,
+    body_contains: Option<String>,
+    headers: Option<String>,
+    confirmation_threshold: u32,
+    consecutive_failures: u32,
+    current_status: String,
+    #[allow(dead_code)]
+    interval_seconds: u32,
+    response_time_threshold_ms: Option<u32>,
+    follow_redirects: bool,
+    monitor_type: String,
+    dns_record_type: String,
+    dns_expected: Option<String>,
+}
+
+/// Result of executing a check (before incident lifecycle processing).
+struct CheckResult {
+    status: String,
+    response_time_ms: u32,
+    status_code: Option<u16>,
+    error_message: Option<String>,
+    /// Extra data to include in the check.completed SSE event.
+    extra_sse_data: Option<serde_json::Value>,
+}
+
+// ─── Background Checker Loop ────────────────────────────────────────────────
+
 /// Background check scheduler. Runs in a tokio task.
 pub async fn run_checker(db: Arc<Db>, broadcaster: Arc<EventBroadcaster>, shutdown: rocket::Shutdown) {
     // Wait 30s for server to warm up
@@ -46,6 +81,12 @@ pub async fn run_checker(db: Arc<Db>, broadcaster: Arc<EventBroadcaster>, shutdo
         .build()
         .expect("Failed to build HTTP client (no redirects)");
 
+    // Shared webhook client for TCP/DNS checks (which don't have their own HTTP client)
+    let webhook_client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .expect("Failed to build webhook client");
+
     // Track last retention run so we only prune once per hour
     let mut last_retention = std::time::Instant::now() - Duration::from_secs(3600);
 
@@ -59,6 +100,7 @@ pub async fn run_checker(db: Arc<Db>, broadcaster: Arc<EventBroadcaster>, shutdo
             }
             last_retention = std::time::Instant::now();
         }
+
         // Find the next monitor due for a check
         let monitor = {
             let conn = db.conn.lock().unwrap();
@@ -97,14 +139,24 @@ pub async fn run_checker(db: Arc<Db>, broadcaster: Arc<EventBroadcaster>, shutdo
 
         match monitor {
             Some(m) => {
-                if m.monitor_type == "tcp" {
-                    run_tcp_check(&db, &broadcaster, &m).await;
-                } else if m.monitor_type == "dns" {
-                    run_dns_check(&db, &broadcaster, &m).await;
-                } else {
-                    let client = if m.follow_redirects { &client_follow } else { &client_no_follow };
-                    run_check(client, &db, &broadcaster, &m).await;
-                }
+                // Execute the appropriate check type
+                let result = match m.monitor_type.as_str() {
+                    "tcp" => execute_tcp_check(&m).await,
+                    "dns" => execute_dns_check(&m).await,
+                    _ => {
+                        let client = if m.follow_redirects { &client_follow } else { &client_no_follow };
+                        execute_http_check(client, &m).await
+                    }
+                };
+
+                // Pick the right HTTP client for webhook delivery
+                let notif_client = match m.monitor_type.as_str() {
+                    "tcp" | "dns" => &webhook_client,
+                    _ => if m.follow_redirects { &client_follow } else { &client_no_follow },
+                };
+
+                // Shared lifecycle: heartbeat, incidents, notifications, SSE
+                process_check_result(&db, &broadcaster, notif_client, &m, result).await;
             }
             None => {
                 // No monitors due — sleep a bit before checking again
@@ -123,28 +175,10 @@ pub async fn run_checker(db: Arc<Db>, broadcaster: Arc<EventBroadcaster>, shutdo
     }
 }
 
-struct MonitorCheck {
-    id: String,
-    name: String,
-    url: String,
-    method: String,
-    timeout_ms: u32,
-    expected_status: u16,
-    body_contains: Option<String>,
-    headers: Option<String>,
-    confirmation_threshold: u32,
-    consecutive_failures: u32,
-    current_status: String,
-    #[allow(dead_code)]
-    interval_seconds: u32,
-    response_time_threshold_ms: Option<u32>,
-    follow_redirects: bool,
-    monitor_type: String,
-    dns_record_type: String,
-    dns_expected: Option<String>,
-}
+// ─── Check Execution (type-specific) ────────────────────────────────────────
 
-async fn run_check(client: &reqwest::Client, db: &Db, broadcaster: &EventBroadcaster, monitor: &MonitorCheck) {
+/// Execute an HTTP health check. Returns the raw check result.
+async fn execute_http_check(client: &reqwest::Client, monitor: &MonitorCheck) -> CheckResult {
     let start = std::time::Instant::now();
 
     // Build request
@@ -172,8 +206,6 @@ async fn run_check(client: &reqwest::Client, db: &Db, broadcaster: &EventBroadca
     // Execute
     let result = req.send().await;
     let elapsed_ms = start.elapsed().as_millis() as u32;
-
-    // Use per-monitor response time threshold if configured, otherwise no degraded-by-latency
     let rt_threshold = monitor.response_time_threshold_ms;
 
     let (status, status_code, error_message) = match result {
@@ -184,27 +216,13 @@ async fn run_check(client: &reqwest::Client, db: &Db, broadcaster: &EventBroadca
             } else if let Some(ref expected_body) = monitor.body_contains {
                 match resp.text().await {
                     Ok(body) if body.contains(expected_body) => {
-                        if let Some(threshold) = rt_threshold {
-                            if elapsed_ms > threshold {
-                                ("degraded".to_string(), Some(code), Some(format!("Response time {}ms exceeds {}ms threshold", elapsed_ms, threshold)))
-                            } else {
-                                ("up".to_string(), Some(code), None)
-                            }
-                        } else {
-                            ("up".to_string(), Some(code), None)
-                        }
+                        check_rt_threshold(rt_threshold, elapsed_ms, code)
                     }
                     Ok(_) => ("down".to_string(), Some(code), Some("Body match failed".to_string())),
                     Err(e) => ("down".to_string(), Some(code), Some(format!("Body read error: {}", e))),
                 }
-            } else if let Some(threshold) = rt_threshold {
-                if elapsed_ms > threshold {
-                    ("degraded".to_string(), Some(code), Some(format!("Response time {}ms exceeds {}ms threshold", elapsed_ms, threshold)))
-                } else {
-                    ("up".to_string(), Some(code), None)
-                }
             } else {
-                ("up".to_string(), Some(code), None)
+                check_rt_threshold(rt_threshold, elapsed_ms, code)
             }
         }
         Err(e) => {
@@ -219,197 +237,30 @@ async fn run_check(client: &reqwest::Client, db: &Db, broadcaster: &EventBroadca
         }
     };
 
-    // Check maintenance window status BEFORE acquiring DB lock (is_in_maintenance acquires its own)
-    let in_maintenance = is_in_maintenance(db, &monitor.id);
-
-    // Collect webhook data while holding DB lock, then release before firing
-    let webhook_event: Option<WebhookPayload>;
-
-    {
-        // Scoped DB lock
-        let conn = db.conn.lock().unwrap();
-        let hb_id = uuid::Uuid::new_v4().to_string();
-        let hb_seq: i64 = conn.query_row("SELECT COALESCE(MAX(seq), 0) + 1 FROM heartbeats", [], |r| r.get(0)).unwrap_or(1);
-        let _ = conn.execute(
-            "INSERT INTO heartbeats (id, monitor_id, status, response_time_ms, status_code, error_message, seq) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![hb_id, monitor.id, status, elapsed_ms, status_code, error_message, hb_seq],
-        );
-
-        // Update consecutive failures and determine status transition
-        let (new_consecutive, mut effective_status) = if status == "down" {
-            let new_count = monitor.consecutive_failures + 1;
-            if new_count >= monitor.confirmation_threshold {
-                (new_count, "down".to_string())
-            } else {
-                (new_count, monitor.current_status.clone())
-            }
-        } else {
-            (0, status.clone())
-        };
-
-        // If in maintenance window and would be "down", set status to "maintenance" instead
-        if in_maintenance && effective_status == "down" {
-            effective_status = "maintenance".to_string();
-        }
-
-        let _ = conn.execute(
-            "UPDATE monitors SET current_status = ?1, last_checked_at = datetime('now'), consecutive_failures = ?2, updated_at = datetime('now') WHERE id = ?3",
-            params![effective_status, new_consecutive, monitor.id],
-        );
-
-        // Handle incident lifecycle
-        let prev_status = &monitor.current_status;
-        let now_str = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-
-        if prev_status != "down" && prev_status != "maintenance" && effective_status == "down" {
-            // Transition to down (not in maintenance) — create incident
-            let inc_id = uuid::Uuid::new_v4().to_string();
-            let cause = error_message.clone().unwrap_or_else(|| "Monitor is down".to_string());
-            let inc_seq: i64 = conn.query_row("SELECT COALESCE(MAX(seq), 0) + 1 FROM incidents", [], |r| r.get(0)).unwrap_or(1);
-            let _ = conn.execute(
-                "INSERT INTO incidents (id, monitor_id, cause, seq) VALUES (?1, ?2, ?3, ?4)",
-                params![inc_id, monitor.id, cause, inc_seq],
-            );
-
-            webhook_event = Some(WebhookPayload {
-                event: "incident.created".to_string(),
-                monitor: WebhookMonitor {
-                    id: monitor.id.clone(),
-                    name: monitor.name.clone(),
-                    url: monitor.url.clone(),
-                    current_status: "down".to_string(),
-                },
-                incident: Some(WebhookIncident {
-                    id: inc_id,
-                    cause,
-                    started_at: now_str.clone(),
-                    resolved_at: None,
-                }),
-                timestamp: now_str,
-            });
-        } else if effective_status == "maintenance" && prev_status != "maintenance" {
-            // Entering maintenance — no incident, but emit SSE event
-            webhook_event = Some(WebhookPayload {
-                event: "maintenance.started".to_string(),
-                monitor: WebhookMonitor {
-                    id: monitor.id.clone(),
-                    name: monitor.name.clone(),
-                    url: monitor.url.clone(),
-                    current_status: "maintenance".to_string(),
-                },
-                incident: None,
-                timestamp: now_str,
-            });
-        } else if prev_status != "degraded" && effective_status == "degraded" {
-            // Transition to degraded — notify but don't create incident
-            webhook_event = Some(WebhookPayload {
-                event: "monitor.degraded".to_string(),
-                monitor: WebhookMonitor {
-                    id: monitor.id.clone(),
-                    name: monitor.name.clone(),
-                    url: monitor.url.clone(),
-                    current_status: "degraded".to_string(),
-                },
-                incident: None,
-                timestamp: now_str,
-            });
-        } else if prev_status == "degraded" && effective_status == "up" {
-            // Recovered from degraded — notify
-            webhook_event = Some(WebhookPayload {
-                event: "monitor.recovered".to_string(),
-                monitor: WebhookMonitor {
-                    id: monitor.id.clone(),
-                    name: monitor.name.clone(),
-                    url: monitor.url.clone(),
-                    current_status: "up".to_string(),
-                },
-                incident: None,
-                timestamp: now_str,
-            });
-        } else if prev_status == "maintenance" && effective_status == "up" {
-            // Recovered from maintenance — no incidents to resolve, just notify
-            webhook_event = Some(WebhookPayload {
-                event: "maintenance.ended".to_string(),
-                monitor: WebhookMonitor {
-                    id: monitor.id.clone(),
-                    name: monitor.name.clone(),
-                    url: monitor.url.clone(),
-                    current_status: "up".to_string(),
-                },
-                incident: None,
-                timestamp: now_str,
-            });
-        } else if prev_status == "down" && effective_status != "down" && effective_status != "maintenance" {
-            // Transition from down — resolve open incidents
-            let _ = conn.execute(
-                "UPDATE incidents SET resolved_at = datetime('now') WHERE monitor_id = ?1 AND resolved_at IS NULL",
-                params![monitor.id],
-            );
-
-            // Get the most recently resolved incident for the payload
-            let incident_info: Option<(String, String, String)> = conn.query_row(
-                "SELECT id, cause, started_at FROM incidents WHERE monitor_id = ?1 ORDER BY started_at DESC LIMIT 1",
-                params![monitor.id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            ).ok();
-
-            webhook_event = Some(WebhookPayload {
-                event: "incident.resolved".to_string(),
-                monitor: WebhookMonitor {
-                    id: monitor.id.clone(),
-                    name: monitor.name.clone(),
-                    url: monitor.url.clone(),
-                    current_status: effective_status.clone(),
-                },
-                incident: incident_info.map(|(id, cause, started_at)| WebhookIncident {
-                    id,
-                    cause,
-                    started_at,
-                    resolved_at: Some(now_str.clone()),
-                }),
-                timestamp: now_str,
-            });
-        } else {
-            webhook_event = None;
-        }
-    } // DB lock released here
-
-    // Fire webhooks and SSE events outside the DB lock
-    if let Some(ref payload) = webhook_event {
-        // SSE broadcast
-        broadcaster.send(SseEvent {
-            event_type: payload.event.clone(),
-            monitor_id: monitor.id.clone(),
-            data: serde_json::to_value(payload).unwrap_or_default(),
-        });
-
-        // Webhooks
-        let urls = notifications::get_webhook_urls(db, &monitor.id);
-        if !urls.is_empty() {
-            notifications::fire_webhooks(client, &urls, payload).await;
-        }
-
-        // Emails
-        let emails = notifications::get_email_addresses(db, &monitor.id);
-        if !emails.is_empty() {
-            notifications::fire_emails(&emails, payload).await;
-        }
+    CheckResult {
+        status,
+        response_time_ms: elapsed_ms,
+        status_code,
+        error_message,
+        extra_sse_data: None,
     }
-
-    // Always emit check.completed SSE event
-    broadcaster.send(SseEvent {
-        event_type: "check.completed".to_string(),
-        monitor_id: monitor.id.clone(),
-        data: serde_json::json!({
-            "status": status,
-            "response_time_ms": elapsed_ms,
-            "status_code": status_code,
-        }),
-    });
 }
 
-/// Run a TCP connectivity check (connect to host:port, measure latency)
-async fn run_tcp_check(db: &Db, broadcaster: &EventBroadcaster, monitor: &MonitorCheck) {
+/// Helper: check response time against optional threshold.
+fn check_rt_threshold(threshold: Option<u32>, elapsed_ms: u32, code: u16) -> (String, Option<u16>, Option<String>) {
+    if let Some(t) = threshold {
+        if elapsed_ms > t {
+            ("degraded".to_string(), Some(code), Some(format!("Response time {}ms exceeds {}ms threshold", elapsed_ms, t)))
+        } else {
+            ("up".to_string(), Some(code), None)
+        }
+    } else {
+        ("up".to_string(), Some(code), None)
+    }
+}
+
+/// Execute a TCP connectivity check.
+async fn execute_tcp_check(monitor: &MonitorCheck) -> CheckResult {
     use tokio::net::TcpStream;
 
     let start = std::time::Instant::now();
@@ -423,12 +274,10 @@ async fn run_tcp_check(db: &Db, broadcaster: &EventBroadcaster, monitor: &Monito
     ).await;
 
     let elapsed_ms = start.elapsed().as_millis() as u32;
-
     let rt_threshold = monitor.response_time_threshold_ms;
 
     let (status, error_message) = match result {
         Ok(Ok(_stream)) => {
-            // Connection successful — check response time threshold
             if let Some(threshold) = rt_threshold {
                 if elapsed_ms > threshold {
                     ("degraded".to_string(), Some(format!("TCP connect time {}ms exceeds {}ms threshold", elapsed_ms, threshold)))
@@ -452,145 +301,17 @@ async fn run_tcp_check(db: &Db, broadcaster: &EventBroadcaster, monitor: &Monito
         }
     };
 
-    // Check maintenance window status BEFORE acquiring DB lock
-    let in_maintenance = is_in_maintenance(db, &monitor.id);
-
-    // Reuse the same incident lifecycle logic as HTTP checks
-    let webhook_event: Option<WebhookPayload>;
-
-    {
-        let conn = db.conn.lock().unwrap();
-        let hb_id = uuid::Uuid::new_v4().to_string();
-        let hb_seq: i64 = conn.query_row("SELECT COALESCE(MAX(seq), 0) + 1 FROM heartbeats", [], |r| r.get(0)).unwrap_or(1);
-        let _ = conn.execute(
-            "INSERT INTO heartbeats (id, monitor_id, status, response_time_ms, status_code, error_message, seq) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![hb_id, monitor.id, status, elapsed_ms, Option::<u16>::None, error_message, hb_seq],
-        );
-
-        let (new_consecutive, mut effective_status) = if status == "down" {
-            let new_count = monitor.consecutive_failures + 1;
-            if new_count >= monitor.confirmation_threshold {
-                (new_count, "down".to_string())
-            } else {
-                (new_count, monitor.current_status.clone())
-            }
-        } else {
-            (0, status.clone())
-        };
-
-        if in_maintenance && effective_status == "down" {
-            effective_status = "maintenance".to_string();
-        }
-
-        let _ = conn.execute(
-            "UPDATE monitors SET current_status = ?1, last_checked_at = datetime('now'), consecutive_failures = ?2, updated_at = datetime('now') WHERE id = ?3",
-            params![effective_status, new_consecutive, monitor.id],
-        );
-
-        let prev_status = &monitor.current_status;
-        let now_str = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-
-        if prev_status != "down" && prev_status != "maintenance" && effective_status == "down" {
-            let inc_id = uuid::Uuid::new_v4().to_string();
-            let cause = error_message.clone().unwrap_or_else(|| "Monitor is down".to_string());
-            let inc_seq: i64 = conn.query_row("SELECT COALESCE(MAX(seq), 0) + 1 FROM incidents", [], |r| r.get(0)).unwrap_or(1);
-            let _ = conn.execute(
-                "INSERT INTO incidents (id, monitor_id, cause, seq) VALUES (?1, ?2, ?3, ?4)",
-                params![inc_id, monitor.id, cause, inc_seq],
-            );
-            webhook_event = Some(WebhookPayload {
-                event: "incident.created".to_string(),
-                monitor: WebhookMonitor { id: monitor.id.clone(), name: monitor.name.clone(), url: monitor.url.clone(), current_status: "down".to_string() },
-                incident: Some(WebhookIncident { id: inc_id, cause, started_at: now_str.clone(), resolved_at: None }),
-                timestamp: now_str,
-            });
-        } else if effective_status == "maintenance" && prev_status != "maintenance" {
-            webhook_event = Some(WebhookPayload {
-                event: "maintenance.started".to_string(),
-                monitor: WebhookMonitor { id: monitor.id.clone(), name: monitor.name.clone(), url: monitor.url.clone(), current_status: "maintenance".to_string() },
-                incident: None,
-                timestamp: now_str,
-            });
-        } else if prev_status != "degraded" && effective_status == "degraded" {
-            webhook_event = Some(WebhookPayload {
-                event: "monitor.degraded".to_string(),
-                monitor: WebhookMonitor { id: monitor.id.clone(), name: monitor.name.clone(), url: monitor.url.clone(), current_status: "degraded".to_string() },
-                incident: None,
-                timestamp: now_str,
-            });
-        } else if prev_status == "degraded" && effective_status == "up" {
-            webhook_event = Some(WebhookPayload {
-                event: "monitor.recovered".to_string(),
-                monitor: WebhookMonitor { id: monitor.id.clone(), name: monitor.name.clone(), url: monitor.url.clone(), current_status: "up".to_string() },
-                incident: None,
-                timestamp: now_str,
-            });
-        } else if prev_status == "maintenance" && effective_status == "up" {
-            webhook_event = Some(WebhookPayload {
-                event: "maintenance.ended".to_string(),
-                monitor: WebhookMonitor { id: monitor.id.clone(), name: monitor.name.clone(), url: monitor.url.clone(), current_status: "up".to_string() },
-                incident: None,
-                timestamp: now_str,
-            });
-        } else if prev_status == "down" && effective_status != "down" && effective_status != "maintenance" {
-            let _ = conn.execute(
-                "UPDATE incidents SET resolved_at = datetime('now') WHERE monitor_id = ?1 AND resolved_at IS NULL",
-                params![monitor.id],
-            );
-            let incident_info: Option<(String, String, String)> = conn.query_row(
-                "SELECT id, cause, started_at FROM incidents WHERE monitor_id = ?1 ORDER BY started_at DESC LIMIT 1",
-                params![monitor.id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            ).ok();
-            webhook_event = Some(WebhookPayload {
-                event: "incident.resolved".to_string(),
-                monitor: WebhookMonitor { id: monitor.id.clone(), name: monitor.name.clone(), url: monitor.url.clone(), current_status: effective_status.clone() },
-                incident: incident_info.map(|(id, cause, started_at)| WebhookIncident { id, cause, started_at, resolved_at: Some(now_str.clone()) }),
-                timestamp: now_str,
-            });
-        } else {
-            webhook_event = None;
-        }
+    CheckResult {
+        status,
+        response_time_ms: elapsed_ms,
+        status_code: None,
+        error_message,
+        extra_sse_data: Some(serde_json::json!({"monitor_type": "tcp"})),
     }
-
-    // Fire webhooks and SSE events outside the DB lock
-    if let Some(ref payload) = webhook_event {
-        broadcaster.send(SseEvent {
-            event_type: payload.event.clone(),
-            monitor_id: monitor.id.clone(),
-            data: serde_json::to_value(payload).unwrap_or_default(),
-        });
-
-        // TCP checks don't have an HTTP client, create one for webhooks if needed
-        let urls = notifications::get_webhook_urls(db, &monitor.id);
-        if !urls.is_empty() {
-            let wh_client = reqwest::Client::builder()
-                .timeout(Duration::from_secs(10))
-                .build()
-                .unwrap();
-            notifications::fire_webhooks(&wh_client, &urls, payload).await;
-        }
-
-        let emails = notifications::get_email_addresses(db, &monitor.id);
-        if !emails.is_empty() {
-            notifications::fire_emails(&emails, payload).await;
-        }
-    }
-
-    // Always emit check.completed SSE event (no status_code for TCP)
-    broadcaster.send(SseEvent {
-        event_type: "check.completed".to_string(),
-        monitor_id: monitor.id.clone(),
-        data: serde_json::json!({
-            "monitor_type": "tcp",
-            "status": status,
-            "response_time_ms": elapsed_ms,
-        }),
-    });
 }
 
-/// Run a DNS resolution check
-async fn run_dns_check(db: &Db, broadcaster: &EventBroadcaster, monitor: &MonitorCheck) {
+/// Execute a DNS resolution check.
+async fn execute_dns_check(monitor: &MonitorCheck) -> CheckResult {
     use trust_dns_resolver::TokioAsyncResolver;
     use trust_dns_resolver::config::{ResolverConfig, ResolverOpts};
 
@@ -599,10 +320,8 @@ async fn run_dns_check(db: &Db, broadcaster: &EventBroadcaster, monitor: &Monito
     // Strip optional dns:// prefix
     let hostname = monitor.url.strip_prefix("dns://").unwrap_or(&monitor.url);
 
-    // Build resolver with default config (Google DNS)
     let resolver = TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default());
 
-    // Perform the lookup based on record type
     let record_type = monitor.dns_record_type.to_uppercase();
     let result = tokio::time::timeout(
         Duration::from_millis(monitor.timeout_ms as u64),
@@ -617,9 +336,11 @@ async fn run_dns_check(db: &Db, broadcaster: &EventBroadcaster, monitor: &Monito
             if values.is_empty() {
                 ("down".to_string(), Some(format!("No {} records found for {}", record_type, hostname)), None)
             } else if let Some(ref expected) = monitor.dns_expected {
-                // Check if any resolved value matches the expected value (case-insensitive)
                 let expected_lower = expected.to_lowercase();
-                let matched = values.iter().any(|v| v.to_lowercase() == expected_lower || v.to_lowercase().trim_end_matches('.') == expected_lower.trim_end_matches('.'));
+                let matched = values.iter().any(|v| {
+                    v.to_lowercase() == expected_lower
+                        || v.to_lowercase().trim_end_matches('.') == expected_lower.trim_end_matches('.')
+                });
                 if matched {
                     if let Some(threshold) = rt_threshold {
                         if elapsed_ms > threshold {
@@ -654,10 +375,20 @@ async fn run_dns_check(db: &Db, broadcaster: &EventBroadcaster, monitor: &Monito
         }
     };
 
-    record_dns_result(db, broadcaster, monitor, &status, elapsed_ms, error_message, resolved_values.as_deref()).await;
+    CheckResult {
+        status,
+        response_time_ms: elapsed_ms,
+        status_code: None,
+        error_message,
+        extra_sse_data: Some(serde_json::json!({
+            "monitor_type": "dns",
+            "dns_record_type": monitor.dns_record_type,
+            "resolved_values": resolved_values.unwrap_or_default(),
+        })),
+    }
 }
 
-/// Perform DNS lookup for a specific record type, returning resolved values as strings
+/// Perform DNS lookup for a specific record type, returning resolved values as strings.
 async fn dns_lookup(
     resolver: &trust_dns_resolver::TokioAsyncResolver,
     hostname: &str,
@@ -694,7 +425,6 @@ async fn dns_lookup(
             Ok(response.iter().map(|soa| format!("{} {} {} {} {} {} {}", soa.mname(), soa.rname(), soa.serial(), soa.refresh(), soa.retry(), soa.expire(), soa.minimum())).collect())
         }
         "CNAME" | "PTR" | "SRV" | "CAA" => {
-            // Use generic lookup for these types
             let rtype = match record_type {
                 "CNAME" => RecordType::CNAME,
                 "PTR" => RecordType::PTR,
@@ -709,131 +439,86 @@ async fn dns_lookup(
     }
 }
 
-/// Record DNS check result — same incident lifecycle logic as HTTP/TCP
-async fn record_dns_result(
+// ─── Shared Check Result Processing ─────────────────────────────────────────
+//
+// This is the single place where heartbeats, incident lifecycle, status
+// transitions, and notification dispatch happen — regardless of check type.
+
+async fn process_check_result(
     db: &Db,
     broadcaster: &EventBroadcaster,
+    http_client: &reqwest::Client,
     monitor: &MonitorCheck,
-    status: &str,
-    elapsed_ms: u32,
-    error_message: Option<String>,
-    resolved_values: Option<&[String]>,
+    result: CheckResult,
 ) {
-    let in_maintenance = crate::routes::is_in_maintenance(db, &monitor.id);
+    // Check maintenance window status BEFORE acquiring DB lock
+    let in_maintenance = is_in_maintenance(db, &monitor.id);
+
     let webhook_event: Option<WebhookPayload>;
 
     {
+        // ── Scoped DB lock ──────────────────────────────────────────────
         let conn = db.conn.lock().unwrap();
+
+        // Write heartbeat
         let hb_id = uuid::Uuid::new_v4().to_string();
-        let hb_seq: i64 = conn.query_row("SELECT COALESCE(MAX(seq), 0) + 1 FROM heartbeats", [], |r| r.get(0)).unwrap_or(1);
+        let hb_seq: i64 = conn
+            .query_row("SELECT COALESCE(MAX(seq), 0) + 1 FROM heartbeats", [], |r| r.get(0))
+            .unwrap_or(1);
         let _ = conn.execute(
             "INSERT INTO heartbeats (id, monitor_id, status, response_time_ms, status_code, error_message, seq) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![hb_id, monitor.id, status, elapsed_ms, Option::<u16>::None, error_message, hb_seq],
+            params![hb_id, monitor.id, result.status, result.response_time_ms, result.status_code, result.error_message, hb_seq],
         );
 
-        let (new_consecutive, mut effective_status) = if status == "down" {
+        // Update consecutive failures and determine effective status
+        let (new_consecutive, mut effective_status) = if result.status == "down" {
             let new_count = monitor.consecutive_failures + 1;
             if new_count >= monitor.confirmation_threshold {
                 (new_count, "down".to_string())
             } else {
+                // Not yet confirmed — keep previous status
                 (new_count, monitor.current_status.clone())
             }
         } else {
-            (0, status.to_string())
+            (0, result.status.clone())
         };
 
+        // If in maintenance window and would be "down", set to "maintenance" instead
         if in_maintenance && effective_status == "down" {
             effective_status = "maintenance".to_string();
         }
 
+        // Persist status + failure counter
         let _ = conn.execute(
             "UPDATE monitors SET current_status = ?1, last_checked_at = datetime('now'), consecutive_failures = ?2, updated_at = datetime('now') WHERE id = ?3",
             params![effective_status, new_consecutive, monitor.id],
         );
 
-        let prev_status = &monitor.current_status;
+        // ── Incident lifecycle ──────────────────────────────────────────
+        let prev = &monitor.current_status;
         let now_str = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
-        if prev_status != "down" && prev_status != "maintenance" && effective_status == "down" {
-            let inc_id = uuid::Uuid::new_v4().to_string();
-            let cause = error_message.clone().unwrap_or_else(|| "DNS check failed".to_string());
-            let inc_seq: i64 = conn.query_row("SELECT COALESCE(MAX(seq), 0) + 1 FROM incidents", [], |r| r.get(0)).unwrap_or(1);
-            let _ = conn.execute(
-                "INSERT INTO incidents (id, monitor_id, cause, seq) VALUES (?1, ?2, ?3, ?4)",
-                params![inc_id, monitor.id, cause, inc_seq],
-            );
-            webhook_event = Some(WebhookPayload {
-                event: "incident.created".to_string(),
-                monitor: WebhookMonitor { id: monitor.id.clone(), name: monitor.name.clone(), url: monitor.url.clone(), current_status: "down".to_string() },
-                incident: Some(WebhookIncident { id: inc_id, cause, started_at: now_str.clone(), resolved_at: None }),
-                timestamp: now_str,
-            });
-        } else if effective_status == "maintenance" && prev_status != "maintenance" {
-            webhook_event = Some(WebhookPayload {
-                event: "maintenance.started".to_string(),
-                monitor: WebhookMonitor { id: monitor.id.clone(), name: monitor.name.clone(), url: monitor.url.clone(), current_status: "maintenance".to_string() },
-                incident: None,
-                timestamp: now_str,
-            });
-        } else if prev_status != "degraded" && effective_status == "degraded" {
-            webhook_event = Some(WebhookPayload {
-                event: "monitor.degraded".to_string(),
-                monitor: WebhookMonitor { id: monitor.id.clone(), name: monitor.name.clone(), url: monitor.url.clone(), current_status: "degraded".to_string() },
-                incident: None,
-                timestamp: now_str,
-            });
-        } else if prev_status == "degraded" && effective_status == "up" {
-            webhook_event = Some(WebhookPayload {
-                event: "monitor.recovered".to_string(),
-                monitor: WebhookMonitor { id: monitor.id.clone(), name: monitor.name.clone(), url: monitor.url.clone(), current_status: "up".to_string() },
-                incident: None,
-                timestamp: now_str,
-            });
-        } else if prev_status == "maintenance" && effective_status == "up" {
-            webhook_event = Some(WebhookPayload {
-                event: "maintenance.ended".to_string(),
-                monitor: WebhookMonitor { id: monitor.id.clone(), name: monitor.name.clone(), url: monitor.url.clone(), current_status: "up".to_string() },
-                incident: None,
-                timestamp: now_str,
-            });
-        } else if prev_status == "down" && effective_status != "down" && effective_status != "maintenance" {
-            let _ = conn.execute(
-                "UPDATE incidents SET resolved_at = datetime('now') WHERE monitor_id = ?1 AND resolved_at IS NULL",
-                params![monitor.id],
-            );
-            let incident_info: Option<(String, String, String)> = conn.query_row(
-                "SELECT id, cause, started_at FROM incidents WHERE monitor_id = ?1 ORDER BY started_at DESC LIMIT 1",
-                params![monitor.id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            ).ok();
-            webhook_event = Some(WebhookPayload {
-                event: "incident.resolved".to_string(),
-                monitor: WebhookMonitor { id: monitor.id.clone(), name: monitor.name.clone(), url: monitor.url.clone(), current_status: effective_status.clone() },
-                incident: incident_info.map(|(id, cause, started_at)| WebhookIncident { id, cause, started_at, resolved_at: Some(now_str.clone()) }),
-                timestamp: now_str,
-            });
-        } else {
-            webhook_event = None;
-        }
-    }
+        webhook_event = resolve_transition(
+            &conn, monitor, prev, &effective_status, &result.error_message, &now_str,
+        );
+    } // DB lock released
 
-    // Fire webhooks and SSE events outside the DB lock
+    // ── Fire notifications outside the lock ──────────────────────────────
     if let Some(ref payload) = webhook_event {
+        // SSE broadcast
         broadcaster.send(SseEvent {
             event_type: payload.event.clone(),
             monitor_id: monitor.id.clone(),
             data: serde_json::to_value(payload).unwrap_or_default(),
         });
 
+        // Webhooks
         let urls = notifications::get_webhook_urls(db, &monitor.id);
         if !urls.is_empty() {
-            let wh_client = reqwest::Client::builder()
-                .timeout(Duration::from_secs(10))
-                .build()
-                .unwrap();
-            notifications::fire_webhooks(&wh_client, &urls, payload).await;
+            notifications::fire_webhooks(http_client, &urls, payload).await;
         }
 
+        // Emails
         let emails = notifications::get_email_addresses(db, &monitor.id);
         if !emails.is_empty() {
             notifications::fire_emails(&emails, payload).await;
@@ -841,15 +526,140 @@ async fn record_dns_result(
     }
 
     // Always emit check.completed SSE event
+    let mut sse_data = serde_json::json!({
+        "status": result.status,
+        "response_time_ms": result.response_time_ms,
+    });
+
+    // Merge status_code for HTTP checks
+    if let Some(code) = result.status_code {
+        sse_data["status_code"] = serde_json::json!(code);
+    }
+
+    // Merge type-specific extra data
+    if let Some(extra) = result.extra_sse_data {
+        if let (Some(base), Some(ext)) = (sse_data.as_object_mut(), extra.as_object()) {
+            for (k, v) in ext {
+                base.insert(k.clone(), v.clone());
+            }
+        }
+    }
+
     broadcaster.send(SseEvent {
         event_type: "check.completed".to_string(),
         monitor_id: monitor.id.clone(),
-        data: serde_json::json!({
-            "monitor_type": "dns",
-            "status": status,
-            "response_time_ms": elapsed_ms,
-            "dns_record_type": monitor.dns_record_type,
-            "resolved_values": resolved_values.unwrap_or(&[]),
-        }),
+        data: sse_data,
     });
+}
+
+/// Determine which status transition occurred and produce the appropriate
+/// webhook payload + DB side-effects (incident create/resolve).
+///
+/// Returns `None` if no notification-worthy transition happened.
+fn resolve_transition(
+    conn: &rusqlite::Connection,
+    monitor: &MonitorCheck,
+    prev: &str,
+    effective: &str,
+    error_message: &Option<String>,
+    now_str: &str,
+) -> Option<WebhookPayload> {
+    let mk_monitor = |status: &str| WebhookMonitor {
+        id: monitor.id.clone(),
+        name: monitor.name.clone(),
+        url: monitor.url.clone(),
+        current_status: status.to_string(),
+    };
+
+    // Transition: → down (new incident)
+    if prev != "down" && prev != "maintenance" && effective == "down" {
+        let inc_id = uuid::Uuid::new_v4().to_string();
+        let cause = error_message.clone().unwrap_or_else(|| "Monitor is down".to_string());
+        let inc_seq: i64 = conn
+            .query_row("SELECT COALESCE(MAX(seq), 0) + 1 FROM incidents", [], |r| r.get(0))
+            .unwrap_or(1);
+        let _ = conn.execute(
+            "INSERT INTO incidents (id, monitor_id, cause, seq) VALUES (?1, ?2, ?3, ?4)",
+            params![inc_id, monitor.id, cause, inc_seq],
+        );
+        return Some(WebhookPayload {
+            event: "incident.created".to_string(),
+            monitor: mk_monitor("down"),
+            incident: Some(WebhookIncident {
+                id: inc_id,
+                cause,
+                started_at: now_str.to_string(),
+                resolved_at: None,
+            }),
+            timestamp: now_str.to_string(),
+        });
+    }
+
+    // Transition: → maintenance (entering maintenance window)
+    if effective == "maintenance" && prev != "maintenance" {
+        return Some(WebhookPayload {
+            event: "maintenance.started".to_string(),
+            monitor: mk_monitor("maintenance"),
+            incident: None,
+            timestamp: now_str.to_string(),
+        });
+    }
+
+    // Transition: → degraded
+    if prev != "degraded" && effective == "degraded" {
+        return Some(WebhookPayload {
+            event: "monitor.degraded".to_string(),
+            monitor: mk_monitor("degraded"),
+            incident: None,
+            timestamp: now_str.to_string(),
+        });
+    }
+
+    // Transition: degraded → up (recovered from degraded)
+    if prev == "degraded" && effective == "up" {
+        return Some(WebhookPayload {
+            event: "monitor.recovered".to_string(),
+            monitor: mk_monitor("up"),
+            incident: None,
+            timestamp: now_str.to_string(),
+        });
+    }
+
+    // Transition: maintenance → up (maintenance ended)
+    if prev == "maintenance" && effective == "up" {
+        return Some(WebhookPayload {
+            event: "maintenance.ended".to_string(),
+            monitor: mk_monitor("up"),
+            incident: None,
+            timestamp: now_str.to_string(),
+        });
+    }
+
+    // Transition: down → recovered (resolve open incidents)
+    if prev == "down" && effective != "down" && effective != "maintenance" {
+        let _ = conn.execute(
+            "UPDATE incidents SET resolved_at = datetime('now') WHERE monitor_id = ?1 AND resolved_at IS NULL",
+            params![monitor.id],
+        );
+        let incident_info: Option<(String, String, String)> = conn
+            .query_row(
+                "SELECT id, cause, started_at FROM incidents WHERE monitor_id = ?1 ORDER BY started_at DESC LIMIT 1",
+                params![monitor.id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .ok();
+        return Some(WebhookPayload {
+            event: "incident.resolved".to_string(),
+            monitor: mk_monitor(effective),
+            incident: incident_info.map(|(id, cause, started_at)| WebhookIncident {
+                id,
+                cause,
+                started_at,
+                resolved_at: Some(now_str.to_string()),
+            }),
+            timestamp: now_str.to_string(),
+        });
+    }
+
+    None
 }

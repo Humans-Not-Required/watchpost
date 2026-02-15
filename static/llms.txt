@@ -132,7 +132,10 @@ GET /api/v1/monitors/:id/uptime — uptime stats
 GET /api/v1/monitors/:id/uptime-history — daily uptime history (?days=N, max 90)
 GET /api/v1/uptime-history — aggregate daily uptime history (?days=N, max 90)
 GET /api/v1/monitors/:id/incidents — incidents
+GET /api/v1/incidents/:id — single incident detail (includes notes_count)
 POST /api/v1/incidents/:id/acknowledge — ack incident (auth)
+POST /api/v1/incidents/:id/notes — add investigation note (auth)
+GET /api/v1/incidents/:id/notes — list notes (chronological, no auth)
 POST /api/v1/monitors/:id/notifications — add notification (auth)
 GET /api/v1/monitors/:id/notifications — list notifications (auth)
 DELETE /api/v1/notifications/:id — remove notification (auth)
@@ -182,6 +185,15 @@ GET /api/v1/monitors/:id/sla — SLA status with error budget tracking
   - "degraded" heartbeats count as successful (service responded, just slow)
   sla_target: 0-100 (percentage), sla_period_days: 1-365 (default: 30)
   Returns 404 with code SLA_NOT_CONFIGURED if no target is set on the monitor.
+
+## Incident Notes (Investigation Timeline)
+Track investigation progress with structured notes on incidents.
+POST /api/v1/incidents/:id/notes — add a note (auth required)
+  Body: {"content": "Investigating DNS resolution failure", "author": "Nanook"}
+  Author defaults to "anonymous" if omitted. Content: 1-10,000 chars. Author: 1-200 chars.
+GET /api/v1/incidents/:id/notes — list notes chronologically (no auth, ?limit= up to 200)
+GET /api/v1/incidents/:id — single incident detail with notes_count field
+Notes are CASCADE deleted when the parent incident or monitor is removed.
 
 ## Maintenance Windows
 Schedule downtime so checks still run but incidents are suppressed.

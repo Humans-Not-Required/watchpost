@@ -373,6 +373,22 @@ pub struct SlaStatus {
     pub period_end: String,
 }
 
+#[derive(Debug, Serialize, Clone)]
+pub struct IncidentNote {
+    pub id: String,
+    pub incident_id: String,
+    pub content: String,
+    pub author: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateIncidentNote {
+    pub content: String,
+    #[serde(default = "default_actor")]
+    pub author: String,
+}
+
 #[derive(Debug, Serialize)]
 pub struct UptimeHistoryDay {
     pub date: String,

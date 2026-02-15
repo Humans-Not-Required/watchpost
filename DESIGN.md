@@ -113,8 +113,10 @@ Per the HNR design principles: **tokens tied to resources, not users.**
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | GET | /api/v1/monitors/:id/incidents | ❌ | Incident history |
-| GET | /api/v1/incidents/:id | ❌ | Single incident detail |
+| GET | /api/v1/incidents/:id | ❌ | Single incident detail (includes notes_count) |
 | POST | /api/v1/incidents/:id/acknowledge | 🔑 | Ack incident with note |
+| POST | /api/v1/incidents/:id/notes | 🔑 | Add investigation note |
+| GET | /api/v1/incidents/:id/notes | ❌ | List notes (chronological) |
 
 ### Notification Channels
 | Method | Path | Auth | Description |

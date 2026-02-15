@@ -33,7 +33,10 @@ fn test_client_with_db() -> (Client, String) {
             watchpost::routes::get_heartbeats,
             watchpost::routes::get_uptime,
             watchpost::routes::get_incidents,
+            watchpost::routes::get_incident,
             watchpost::routes::acknowledge_incident,
+            watchpost::routes::create_incident_note,
+            watchpost::routes::list_incident_notes,
             watchpost::routes::dashboard,
             watchpost::routes::uptime_history,
             watchpost::routes::monitor_uptime_history,
@@ -3488,4 +3491,226 @@ fn test_sla_budget_calculation() {
     // Current pct exactly meets target, so status should be "met" or "at_risk" (not breached)
     let status = body["status"].as_str().unwrap();
     assert!(status == "met" || status == "at_risk", "Expected met or at_risk, got {}", status);
+}
+
+// ── Incident Detail & Notes Tests ──
+
+/// Helper: insert a test incident directly into DB and return its ID
+fn insert_test_incident(db_path: &str, monitor_id: &str) -> String {
+    let conn = rusqlite::Connection::open(db_path).unwrap();
+    let inc_id = uuid::Uuid::new_v4().to_string();
+    conn.execute(
+        "INSERT INTO incidents (id, monitor_id, cause, started_at, seq) VALUES (?1, ?2, 'Test failure', datetime('now'), 1)",
+        rusqlite::params![&inc_id, monitor_id],
+    ).unwrap();
+    drop(conn);
+    inc_id
+}
+
+#[test]
+fn test_get_incident_detail() {
+    let (client, db_path) = test_client_with_db();
+    let (monitor_id, _) = create_test_monitor(&client);
+    let inc_id = insert_test_incident(&db_path, &monitor_id);
+
+    let resp = client.get(format!("/api/v1/incidents/{}", inc_id)).dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["id"], inc_id);
+    assert_eq!(body["monitor_id"], monitor_id);
+    assert_eq!(body["cause"], "Test failure");
+    assert_eq!(body["notes_count"], 0);
+}
+
+#[test]
+fn test_get_incident_not_found() {
+    let client = test_client();
+    let resp = client.get("/api/v1/incidents/nonexistent").dispatch();
+    assert_eq!(resp.status(), Status::NotFound);
+}
+
+#[test]
+fn test_create_incident_note() {
+    let (client, db_path) = test_client_with_db();
+    let (monitor_id, key) = create_test_monitor(&client);
+    let inc_id = insert_test_incident(&db_path, &monitor_id);
+
+    let resp = client.post(format!("/api/v1/incidents/{}/notes", inc_id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"content": "Investigating DNS issues", "author": "Nanook"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Created);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["incident_id"], inc_id);
+    assert_eq!(body["content"], "Investigating DNS issues");
+    assert_eq!(body["author"], "Nanook");
+    assert!(body["id"].as_str().is_some());
+    assert!(body["created_at"].as_str().is_some());
+}
+
+#[test]
+fn test_create_incident_note_no_auth() {
+    let (client, db_path) = test_client_with_db();
+    let (monitor_id, _) = create_test_monitor(&client);
+    let inc_id = insert_test_incident(&db_path, &monitor_id);
+
+    let resp = client.post(format!("/api/v1/incidents/{}/notes", inc_id))
+        .header(ContentType::JSON)
+        .body(r#"{"content": "Should fail", "author": "Agent"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Unauthorized);
+}
+
+#[test]
+fn test_create_incident_note_wrong_key() {
+    let (client, db_path) = test_client_with_db();
+    let (monitor_id, _) = create_test_monitor(&client);
+    let inc_id = insert_test_incident(&db_path, &monitor_id);
+
+    let resp = client.post(format!("/api/v1/incidents/{}/notes", inc_id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", "Bearer wp_wrong_key"))
+        .body(r#"{"content": "Should fail", "author": "Agent"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Forbidden);
+}
+
+#[test]
+fn test_create_incident_note_empty_content() {
+    let (client, db_path) = test_client_with_db();
+    let (monitor_id, key) = create_test_monitor(&client);
+    let inc_id = insert_test_incident(&db_path, &monitor_id);
+
+    let resp = client.post(format!("/api/v1/incidents/{}/notes", inc_id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"content": "   ", "author": "Nanook"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::UnprocessableEntity);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["code"], "EMPTY_CONTENT");
+}
+
+#[test]
+fn test_create_incident_note_nonexistent_incident() {
+    let (client, _) = test_client_with_db();
+    let (_, key) = create_test_monitor(&client);
+
+    let resp = client.post("/api/v1/incidents/nonexistent/notes")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"content": "Should fail", "author": "Agent"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::NotFound);
+}
+
+#[test]
+fn test_list_incident_notes() {
+    let (client, db_path) = test_client_with_db();
+    let (monitor_id, key) = create_test_monitor(&client);
+    let inc_id = insert_test_incident(&db_path, &monitor_id);
+
+    // Add 3 notes
+    for i in 1..=3 {
+        client.post(format!("/api/v1/incidents/{}/notes", inc_id))
+            .header(ContentType::JSON)
+            .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+            .body(format!(r#"{{"content": "Note {}", "author": "Agent-{}"}}"#, i, i))
+            .dispatch();
+    }
+
+    // List notes (public — no auth required)
+    let resp = client.get(format!("/api/v1/incidents/{}/notes", inc_id)).dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert_eq!(body.len(), 3);
+    // Chronological order (ASC)
+    assert_eq!(body[0]["content"], "Note 1");
+    assert_eq!(body[2]["content"], "Note 3");
+}
+
+#[test]
+fn test_list_incident_notes_empty() {
+    let (client, db_path) = test_client_with_db();
+    let (monitor_id, _) = create_test_monitor(&client);
+    let inc_id = insert_test_incident(&db_path, &monitor_id);
+
+    let resp = client.get(format!("/api/v1/incidents/{}/notes", inc_id)).dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert_eq!(body.len(), 0);
+}
+
+#[test]
+fn test_list_incident_notes_not_found() {
+    let client = test_client();
+    let resp = client.get("/api/v1/incidents/nonexistent/notes").dispatch();
+    assert_eq!(resp.status(), Status::NotFound);
+}
+
+#[test]
+fn test_incident_detail_notes_count() {
+    let (client, db_path) = test_client_with_db();
+    let (monitor_id, key) = create_test_monitor(&client);
+    let inc_id = insert_test_incident(&db_path, &monitor_id);
+
+    // Add 2 notes
+    for i in 1..=2 {
+        client.post(format!("/api/v1/incidents/{}/notes", inc_id))
+            .header(ContentType::JSON)
+            .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+            .body(format!(r#"{{"content": "Note {}", "author": "Nanook"}}"#, i))
+            .dispatch();
+    }
+
+    // Detail should show notes_count = 2
+    let resp = client.get(format!("/api/v1/incidents/{}", inc_id)).dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["notes_count"], 2);
+}
+
+#[test]
+fn test_incident_notes_cascade_delete() {
+    let (client, db_path) = test_client_with_db();
+    let (monitor_id, key) = create_test_monitor(&client);
+    let inc_id = insert_test_incident(&db_path, &monitor_id);
+
+    // Add a note
+    client.post(format!("/api/v1/incidents/{}/notes", inc_id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"content": "Will be deleted", "author": "Agent"}"#)
+        .dispatch();
+
+    // Delete the monitor (cascades to incidents → notes)
+    let resp = client.delete(format!("/api/v1/monitors/{}", monitor_id))
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+
+    // Verify notes are gone
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM incident_notes WHERE incident_id = ?1",
+        rusqlite::params![&inc_id],
+        |r| r.get(0),
+    ).unwrap();
+    assert_eq!(count, 0);
+}
+
+#[test]
+fn test_incident_note_default_author() {
+    let (client, db_path) = test_client_with_db();
+    let (monitor_id, key) = create_test_monitor(&client);
+    let inc_id = insert_test_incident(&db_path, &monitor_id);
+
+    let resp = client.post(format!("/api/v1/incidents/{}/notes", inc_id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"content": "No author specified"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Created);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["author"], "anonymous");
 }

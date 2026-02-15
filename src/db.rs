@@ -143,6 +143,18 @@ impl Db {
             CREATE INDEX IF NOT EXISTS idx_maintenance_active ON maintenance_windows(starts_at, ends_at);
         ").ok();
 
+        // Incident notes table
+        conn.execute_batch("
+            CREATE TABLE IF NOT EXISTS incident_notes (
+                id TEXT PRIMARY KEY,
+                incident_id TEXT NOT NULL REFERENCES incidents(id) ON DELETE CASCADE,
+                content TEXT NOT NULL,
+                author TEXT NOT NULL DEFAULT 'anonymous',
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_incident_notes_incident ON incident_notes(incident_id, created_at ASC);
+        ").ok();
+
         // Backfill seq for existing heartbeats
         let needs_hb_backfill: i64 = conn
             .query_row("SELECT COUNT(*) FROM heartbeats WHERE seq IS NULL", [], |r| r.get(0))

@@ -19,7 +19,7 @@ mod stream;
 // Re-export all route handlers so main.rs can use routes::* unchanged
 pub use monitors::{create_monitor, bulk_create_monitors, export_monitor, list_monitors, get_monitor, update_monitor, delete_monitor, pause_monitor, resume_monitor};
 pub use heartbeats::{get_heartbeats, get_uptime};
-pub use incidents::{get_incidents, acknowledge_incident};
+pub use incidents::{get_incidents, get_incident, acknowledge_incident, create_incident_note, list_incident_notes};
 pub use dashboard_route::dashboard;
 pub use uptime::{uptime_history, monitor_uptime_history};
 pub use status::status_page;

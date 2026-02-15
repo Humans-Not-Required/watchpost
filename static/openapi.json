@@ -188,6 +188,21 @@
         }
       }
     },
+    "/incidents/{id}": {
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+      "get": {
+        "summary": "Get incident detail",
+        "operationId": "getIncident",
+        "tags": ["incidents"],
+        "responses": {
+          "200": {
+            "description": "Incident detail with notes count",
+            "content": { "application/json": { "schema": { "allOf": [{ "$ref": "#/components/schemas/Incident" }, { "type": "object", "properties": { "notes_count": { "type": "integer" } } }] } } }
+          },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
     "/incidents/{id}/acknowledge": {
       "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
       "post": {
@@ -203,6 +218,44 @@
           "200": { "description": "Incident acknowledged" },
           "403": { "$ref": "#/components/responses/Forbidden" },
           "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/incidents/{id}/notes": {
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+      "get": {
+        "summary": "List incident notes",
+        "operationId": "listIncidentNotes",
+        "tags": ["incidents"],
+        "parameters": [
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 50, "maximum": 200 } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Notes in chronological order",
+            "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/IncidentNote" } } } }
+          },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "post": {
+        "summary": "Add investigation note to incident",
+        "operationId": "createIncidentNote",
+        "tags": ["incidents"],
+        "security": [{ "manageKey": [] }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateIncidentNote" } } }
+        },
+        "responses": {
+          "201": {
+            "description": "Note created",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/IncidentNote" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "422": { "description": "Validation error (empty content, content too long, empty author, author too long)" }
         }
       }
     },
@@ -832,6 +885,24 @@
         "properties": {
           "note": { "type": "string" },
           "actor": { "type": "string", "default": "anonymous" }
+        }
+      },
+      "IncidentNote": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "incident_id": { "type": "string", "format": "uuid" },
+          "content": { "type": "string", "maxLength": 10000 },
+          "author": { "type": "string", "maxLength": 200 },
+          "created_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "CreateIncidentNote": {
+        "type": "object",
+        "required": ["content"],
+        "properties": {
+          "content": { "type": "string", "minLength": 1, "maxLength": 10000, "description": "Note content (trimmed, must not be empty)" },
+          "author": { "type": "string", "maxLength": 200, "default": "anonymous", "description": "Author name (defaults to anonymous)" }
         }
       },
       "UptimeStats": {
