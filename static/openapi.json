@@ -2058,6 +2058,114 @@
         }
       }
     },
+    "/api/v1/monitors/{id}/alert-rules": {
+      "get": {
+        "summary": "Get alert rules",
+        "description": "Returns the current alert rules for a monitor. Returns 404 if no rules are configured.",
+        "tags": ["Alert Rules"],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Alert rules",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/AlertRule" }
+              }
+            }
+          },
+          "404": { "description": "No alert rules configured" }
+        }
+      },
+      "put": {
+        "summary": "Set alert rules",
+        "description": "Create or update alert rules for a monitor (upsert). Controls repeat notifications and escalation policies.",
+        "tags": ["Alert Rules"],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "repeat_interval_minutes": {
+                    "type": "integer",
+                    "description": "Re-send notifications every N minutes while incident is open. 0 = disabled. Min 5.",
+                    "default": 0
+                  },
+                  "max_repeats": {
+                    "type": "integer",
+                    "description": "Maximum repeat notifications per incident. Default 10, max 100.",
+                    "default": 10
+                  },
+                  "escalation_after_minutes": {
+                    "type": "integer",
+                    "description": "Send escalation alert if incident not acknowledged within N minutes. 0 = disabled. Min 5.",
+                    "default": 0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Alert rules saved",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/AlertRule" }
+              }
+            }
+          },
+          "400": { "description": "Validation error" }
+        }
+      },
+      "delete": {
+        "summary": "Remove alert rules",
+        "description": "Delete all alert rules for a monitor.",
+        "tags": ["Alert Rules"],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Alert rules removed" },
+          "404": { "description": "No alert rules configured" }
+        }
+      }
+    },
+    "/api/v1/monitors/{id}/alert-log": {
+      "get": {
+        "summary": "Alert notification log",
+        "description": "View the history of alert notifications sent for a monitor. Includes initial alerts, reminders, escalations, and resolution notifications.",
+        "tags": ["Alert Rules"],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 50, "maximum": 200 } },
+          { "name": "after", "in": "query", "schema": { "type": "string", "format": "date-time" }, "description": "Only return entries sent after this timestamp" }
+        ],
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Alert log entries",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/AlertLogEntry" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/status-pages": {
       "post": {
         "summary": "Create a status page",
@@ -2387,6 +2495,29 @@
       }
     },
     "schemas": {
+      "AlertRule": {
+        "type": "object",
+        "properties": {
+          "monitor_id": { "type": "string", "format": "uuid" },
+          "repeat_interval_minutes": { "type": "integer", "description": "Minutes between repeat notifications. 0 = disabled." },
+          "max_repeats": { "type": "integer", "description": "Maximum repeat notifications per incident." },
+          "escalation_after_minutes": { "type": "integer", "description": "Minutes before escalation if not acknowledged. 0 = disabled." },
+          "created_at": { "type": "string", "format": "date-time" },
+          "updated_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "AlertLogEntry": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "monitor_id": { "type": "string", "format": "uuid" },
+          "incident_id": { "type": "string", "format": "uuid", "nullable": true },
+          "channel_id": { "type": "string", "format": "uuid", "nullable": true },
+          "alert_type": { "type": "string", "enum": ["initial", "reminder", "escalation", "resolved"], "description": "Type of alert notification" },
+          "event": { "type": "string", "description": "Event that triggered this alert (e.g. incident.created, incident.reminder)" },
+          "sent_at": { "type": "string", "format": "date-time" }
+        }
+      },
       "Monitor": {
         "type": "object",
         "properties": {

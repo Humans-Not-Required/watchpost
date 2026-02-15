@@ -229,7 +229,7 @@ Heartbeats are the main storage cost. Default retention: 90 days. Older heartbea
 - ~~Multi-region consensus~~ ✅ Shipped (configurable threshold, incident lifecycle integration)
 - Custom incident severity
 - ~~SLA tracking~~ ✅ Shipped (per-monitor targets with error budget tracking)
-- Alerting rules (escalation)
+- ~~Alerting rules (escalation)~~ ✅ Shipped (alert rules API + frontend UI)
 
 ## Implemented Features Beyond MVP
 
@@ -292,6 +292,17 @@ Remote check locations allow distributed monitoring from multiple geographic reg
 - Heartbeats include optional `location_id` field (null = local checker)
 - Consensus: `consensus_threshold` field on monitors. When set, status is determined by aggregating results across all locations. Down only when N+ locations report failure.
 - `GET /api/v1/monitors/:id/consensus` — consensus status with per-location breakdown
+
+### Alert Rules (Repeat & Escalation)
+Per-monitor alert policies that control notification behavior during incidents.
+- `PUT /api/v1/monitors/:id/alert-rules` — Set/update rules (upsert). Fields: repeat_interval_minutes (0=disabled, min 5), max_repeats (default 10, max 100), escalation_after_minutes (0=disabled, min 5).
+- `GET /api/v1/monitors/:id/alert-rules` — Get current rules (404 if none).
+- `DELETE /api/v1/monitors/:id/alert-rules` — Remove rules.
+- `GET /api/v1/monitors/:id/alert-log` — Alert notification history (limit, after cursor).
+- DB tables: `alert_rules` (one row per monitor, UNIQUE on monitor_id), `alert_log` (audit trail of sent notifications).
+- Checker integration: on incident.created, fires initial alert. If repeat_interval_minutes > 0, fires reminder alerts every N minutes up to max_repeats. If escalation_after_minutes > 0 and incident not acknowledged, fires escalation alert.
+- SSE events: `incident.reminder`, `incident.escalated`.
+- Frontend: AlertRulesManager component on "Alerts" tab (manage key required). Shows current rules, edit form, alert log table.
 
 ### Status Pages
 Named collections of monitors with their own branding, slug, and optional custom domain.

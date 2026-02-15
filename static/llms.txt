@@ -161,6 +161,10 @@ DELETE /api/v1/locations/:id — remove check location (admin key required)
 POST /api/v1/probe — submit probe results from remote location (probe_key auth)
 GET /api/v1/monitors/:id/locations — per-location status for a monitor
 GET /api/v1/monitors/:id/consensus — multi-region consensus status
+PUT /api/v1/monitors/:id/alert-rules — set alert rules (auth)
+GET /api/v1/monitors/:id/alert-rules — get alert rules (auth)
+DELETE /api/v1/monitors/:id/alert-rules — remove alert rules (auth)
+GET /api/v1/monitors/:id/alert-log — alert notification log (auth, ?limit= ?after=)
 
 ## Status Page Branding
 GET /api/v1/settings — returns current branding: {"title": "...", "description": "...", "logo_url": "..."}
@@ -201,6 +205,19 @@ POST /api/v1/incidents/:id/notes — add a note (auth required)
 GET /api/v1/incidents/:id/notes — list notes chronologically (no auth, ?limit= up to 200)
 GET /api/v1/incidents/:id — single incident detail with notes_count field
 Notes are CASCADE deleted when the parent incident or monitor is removed.
+
+## Alert Rules (Repeat & Escalation)
+Configure repeat notifications and escalation policies per monitor.
+PUT /api/v1/monitors/:id/alert-rules — set alert rules (auth required, upsert)
+  Body: {"repeat_interval_minutes": 15, "max_repeats": 10, "escalation_after_minutes": 30}
+  - repeat_interval_minutes: re-send notifications every N minutes while incident is open. 0 = disabled. Min 5.
+  - max_repeats: cap on repeat notifications per incident. Default 10, max 100.
+  - escalation_after_minutes: send escalation alert if incident not acknowledged within N minutes. 0 = disabled. Min 5.
+GET /api/v1/monitors/:id/alert-rules — get current alert rules (auth required). Returns 404 if no rules configured.
+DELETE /api/v1/monitors/:id/alert-rules — remove alert rules (auth required).
+GET /api/v1/monitors/:id/alert-log — view notification history (auth required, ?limit=N, ?after=timestamp).
+  Returns: [{id, monitor_id, incident_id, channel_id, alert_type, event, sent_at}]
+  alert_type values: initial, reminder, escalation, resolved.
 
 ## Maintenance Windows
 Schedule downtime so checks still run but incidents are suppressed.
