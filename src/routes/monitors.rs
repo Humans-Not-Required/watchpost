@@ -97,10 +97,21 @@ pub fn create_monitor(
     let dns_record_type = data.dns_record_type.as_deref().unwrap_or("A").to_uppercase();
     let dns_expected = data.dns_expected.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty()).map(|s| s.to_string());
 
+    // Validate SLA target
+    let sla_target = data.sla_target;
+    if let Some(target) = sla_target {
+        if !(0.0..=100.0).contains(&target) {
+            return Err((Status::BadRequest, Json(serde_json::json!({
+                "error": "sla_target must be between 0 and 100", "code": "VALIDATION_ERROR"
+            }))));
+        }
+    }
+    let sla_period_days = data.sla_period_days.map(|d| d.clamp(1, 365));
+
     let conn = db.conn.lock().unwrap();
     conn.execute(
-        "INSERT INTO monitors (id, name, url, monitor_type, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, manage_key_hash, is_public, confirmation_threshold, tags, response_time_threshold_ms, follow_redirects, group_name, dns_record_type, dns_expected)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+        "INSERT INTO monitors (id, name, url, monitor_type, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, manage_key_hash, is_public, confirmation_threshold, tags, response_time_threshold_ms, follow_redirects, group_name, dns_record_type, dns_expected, sla_target, sla_period_days)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
         params![
             id,
             data.name.trim(),
@@ -121,6 +132,8 @@ pub fn create_monitor(
             group_name,
             dns_record_type,
             dns_expected,
+            sla_target,
+            sla_period_days,
         ],
     ).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({
         "error": format!("DB error: {}", e), "code": "INTERNAL_ERROR"
@@ -239,10 +252,18 @@ pub fn bulk_create_monitors(
         let group_name = monitor_data.group_name.as_deref().map(|g| g.trim()).filter(|g| !g.is_empty()).map(|g| g.to_string());
         let bulk_dns_record_type = monitor_data.dns_record_type.as_deref().unwrap_or("A").to_uppercase();
         let bulk_dns_expected = monitor_data.dns_expected.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty()).map(|s| s.to_string());
+        let bulk_sla_target = monitor_data.sla_target;
+        if let Some(target) = bulk_sla_target {
+            if !(0.0..=100.0).contains(&target) {
+                errors.push(BulkError { index: idx, error: "sla_target must be between 0 and 100".into(), code: "VALIDATION_ERROR".into() });
+                continue;
+            }
+        }
+        let bulk_sla_period = monitor_data.sla_period_days.map(|d| d.clamp(1, 365));
 
         match conn.execute(
-            "INSERT INTO monitors (id, name, url, monitor_type, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, manage_key_hash, is_public, confirmation_threshold, tags, response_time_threshold_ms, follow_redirects, group_name, dns_record_type, dns_expected)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+            "INSERT INTO monitors (id, name, url, monitor_type, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, manage_key_hash, is_public, confirmation_threshold, tags, response_time_threshold_ms, follow_redirects, group_name, dns_record_type, dns_expected, sla_target, sla_period_days)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
             params![
                 id,
                 monitor_data.name.trim(),
@@ -263,6 +284,8 @@ pub fn bulk_create_monitors(
                 group_name,
                 bulk_dns_record_type,
                 bulk_dns_expected,
+                bulk_sla_target,
+                bulk_sla_period,
             ],
         ) {
             Ok(_) => {
@@ -326,6 +349,8 @@ pub fn export_monitor(
         follow_redirects: monitor.follow_redirects,
         dns_record_type: monitor.dns_record_type,
         dns_expected: monitor.dns_expected,
+        sla_target: monitor.sla_target,
+        sla_period_days: monitor.sla_period_days,
         tags: monitor.tags,
         group_name: monitor.group_name,
     }))
@@ -338,7 +363,7 @@ pub fn list_monitors(search: Option<&str>, status: Option<&str>, tag: Option<&st
     let conn = db.conn.lock().unwrap();
 
     let mut sql = String::from(
-        "SELECT id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, is_public, is_paused, current_status, last_checked_at, confirmation_threshold, created_at, updated_at, tags, response_time_threshold_ms, follow_redirects, group_name, monitor_type, dns_record_type, dns_expected
+        "SELECT id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, is_public, is_paused, current_status, last_checked_at, confirmation_threshold, created_at, updated_at, tags, response_time_threshold_ms, follow_redirects, group_name, monitor_type, dns_record_type, dns_expected, sla_target, sla_period_days
          FROM monitors WHERE is_public = 1"
     );
     let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
@@ -540,6 +565,28 @@ pub fn update_monitor(
             values.push(Box::new(None::<String>));
         } else {
             values.push(Box::new(trimmed.to_string()));
+        }
+    }
+
+    if let Some(ref sla_opt) = data.sla_target {
+        updates.push(format!("sla_target = ?{}", values.len() + 1));
+        match sla_opt {
+            Some(val) => {
+                if !(0.0..=100.0).contains(val) {
+                    return Err((Status::BadRequest, Json(serde_json::json!({
+                        "error": "sla_target must be between 0 and 100", "code": "VALIDATION_ERROR"
+                    }))));
+                }
+                values.push(Box::new(Some(*val)));
+            }
+            None => values.push(Box::new(None::<f64>)),
+        }
+    }
+    if let Some(ref period_opt) = data.sla_period_days {
+        updates.push(format!("sla_period_days = ?{}", values.len() + 1));
+        match period_opt {
+            Some(val) => values.push(Box::new(Some((*val).clamp(1, 365)))),
+            None => values.push(Box::new(None::<u32>)),
         }
     }
 

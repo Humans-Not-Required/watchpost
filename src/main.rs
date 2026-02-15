@@ -81,6 +81,7 @@ fn rocket() -> _ {
             routes::openapi_spec,
             routes::monitor_uptime_badge,
             routes::monitor_status_badge,
+            routes::monitor_sla,
             routes::global_events,
             routes::monitor_events,
         ])

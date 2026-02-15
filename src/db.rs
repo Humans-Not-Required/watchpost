@@ -101,6 +101,10 @@ impl Db {
         conn.execute_batch("ALTER TABLE monitors ADD COLUMN dns_record_type TEXT NOT NULL DEFAULT 'A';").ok();
         conn.execute_batch("ALTER TABLE monitors ADD COLUMN dns_expected TEXT;").ok();
 
+        // Add SLA tracking columns
+        conn.execute_batch("ALTER TABLE monitors ADD COLUMN sla_target REAL;").ok();
+        conn.execute_batch("ALTER TABLE monitors ADD COLUMN sla_period_days INTEGER;").ok();
+
         // Settings table (key-value store for service-level config)
         conn.execute_batch("
             CREATE TABLE IF NOT EXISTS settings (

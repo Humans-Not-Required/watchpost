@@ -19,6 +19,8 @@ A **monitor** is a check definition: what to probe, how often, and what counts a
 | monitor_type | Enum | http (default), tcp, dns |
 | dns_record_type | String | DNS record type: A (default), AAAA, CNAME, MX, TXT, NS, SOA, PTR, SRV, CAA |
 | dns_expected | Option<String> | Expected resolved value for DNS (null = any resolution is OK) |
+| sla_target | Option<f64> | SLA uptime target percentage (0-100, null = no SLA) |
+| sla_period_days | Option<u32> | Rolling SLA period in days (1-365, default 30) |
 | method | Enum | GET, HEAD, POST (HTTP only) |
 | interval_seconds | u32 | Check frequency (min: 600, default: 600) |
 | timeout_ms | u32 | Request timeout (default: 10000) |
@@ -101,6 +103,11 @@ Per the HNR design principles: **tokens tied to resources, not users.**
 |--------|------|------|-------------|
 | GET | /api/v1/monitors/:id/heartbeats | ❌ | Paginated check history |
 | GET | /api/v1/monitors/:id/uptime | ❌ | Uptime stats (24h, 7d, 30d, 90d) |
+
+### SLA
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | /api/v1/monitors/:id/sla | ❌ | SLA status with error budget |
 
 ### Incidents
 | Method | Path | Auth | Description |
@@ -218,7 +225,7 @@ Heartbeats are the main storage cost. Default retention: 90 days. Older heartbea
 - UDP checks
 - Multi-region checking
 - Custom incident severity
-- SLA tracking
+- ~~SLA tracking~~ ✅ Shipped (per-monitor targets with error budget tracking)
 - Alerting rules (escalation)
 
 ## Implemented Features Beyond MVP
@@ -248,6 +255,18 @@ Heartbeats are the main storage cost. Default retention: 90 days. Older heartbea
 - `GET /api/v1/settings` — Read status page settings
 - `PATCH /api/v1/settings` — Update branding (title, description, logo URL)
 - Applied to the public status page
+
+### SLA Tracking
+- Per-monitor SLA targets with error budget tracking
+- `sla_target` (REAL, 0-100) and `sla_period_days` (INTEGER, 1-365, default 30) columns on monitors
+- `GET /api/v1/monitors/:id/sla` — SLA status: target, current uptime, error budget remaining, status (met/at_risk/breached)
+- Error budget = total_period_seconds × (1 - target/100)
+- Downtime estimated from heartbeat failure ratio × elapsed time
+- Status: "breached" when current_pct < target, "at_risk" when budget < 25% remaining, "met" otherwise
+- Degraded heartbeats count as successful (service responded, just slow)
+- Returns 404 (SLA_NOT_CONFIGURED) when no target is set
+- SLA fields visible in monitor list, detail, and export responses
+- Settable on create, update, and bulk create; null clears
 
 ### Dashboard API
 - `GET /api/v1/dashboard` — Aggregated statistics (total monitors, up, down, degraded, maintenance, paused counts)

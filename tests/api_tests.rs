@@ -53,6 +53,7 @@ fn test_client_with_db() -> (Client, String) {
             watchpost::routes::openapi_spec,
             watchpost::routes::monitor_uptime_badge,
             watchpost::routes::monitor_status_badge,
+            watchpost::routes::monitor_sla,
             watchpost::routes::global_events,
             watchpost::routes::monitor_events,
         ])
@@ -3134,4 +3135,357 @@ fn test_switch_http_to_dns() {
     assert_eq!(body["monitor_type"], "dns");
     assert_eq!(body["dns_record_type"], "A");
     assert_eq!(body["dns_expected"], "93.184.216.34");
+}
+
+// ── SLA Tracking Tests ──
+
+#[test]
+fn test_sla_not_configured() {
+    let client = test_client();
+    let (id, _) = create_test_monitor(&client);
+
+    // No SLA target → 404
+    let resp = client.get(format!("/api/v1/monitors/{}/sla", id)).dispatch();
+    assert_eq!(resp.status(), Status::NotFound);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["code"], "SLA_NOT_CONFIGURED");
+}
+
+#[test]
+fn test_sla_create_with_target() {
+    let client = test_client();
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "SLA Service", "url": "https://example.com/api", "is_public": true, "sla_target": 99.9, "sla_period_days": 30}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["monitor"]["sla_target"], 99.9);
+    assert_eq!(body["monitor"]["sla_period_days"], 30);
+}
+
+#[test]
+fn test_sla_create_invalid_target() {
+    let client = test_client();
+
+    // Target over 100
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Bad SLA", "url": "https://example.com/api", "sla_target": 101.0}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::BadRequest);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["code"], "VALIDATION_ERROR");
+
+    // Target below 0
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Bad SLA", "url": "https://example.com/api", "sla_target": -1.0}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::BadRequest);
+}
+
+#[test]
+fn test_sla_perfect_uptime() {
+    let (client, db_path) = test_client_with_db();
+
+    // Create monitor with SLA target
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "SLA Service", "url": "https://example.com/api", "is_public": true, "sla_target": 99.9, "sla_period_days": 30}"#)
+        .dispatch();
+    let create_body: serde_json::Value = resp.into_json().unwrap();
+    let id = create_body["monitor"]["id"].as_str().unwrap().to_string();
+
+    // Insert all-up heartbeats
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    for i in 1..=100 {
+        conn.execute(
+            "INSERT INTO heartbeats (id, monitor_id, status, response_time_ms, status_code, checked_at, seq)
+             VALUES (?1, ?2, 'up', 150, 200, datetime('now', ?3), ?4)",
+            rusqlite::params![
+                format!("hb-{}", i),
+                &id,
+                format!("-{} minutes", i * 10),
+                i
+            ],
+        ).unwrap();
+    }
+    drop(conn);
+
+    let resp = client.get(format!("/api/v1/monitors/{}/sla", id)).dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["target_pct"], 99.9);
+    assert_eq!(body["period_days"], 30);
+    assert_eq!(body["current_pct"], 100.0);
+    assert_eq!(body["total_checks"], 100);
+    assert_eq!(body["successful_checks"], 100);
+    assert_eq!(body["status"], "met");
+    assert_eq!(body["downtime_estimate_seconds"], 0.0);
+    assert!(body["budget_total_seconds"].as_f64().unwrap() > 0.0);
+    assert!(body["budget_remaining_seconds"].as_f64().unwrap() > 0.0);
+    assert_eq!(body["budget_used_pct"], 0.0);
+}
+
+#[test]
+fn test_sla_with_downtime() {
+    let (client, db_path) = test_client_with_db();
+
+    // Create monitor with 99% SLA over 7 days
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "SLA Downtime Test", "url": "https://example.com/api", "is_public": true, "sla_target": 99.0, "sla_period_days": 7}"#)
+        .dispatch();
+    let create_body: serde_json::Value = resp.into_json().unwrap();
+    let id = create_body["monitor"]["id"].as_str().unwrap().to_string();
+
+    // Insert 90 up + 10 down heartbeats (90% uptime, below 99% target)
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    for i in 1..=90 {
+        conn.execute(
+            "INSERT INTO heartbeats (id, monitor_id, status, response_time_ms, status_code, checked_at, seq)
+             VALUES (?1, ?2, 'up', 150, 200, datetime('now', ?3), ?4)",
+            rusqlite::params![format!("hb-up-{}", i), &id, format!("-{} minutes", i * 10), i],
+        ).unwrap();
+    }
+    for i in 1..=10 {
+        conn.execute(
+            "INSERT INTO heartbeats (id, monitor_id, status, response_time_ms, status_code, checked_at, seq)
+             VALUES (?1, ?2, 'down', 0, NULL, datetime('now', ?3), ?4)",
+            rusqlite::params![format!("hb-down-{}", i), &id, format!("-{} minutes", (90 + i) * 10), 90 + i],
+        ).unwrap();
+    }
+    drop(conn);
+
+    let resp = client.get(format!("/api/v1/monitors/{}/sla", id)).dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["target_pct"], 99.0);
+    assert_eq!(body["period_days"], 7);
+    assert_eq!(body["total_checks"], 100);
+    assert_eq!(body["successful_checks"], 90);
+    assert_eq!(body["current_pct"], 90.0);
+    assert_eq!(body["status"], "breached"); // 90% < 99% target = breached
+    assert!(body["downtime_estimate_seconds"].as_f64().unwrap() > 0.0);
+    assert!(body["budget_used_pct"].as_f64().unwrap() > 0.0);
+}
+
+#[test]
+fn test_sla_default_period() {
+    let (client, _db_path) = test_client_with_db();
+
+    // Create with target but no period (defaults to 30)
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Default Period", "url": "https://example.com/api", "is_public": true, "sla_target": 99.5}"#)
+        .dispatch();
+    let create_body: serde_json::Value = resp.into_json().unwrap();
+    let id = create_body["monitor"]["id"].as_str().unwrap().to_string();
+
+    let resp = client.get(format!("/api/v1/monitors/{}/sla", id)).dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["period_days"], 30);
+    assert_eq!(body["target_pct"], 99.5);
+    // No heartbeats = 100% uptime assumed
+    assert_eq!(body["current_pct"], 100.0);
+    assert_eq!(body["status"], "met");
+}
+
+#[test]
+fn test_sla_update_target() {
+    let client = test_client();
+    let (id, key) = create_test_monitor(&client);
+
+    // Initially no SLA
+    let resp = client.get(format!("/api/v1/monitors/{}/sla", id)).dispatch();
+    assert_eq!(resp.status(), Status::NotFound);
+
+    // Set SLA via update
+    let resp = client.patch(format!("/api/v1/monitors/{}", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"sla_target": 99.95, "sla_period_days": 90}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+
+    // Now SLA endpoint works
+    let resp = client.get(format!("/api/v1/monitors/{}/sla", id)).dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["target_pct"], 99.95);
+    assert_eq!(body["period_days"], 90);
+}
+
+#[test]
+fn test_sla_clear_target() {
+    let client = test_client();
+
+    // Create with SLA
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Clear SLA", "url": "https://example.com/api", "sla_target": 99.9}"#)
+        .dispatch();
+    let create_body: serde_json::Value = resp.into_json().unwrap();
+    let id = create_body["monitor"]["id"].as_str().unwrap().to_string();
+    let key = create_body["manage_key"].as_str().unwrap().to_string();
+
+    // SLA works
+    let resp = client.get(format!("/api/v1/monitors/{}/sla", id)).dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+
+    // Clear SLA target via null
+    let resp = client.patch(format!("/api/v1/monitors/{}", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"sla_target": null}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+
+    // SLA no longer configured
+    let resp = client.get(format!("/api/v1/monitors/{}/sla", id)).dispatch();
+    assert_eq!(resp.status(), Status::NotFound);
+}
+
+#[test]
+fn test_sla_degraded_counts_as_up() {
+    let (client, db_path) = test_client_with_db();
+
+    // Create with SLA
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Degraded SLA", "url": "https://example.com/api", "sla_target": 99.0, "sla_period_days": 7}"#)
+        .dispatch();
+    let create_body: serde_json::Value = resp.into_json().unwrap();
+    let id = create_body["monitor"]["id"].as_str().unwrap().to_string();
+
+    // Insert some "degraded" heartbeats (should count as successful)
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    for i in 1..=50 {
+        conn.execute(
+            "INSERT INTO heartbeats (id, monitor_id, status, response_time_ms, status_code, checked_at, seq)
+             VALUES (?1, ?2, 'degraded', 6000, 200, datetime('now', ?3), ?4)",
+            rusqlite::params![format!("hb-{}", i), &id, format!("-{} minutes", i * 10), i],
+        ).unwrap();
+    }
+    drop(conn);
+
+    let resp = client.get(format!("/api/v1/monitors/{}/sla", id)).dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["total_checks"], 50);
+    assert_eq!(body["successful_checks"], 50);
+    assert_eq!(body["current_pct"], 100.0);
+    assert_eq!(body["status"], "met");
+}
+
+#[test]
+fn test_sla_nonexistent_monitor() {
+    let client = test_client();
+    let resp = client.get("/api/v1/monitors/nonexistent-id/sla").dispatch();
+    assert_eq!(resp.status(), Status::NotFound);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["code"], "NOT_FOUND");
+}
+
+#[test]
+fn test_sla_period_clamped() {
+    let client = test_client();
+
+    // Period over 365 should be clamped
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Clamped Period", "url": "https://example.com/api", "sla_target": 99.0, "sla_period_days": 999}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["monitor"]["sla_period_days"], 365);
+}
+
+#[test]
+fn test_sla_in_monitor_list() {
+    let client = test_client();
+
+    // Create monitor with SLA
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Listed SLA", "url": "https://example.com/api", "is_public": true, "sla_target": 99.9, "sla_period_days": 30}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+
+    // SLA fields visible in public list
+    let resp = client.get("/api/v1/monitors").dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert!(!body.is_empty());
+    assert_eq!(body[0]["sla_target"], 99.9);
+    assert_eq!(body[0]["sla_period_days"], 30);
+}
+
+#[test]
+fn test_sla_update_validation() {
+    let client = test_client();
+    let (id, key) = create_test_monitor(&client);
+
+    // Invalid target via update
+    let resp = client.patch(format!("/api/v1/monitors/{}", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"sla_target": 150.0}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::BadRequest);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["code"], "VALIDATION_ERROR");
+}
+
+#[test]
+fn test_sla_budget_calculation() {
+    let (client, db_path) = test_client_with_db();
+
+    // 99% SLA over 30 days = 0.01 * 30 * 86400 = 25920 seconds budget
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Budget Test", "url": "https://example.com/api", "sla_target": 99.0, "sla_period_days": 30}"#)
+        .dispatch();
+    let create_body: serde_json::Value = resp.into_json().unwrap();
+    let id = create_body["monitor"]["id"].as_str().unwrap().to_string();
+
+    // No heartbeats — budget should be full
+    let resp = client.get(format!("/api/v1/monitors/{}/sla", id)).dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let budget_total = body["budget_total_seconds"].as_f64().unwrap();
+    // 30 * 86400 * 0.01 = 25920
+    assert!((budget_total - 25920.0).abs() < 1.0, "Expected ~25920, got {}", budget_total);
+    assert_eq!(body["budget_used_pct"], 0.0);
+    assert!((body["budget_remaining_seconds"].as_f64().unwrap() - 25920.0).abs() < 1.0);
+
+    // Insert heartbeats with exactly 1% failure (99% up, right at target)
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    for i in 1..=99 {
+        conn.execute(
+            "INSERT INTO heartbeats (id, monitor_id, status, response_time_ms, status_code, checked_at, seq)
+             VALUES (?1, ?2, 'up', 100, 200, datetime('now', ?3), ?4)",
+            rusqlite::params![format!("up-{}", i), &id, format!("-{} minutes", i * 10), i],
+        ).unwrap();
+    }
+    conn.execute(
+        "INSERT INTO heartbeats (id, monitor_id, status, response_time_ms, status_code, checked_at, seq)
+         VALUES (?1, ?2, 'down', 0, NULL, datetime('now', '-1000 minutes'), 100)",
+        rusqlite::params![format!("down-1"), &id],
+    ).unwrap();
+    drop(conn);
+
+    let resp = client.get(format!("/api/v1/monitors/{}/sla", id)).dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["total_checks"], 100);
+    assert_eq!(body["successful_checks"], 99);
+    assert_eq!(body["current_pct"], 99.0);
+    // 1% failure rate matches 99% target exactly — uptime = target so not breached
+    // Budget usage depends on elapsed time vs full period
+    assert!(body["budget_used_pct"].as_f64().unwrap() > 0.0, "Should have some budget used");
+    assert!(body["downtime_estimate_seconds"].as_f64().unwrap() > 0.0, "Should have downtime estimate");
+    // Current pct exactly meets target, so status should be "met" or "at_risk" (not breached)
+    let status = body["status"].as_str().unwrap();
+    assert!(status == "met" || status == "at_risk", "Expected met or at_risk, got {}", status);
 }

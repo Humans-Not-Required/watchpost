@@ -36,6 +36,10 @@ pub struct Monitor {
     pub dns_record_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dns_expected: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sla_target: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sla_period_days: Option<u32>,
     pub tags: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub group_name: Option<String>,
@@ -68,6 +72,8 @@ pub struct CreateMonitor {
     #[serde(default = "default_dns_record_type")]
     pub dns_record_type: Option<String>,
     pub dns_expected: Option<String>,
+    pub sla_target: Option<f64>,
+    pub sla_period_days: Option<u32>,
     #[serde(default)]
     pub tags: Vec<String>,
     pub group_name: Option<String>,
@@ -99,6 +105,10 @@ pub struct UpdateMonitor {
     pub follow_redirects: Option<bool>,
     pub dns_record_type: Option<String>,
     pub dns_expected: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_nullable")]
+    pub sla_target: Option<Option<f64>>,
+    #[serde(default, deserialize_with = "deserialize_optional_nullable")]
+    pub sla_period_days: Option<Option<u32>>,
     pub tags: Option<Vec<String>>,
     pub group_name: Option<String>,
 }
@@ -313,6 +323,10 @@ pub struct ExportedMonitor {
     pub dns_record_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dns_expected: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sla_target: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sla_period_days: Option<u32>,
     pub tags: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub group_name: Option<String>,
@@ -340,6 +354,23 @@ pub struct SettingsResponse {
     pub title: Option<String>,
     pub description: Option<String>,
     pub logo_url: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SlaStatus {
+    pub monitor_id: String,
+    pub target_pct: f64,
+    pub period_days: u32,
+    pub current_pct: f64,
+    pub total_checks: u32,
+    pub successful_checks: u32,
+    pub downtime_estimate_seconds: f64,
+    pub budget_total_seconds: f64,
+    pub budget_remaining_seconds: f64,
+    pub budget_used_pct: f64,
+    pub status: String,
+    pub period_start: String,
+    pub period_end: String,
 }
 
 #[derive(Debug, Serialize)]

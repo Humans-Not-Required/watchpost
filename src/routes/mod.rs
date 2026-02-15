@@ -13,6 +13,7 @@ mod tags;
 mod settings;
 mod system;
 mod badges;
+mod sla;
 mod stream;
 
 // Re-export all route handlers so main.rs can use routes::* unchanged
@@ -28,6 +29,7 @@ pub use tags::{list_tags, list_groups};
 pub use settings::{get_settings, update_settings};
 pub use system::{health, llms_txt, openapi_spec, spa_fallback};
 pub use badges::{monitor_uptime_badge, monitor_status_badge};
+pub use sla::monitor_sla;
 pub use stream::{global_events, monitor_events};
 
 use rocket::{http::Status, serde::json::Json};
@@ -78,7 +80,7 @@ pub(crate) const VALID_DNS_RECORD_TYPES: &[&str] = &["A", "AAAA", "CNAME", "MX",
 
 pub(crate) fn get_monitor_from_db(conn: &rusqlite::Connection, id: &str) -> rusqlite::Result<Monitor> {
     conn.query_row(
-        "SELECT id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, is_public, is_paused, current_status, last_checked_at, confirmation_threshold, created_at, updated_at, tags, response_time_threshold_ms, follow_redirects, group_name, monitor_type, dns_record_type, dns_expected
+        "SELECT id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, is_public, is_paused, current_status, last_checked_at, confirmation_threshold, created_at, updated_at, tags, response_time_threshold_ms, follow_redirects, group_name, monitor_type, dns_record_type, dns_expected, sla_target, sla_period_days
          FROM monitors WHERE id = ?1",
         params![id],
         |row| Ok(row_to_monitor(row)),
@@ -108,6 +110,8 @@ pub(crate) fn row_to_monitor(row: &rusqlite::Row) -> Monitor {
         follow_redirects: row.get::<_, i32>(18).unwrap_or(1) != 0,
         dns_record_type: row.get::<_, String>(21).unwrap_or_else(|_| "A".to_string()),
         dns_expected: row.get::<_, Option<String>>(22).unwrap_or(None),
+        sla_target: row.get::<_, Option<f64>>(23).unwrap_or(None),
+        sla_period_days: row.get::<_, Option<u32>>(24).unwrap_or(None),
         tags: parse_tags(&tags_str),
         group_name: row.get::<_, Option<String>>(19).unwrap_or(None),
         created_at: row.get(14).unwrap(),

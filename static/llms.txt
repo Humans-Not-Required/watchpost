@@ -142,6 +142,7 @@ GET /api/v1/monitors/:id/maintenance — list maintenance windows
 DELETE /api/v1/maintenance/:id — delete maintenance window (auth)
 GET /api/v1/tags — list all unique tags (public monitors)
 GET /api/v1/groups — list all unique groups (public monitors)
+GET /api/v1/monitors/:id/sla — SLA status with error budget
 GET /api/v1/monitors/:id/badge/uptime — SVG uptime badge (?period=24h|7d|30d|90d, ?label=)
 GET /api/v1/monitors/:id/badge/status — SVG status badge (?label=)
 GET /api/v1/events — global SSE event stream
@@ -166,6 +167,21 @@ GET /api/v1/monitors/:id/badge/uptime — SVG uptime badge (shields.io style)
 GET /api/v1/monitors/:id/badge/status — SVG current status badge
   ?label=custom+label (default: "status")
   Color-coded: green=up, yellow=degraded, grey=paused/maintenance/unknown, red=down
+
+## SLA Tracking
+Set an uptime target on any monitor to track SLA compliance with error budgets.
+POST /api/v1/monitors with "sla_target": 99.9 — set 99.9% uptime target (optional: "sla_period_days": 30)
+PATCH /api/v1/monitors/:id with "sla_target": 99.95 — update target. Set to null to remove.
+GET /api/v1/monitors/:id/sla — SLA status with error budget tracking
+  Returns: target_pct, period_days, current_pct, total_checks, successful_checks,
+           downtime_estimate_seconds, budget_total_seconds, budget_remaining_seconds,
+           budget_used_pct, status (met|at_risk|breached), period_start, period_end
+  - "met": uptime meets target and >25% of error budget remains
+  - "at_risk": uptime meets target but <25% of error budget remains
+  - "breached": current uptime is below the target
+  - "degraded" heartbeats count as successful (service responded, just slow)
+  sla_target: 0-100 (percentage), sla_period_days: 1-365 (default: 30)
+  Returns 404 with code SLA_NOT_CONFIGURED if no target is set on the monitor.
 
 ## Maintenance Windows
 Schedule downtime so checks still run but incidents are suppressed.

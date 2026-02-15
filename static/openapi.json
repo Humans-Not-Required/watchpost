@@ -467,6 +467,43 @@
         }
       }
     },
+    "/monitors/{id}/sla": {
+      "parameters": [
+        { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+      ],
+      "get": {
+        "summary": "SLA status with error budget tracking",
+        "description": "Returns SLA compliance status including error budget remaining. Requires sla_target to be set on the monitor. Degraded checks count as successful.",
+        "responses": {
+          "200": {
+            "description": "SLA status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "monitor_id": { "type": "string", "format": "uuid" },
+                    "target_pct": { "type": "number", "example": 99.9 },
+                    "period_days": { "type": "integer", "example": 30 },
+                    "current_pct": { "type": "number", "example": 99.95 },
+                    "total_checks": { "type": "integer" },
+                    "successful_checks": { "type": "integer" },
+                    "downtime_estimate_seconds": { "type": "number" },
+                    "budget_total_seconds": { "type": "number", "description": "Total allowed downtime in period" },
+                    "budget_remaining_seconds": { "type": "number", "description": "Remaining error budget (negative = breached)" },
+                    "budget_used_pct": { "type": "number", "description": "Percentage of error budget consumed" },
+                    "status": { "type": "string", "enum": ["met", "at_risk", "breached"] },
+                    "period_start": { "type": "string", "format": "date-time" },
+                    "period_end": { "type": "string", "format": "date-time" }
+                  }
+                }
+              }
+            }
+          },
+          "404": { "description": "Monitor not found or SLA not configured" }
+        }
+      }
+    },
     "/monitors/{id}/badge/uptime": {
       "parameters": [
         { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
@@ -652,6 +689,8 @@
           "confirmation_threshold": { "type": "integer" },
           "response_time_threshold_ms": { "type": "integer", "nullable": true, "description": "Mark as degraded when response time exceeds this (ms). Null = disabled." },
           "follow_redirects": { "type": "boolean", "description": "Whether HTTP redirects are followed (default: true)" },
+          "sla_target": { "type": "number", "nullable": true, "minimum": 0, "maximum": 100, "description": "SLA uptime target percentage (e.g., 99.9). Null = no SLA tracking." },
+          "sla_period_days": { "type": "integer", "nullable": true, "minimum": 1, "maximum": 365, "description": "Rolling SLA evaluation period in days (default: 30). Only used when sla_target is set." },
           "tags": { "type": "array", "items": { "type": "string" }, "description": "Freeform tags for filtering monitors" },
           "group_name": { "type": "string", "nullable": true, "description": "Group name for organizing monitors into sections on the status page" },
           "created_at": { "type": "string" },
@@ -677,6 +716,8 @@
           "confirmation_threshold": { "type": "integer", "minimum": 1, "maximum": 10, "default": 2 },
           "response_time_threshold_ms": { "type": "integer", "minimum": 100, "nullable": true, "description": "Alert when response time exceeds this threshold (ms). Null = disabled." },
           "follow_redirects": { "type": "boolean", "default": true, "description": "Follow HTTP redirects (301, 302, etc.) up to 10 hops. Default: true." },
+          "sla_target": { "type": "number", "nullable": true, "minimum": 0, "maximum": 100, "description": "SLA uptime target percentage (e.g., 99.9). Enables SLA tracking and error budget." },
+          "sla_period_days": { "type": "integer", "nullable": true, "minimum": 1, "maximum": 365, "description": "Rolling SLA evaluation period in days (default: 30)." },
           "tags": { "type": "array", "items": { "type": "string" }, "description": "Freeform tags for filtering" },
           "group_name": { "type": "string", "nullable": true, "description": "Group name for organizing monitors into sections on the status page. Empty string clears." }
         }
@@ -724,6 +765,8 @@
           "is_public": { "type": "boolean" },
           "confirmation_threshold": { "type": "integer" },
           "response_time_threshold_ms": { "type": "integer", "nullable": true },
+          "sla_target": { "type": "number", "nullable": true },
+          "sla_period_days": { "type": "integer", "nullable": true },
           "tags": { "type": "array", "items": { "type": "string" } }
         }
       },
@@ -741,6 +784,8 @@
           "is_public": { "type": "boolean" },
           "confirmation_threshold": { "type": "integer" },
           "response_time_threshold_ms": { "type": "integer", "minimum": 100, "nullable": true, "description": "Set to threshold value, or null to disable." },
+          "sla_target": { "type": "number", "nullable": true, "minimum": 0, "maximum": 100, "description": "SLA uptime target percentage. Set to null to remove SLA tracking." },
+          "sla_period_days": { "type": "integer", "nullable": true, "minimum": 1, "maximum": 365, "description": "SLA rolling period in days. Set to null to remove." },
           "tags": { "type": "array", "items": { "type": "string" } }
         }
       },
