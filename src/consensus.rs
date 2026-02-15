@@ -62,11 +62,12 @@ pub async fn evaluate_and_apply(
 
         // Get latest heartbeat per location (including local where location_id IS NULL)
         // Uses a window function to get the most recent heartbeat for each location
+        // Order by seq DESC (not checked_at) to handle same-second heartbeats correctly
         let mut stmt = conn.prepare(
             "SELECT location_id, status, response_time_ms, checked_at
              FROM (
                  SELECT location_id, status, response_time_ms, checked_at,
-                        ROW_NUMBER() OVER (PARTITION BY COALESCE(location_id, '__local__') ORDER BY checked_at DESC) as rn
+                        ROW_NUMBER() OVER (PARTITION BY COALESCE(location_id, '__local__') ORDER BY seq DESC) as rn
                  FROM heartbeats
                  WHERE monitor_id = ?1
              )
@@ -252,12 +253,12 @@ pub fn get_consensus_status(
         |row| row.get::<_, Option<u32>>(0),
     ).ok()??;
 
-    // Get latest heartbeat per location
+    // Get latest heartbeat per location (order by seq for correct ordering)
     let mut stmt = conn.prepare(
         "SELECT h.location_id, COALESCE(cl.name, 'Local'), cl.region, h.status, h.response_time_ms, h.checked_at
          FROM (
              SELECT location_id, status, response_time_ms, checked_at,
-                    ROW_NUMBER() OVER (PARTITION BY COALESCE(location_id, '__local__') ORDER BY checked_at DESC) as rn
+                    ROW_NUMBER() OVER (PARTITION BY COALESCE(location_id, '__local__') ORDER BY seq DESC) as rn
              FROM heartbeats
              WHERE monitor_id = ?1
          ) h
