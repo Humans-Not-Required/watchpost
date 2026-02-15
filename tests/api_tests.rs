@@ -78,6 +78,7 @@ fn test_client_with_db() -> (Client, String) {
             watchpost::routes::get_alert_rules,
             watchpost::routes::delete_alert_rules,
             watchpost::routes::get_alert_log,
+            watchpost::routes::list_webhook_deliveries,
         ])
         .register("/", rocket::catchers![
             watchpost::catchers::bad_request,
@@ -5648,4 +5649,258 @@ fn test_alert_rules_cascade_on_monitor_delete() {
         .dispatch();
     // Will get NotFound since monitor itself is gone
     assert!(resp.status() == Status::NotFound || resp.status() == Status::Forbidden);
+}
+
+// ─── Webhook Delivery Log Tests ────────────────────────────────────────────
+
+#[test]
+fn test_webhook_deliveries_requires_auth() {
+    let client = test_client();
+    let (id, _key) = create_test_monitor(&client);
+    let resp = client.get(format!("/api/v1/monitors/{}/webhook-deliveries", id))
+        .dispatch();
+    assert_eq!(resp.status(), Status::Unauthorized);
+}
+
+#[test]
+fn test_webhook_deliveries_wrong_key() {
+    let client = test_client();
+    let (id, _key) = create_test_monitor(&client);
+    let resp = client.get(format!("/api/v1/monitors/{}/webhook-deliveries?key=wrong_key", id))
+        .dispatch();
+    assert_eq!(resp.status(), Status::Forbidden);
+}
+
+#[test]
+fn test_webhook_deliveries_empty() {
+    let client = test_client();
+    let (id, key) = create_test_monitor(&client);
+    let resp = client.get(format!("/api/v1/monitors/{}/webhook-deliveries", id))
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["deliveries"].as_array().unwrap().len(), 0);
+    assert_eq!(body["total"], 0);
+}
+
+#[test]
+fn test_webhook_deliveries_with_data() {
+    let (client, db_path) = test_client_with_db();
+    let (id, key) = create_test_monitor(&client);
+
+    // Insert delivery records directly into DB
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let group = "test-group-1";
+    conn.execute(
+        "INSERT INTO webhook_deliveries (id, delivery_group, monitor_id, event, url, attempt, status, status_code, error_message, response_time_ms, seq) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        params!["d1", group, &id, "incident.created", "https://example.com/hook", 1, "failed", None::<i64>, "connection refused", 50, 1],
+    ).unwrap();
+    conn.execute(
+        "INSERT INTO webhook_deliveries (id, delivery_group, monitor_id, event, url, attempt, status, status_code, error_message, response_time_ms, seq) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        params!["d2", group, &id, "incident.created", "https://example.com/hook", 2, "failed", 500i64, "HTTP 500", 120, 2],
+    ).unwrap();
+    conn.execute(
+        "INSERT INTO webhook_deliveries (id, delivery_group, monitor_id, event, url, attempt, status, status_code, error_message, response_time_ms, seq) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        params!["d3", group, &id, "incident.created", "https://example.com/hook", 3, "success", 200i64, None::<String>, 95, 3],
+    ).unwrap();
+    drop(conn);
+
+    let resp = client.get(format!("/api/v1/monitors/{}/webhook-deliveries", id))
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let deliveries = body["deliveries"].as_array().unwrap();
+    assert_eq!(deliveries.len(), 3);
+    assert_eq!(body["total"], 3);
+
+    // Newest first (seq DESC)
+    assert_eq!(deliveries[0]["attempt"], 3);
+    assert_eq!(deliveries[0]["status"], "success");
+    assert_eq!(deliveries[0]["status_code"], 200);
+    assert_eq!(deliveries[1]["attempt"], 2);
+    assert_eq!(deliveries[1]["status"], "failed");
+    assert_eq!(deliveries[2]["attempt"], 1);
+    assert_eq!(deliveries[2]["error_message"], "connection refused");
+
+    // All share same delivery_group
+    assert_eq!(deliveries[0]["delivery_group"], group);
+    assert_eq!(deliveries[1]["delivery_group"], group);
+    assert_eq!(deliveries[2]["delivery_group"], group);
+}
+
+#[test]
+fn test_webhook_deliveries_filter_by_status() {
+    let (client, db_path) = test_client_with_db();
+    let (id, key) = create_test_monitor(&client);
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    conn.execute(
+        "INSERT INTO webhook_deliveries (id, delivery_group, monitor_id, event, url, attempt, status, response_time_ms, seq) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        params!["d1", "g1", &id, "incident.created", "https://example.com/hook", 1, "failed", 50, 1],
+    ).unwrap();
+    conn.execute(
+        "INSERT INTO webhook_deliveries (id, delivery_group, monitor_id, event, url, attempt, status, response_time_ms, seq) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        params!["d2", "g1", &id, "incident.created", "https://example.com/hook", 2, "success", 90, 2],
+    ).unwrap();
+    conn.execute(
+        "INSERT INTO webhook_deliveries (id, delivery_group, monitor_id, event, url, attempt, status, response_time_ms, seq) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        params!["d3", "g2", &id, "incident.resolved", "https://example.com/hook", 1, "success", 80, 3],
+    ).unwrap();
+    drop(conn);
+
+    // Filter: only failed
+    let resp = client.get(format!("/api/v1/monitors/{}/webhook-deliveries?status=failed", id))
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["deliveries"].as_array().unwrap().len(), 1);
+    assert_eq!(body["total"], 1);
+    assert_eq!(body["deliveries"][0]["status"], "failed");
+
+    // Filter: only success
+    let resp = client.get(format!("/api/v1/monitors/{}/webhook-deliveries?status=success", id))
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["deliveries"].as_array().unwrap().len(), 2);
+    assert_eq!(body["total"], 2);
+}
+
+#[test]
+fn test_webhook_deliveries_filter_by_event() {
+    let (client, db_path) = test_client_with_db();
+    let (id, key) = create_test_monitor(&client);
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    conn.execute(
+        "INSERT INTO webhook_deliveries (id, delivery_group, monitor_id, event, url, attempt, status, response_time_ms, seq) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        params!["d1", "g1", &id, "incident.created", "https://example.com/hook", 1, "success", 50, 1],
+    ).unwrap();
+    conn.execute(
+        "INSERT INTO webhook_deliveries (id, delivery_group, monitor_id, event, url, attempt, status, response_time_ms, seq) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        params!["d2", "g2", &id, "incident.resolved", "https://example.com/hook", 1, "success", 80, 2],
+    ).unwrap();
+    drop(conn);
+
+    let resp = client.get(format!("/api/v1/monitors/{}/webhook-deliveries?event=incident.resolved", id))
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["deliveries"].as_array().unwrap().len(), 1);
+    assert_eq!(body["deliveries"][0]["event"], "incident.resolved");
+}
+
+#[test]
+fn test_webhook_deliveries_cursor_pagination() {
+    let (client, db_path) = test_client_with_db();
+    let (id, key) = create_test_monitor(&client);
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    for i in 1..=10 {
+        conn.execute(
+            "INSERT INTO webhook_deliveries (id, delivery_group, monitor_id, event, url, attempt, status, response_time_ms, seq) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![format!("d{}", i), format!("g{}", i), &id, "incident.created", "https://example.com/hook", 1, "success", 50, i],
+        ).unwrap();
+    }
+    drop(conn);
+
+    // First page (limit=3)
+    let resp = client.get(format!("/api/v1/monitors/{}/webhook-deliveries?limit=3", id))
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let deliveries = body["deliveries"].as_array().unwrap();
+    assert_eq!(deliveries.len(), 3);
+    assert_eq!(body["total"], 10);
+    // Newest first: seq 10, 9, 8
+    assert_eq!(deliveries[0]["seq"], 10);
+    assert_eq!(deliveries[2]["seq"], 8);
+}
+
+#[test]
+fn test_webhook_deliveries_limit_clamp() {
+    let client = test_client();
+    let (id, key) = create_test_monitor(&client);
+
+    // Limit 0 should clamp to 1
+    let resp = client.get(format!("/api/v1/monitors/{}/webhook-deliveries?limit=0", id))
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+
+    // Limit 999 should clamp to 200
+    let resp = client.get(format!("/api/v1/monitors/{}/webhook-deliveries?limit=999", id))
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+}
+
+#[test]
+fn test_webhook_deliveries_nonexistent_monitor() {
+    let client = test_client();
+    let resp = client.get("/api/v1/monitors/nonexistent-id/webhook-deliveries?key=some_key")
+        .dispatch();
+    assert_eq!(resp.status(), Status::NotFound);
+}
+
+#[test]
+fn test_webhook_deliveries_cascade_delete() {
+    let (client, db_path) = test_client_with_db();
+    let (id, key) = create_test_monitor(&client);
+
+    // Insert delivery records
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    conn.execute(
+        "INSERT INTO webhook_deliveries (id, delivery_group, monitor_id, event, url, attempt, status, response_time_ms, seq) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        params!["d1", "g1", &id, "incident.created", "https://example.com/hook", 1, "success", 50, 1],
+    ).unwrap();
+    let count: i64 = conn.query_row("SELECT COUNT(*) FROM webhook_deliveries WHERE monitor_id = ?1", params![&id], |r| r.get(0)).unwrap();
+    assert_eq!(count, 1);
+    drop(conn);
+
+    // Delete the monitor
+    let resp = client.delete(format!("/api/v1/monitors/{}", id))
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+
+    // Verify deliveries are gone
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let count: i64 = conn.query_row("SELECT COUNT(*) FROM webhook_deliveries WHERE monitor_id = ?1", params![&id], |r| r.get(0)).unwrap();
+    assert_eq!(count, 0);
+}
+
+#[test]
+fn test_webhook_deliveries_response_fields() {
+    let (client, db_path) = test_client_with_db();
+    let (id, key) = create_test_monitor(&client);
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    conn.execute(
+        "INSERT INTO webhook_deliveries (id, delivery_group, monitor_id, event, url, attempt, status, status_code, error_message, response_time_ms, seq) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        params!["d-test-1", "grp-abc", &id, "monitor.degraded", "https://hooks.example.com/watch", 2, "failed", 502i64, "Bad Gateway", 1500, 42],
+    ).unwrap();
+    drop(conn);
+
+    let resp = client.get(format!("/api/v1/monitors/{}/webhook-deliveries", id))
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let d = &body["deliveries"][0];
+    assert_eq!(d["id"], "d-test-1");
+    assert_eq!(d["delivery_group"], "grp-abc");
+    assert_eq!(d["monitor_id"], id);
+    assert_eq!(d["event"], "monitor.degraded");
+    assert_eq!(d["url"], "https://hooks.example.com/watch");
+    assert_eq!(d["attempt"], 2);
+    assert_eq!(d["status"], "failed");
+    assert_eq!(d["status_code"], 502);
+    assert_eq!(d["error_message"], "Bad Gateway");
+    assert_eq!(d["response_time_ms"], 1500);
+    assert_eq!(d["seq"], 42);
+    assert!(d["created_at"].as_str().is_some());
 }

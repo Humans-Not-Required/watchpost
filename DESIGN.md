@@ -125,6 +125,7 @@ Per the HNR design principles: **tokens tied to resources, not users.**
 | GET | /api/v1/monitors/:id/notifications | 🔑 | List notification channels |
 | PATCH | /api/v1/notifications/:id | 🔑 | Update channel config |
 | DELETE | /api/v1/notifications/:id | 🔑 | Remove channel |
+| GET | /api/v1/monitors/:id/webhook-deliveries | 🔑 | Webhook delivery audit log |
 
 ### Status Page
 | Method | Path | Auth | Description |
@@ -292,6 +293,17 @@ Remote check locations allow distributed monitoring from multiple geographic reg
 - Heartbeats include optional `location_id` field (null = local checker)
 - Consensus: `consensus_threshold` field on monitors. When set, status is determined by aggregating results across all locations. Down only when N+ locations report failure.
 - `GET /api/v1/monitors/:id/consensus` — consensus status with per-location breakdown
+
+### Webhook Delivery Retry
+Webhook notifications are delivered with automatic retry and exponential backoff.
+- **3 attempts max** per URL per notification dispatch
+- **Backoff:** attempt 1 = immediate, attempt 2 = 2s delay, attempt 3 = 4s delay
+- **Success:** HTTP 2xx response stops retries and logs success
+- **Failure:** Non-2xx response or connection error triggers retry
+- **Audit trail:** Every attempt is logged to `webhook_deliveries` table with status, status_code, error_message, and response_time_ms
+- **Delivery groups:** A UUID groups all retry attempts for one notification dispatch (same `delivery_group` ID)
+- `GET /api/v1/monitors/:id/webhook-deliveries` — View delivery history (manage key required). Supports `?limit=`, `?after=` cursor, `?event=`, `?status=` filters.
+- DB: `webhook_deliveries` table with CASCADE delete on monitor removal
 
 ### Alert Rules (Repeat & Escalation)
 Per-monitor alert policies that control notification behavior during incidents.

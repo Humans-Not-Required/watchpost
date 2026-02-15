@@ -587,7 +587,7 @@ async fn process_check_result(
         // Webhooks
         let urls = notifications::get_webhook_urls(db, &monitor.id);
         if !urls.is_empty() {
-            notifications::fire_webhooks(http_client, &urls, payload).await;
+            notifications::fire_webhooks(db, http_client, &monitor.id, &urls, payload).await;
         }
 
         // Emails
@@ -601,7 +601,7 @@ async fn process_check_result(
     }
 
     // ── Repeat notifications (alert rules) ───────────────────────────────
-    process_repeat_notifications(db, monitor, http_client, &broadcaster).await;
+    process_repeat_notifications(db, monitor, http_client, broadcaster).await;
 
     // Always emit check.completed SSE event
     let mut sse_data = serde_json::json!({
@@ -857,7 +857,7 @@ async fn process_repeat_notifications(
                 // Webhooks
                 let urls = notifications::get_webhook_urls(db, &monitor.id);
                 if !urls.is_empty() {
-                    notifications::fire_webhooks(http_client, &urls, &payload).await;
+                    notifications::fire_webhooks(db, http_client, &monitor.id, &urls, &payload).await;
                 }
 
                 // Emails
@@ -916,7 +916,7 @@ async fn process_repeat_notifications(
                 // Fire to ALL channels (escalation = notify everything)
                 let urls = notifications::get_webhook_urls(db, &monitor.id);
                 if !urls.is_empty() {
-                    notifications::fire_webhooks(http_client, &urls, &payload).await;
+                    notifications::fire_webhooks(db, http_client, &monitor.id, &urls, &payload).await;
                 }
                 let emails = notifications::get_email_addresses(db, &monitor.id);
                 if !emails.is_empty() {

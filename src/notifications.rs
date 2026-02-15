@@ -55,17 +55,119 @@ pub fn get_webhook_urls(db: &Db, monitor_id: &str) -> Vec<String> {
         .collect()
 }
 
-/// Fire webhook notifications (async, best-effort).
-pub async fn fire_webhooks(client: &reqwest::Client, urls: &[String], payload: &WebhookPayload) {
+/// Maximum retry attempts for webhook delivery.
+const MAX_WEBHOOK_ATTEMPTS: u32 = 3;
+
+/// Backoff durations between retries (attempt 2 waits 2s, attempt 3 waits 4s).
+const RETRY_BACKOFFS_MS: [u64; 2] = [2000, 4000];
+
+/// Fire webhook notifications with retry and delivery logging.
+///
+/// Each URL gets up to MAX_WEBHOOK_ATTEMPTS delivery attempts with exponential
+/// backoff. Every attempt is logged to the webhook_deliveries table for audit.
+pub async fn fire_webhooks(
+    db: &Db,
+    client: &reqwest::Client,
+    monitor_id: &str,
+    urls: &[String],
+    payload: &WebhookPayload,
+) {
     for url in urls {
-        let _ = client
-            .post(url)
-            .json(payload)
-            .timeout(std::time::Duration::from_secs(10))
-            .send()
-            .await;
-        // Best-effort: log nothing on failure for now. Could add retry logic later.
+        let delivery_group = uuid::Uuid::new_v4().to_string();
+
+        for attempt in 1..=MAX_WEBHOOK_ATTEMPTS {
+            // Wait before retry (not on first attempt)
+            if attempt > 1 {
+                let backoff = RETRY_BACKOFFS_MS[(attempt - 2) as usize];
+                tokio::time::sleep(std::time::Duration::from_millis(backoff)).await;
+            }
+
+            let start = std::time::Instant::now();
+            let result = client
+                .post(url)
+                .json(payload)
+                .timeout(std::time::Duration::from_secs(10))
+                .send()
+                .await;
+            let elapsed_ms = start.elapsed().as_millis() as i64;
+
+            match result {
+                Ok(resp) => {
+                    let status_code = resp.status().as_u16() as i64;
+                    if resp.status().is_success() {
+                        // Success — log and move to next URL
+                        log_webhook_delivery(db, &DeliveryLogEntry {
+                            delivery_group: &delivery_group, monitor_id, event: &payload.event,
+                            url, attempt, status: "success", status_code: Some(status_code),
+                            error_message: None, response_time_ms: elapsed_ms,
+                        });
+                        if attempt > 1 {
+                            println!("✅ Webhook delivered to {} after {} attempts", url, attempt);
+                        }
+                        break;
+                    } else {
+                        // HTTP error response
+                        let error_msg = format!("HTTP {}", status_code);
+                        log_webhook_delivery(db, &DeliveryLogEntry {
+                            delivery_group: &delivery_group, monitor_id, event: &payload.event,
+                            url, attempt, status: "failed", status_code: Some(status_code),
+                            error_message: Some(&error_msg), response_time_ms: elapsed_ms,
+                        });
+                        if attempt == MAX_WEBHOOK_ATTEMPTS {
+                            println!(
+                                "⚠️  Webhook delivery to {} exhausted after {} attempts (last: {})",
+                                url, MAX_WEBHOOK_ATTEMPTS, error_msg
+                            );
+                        }
+                    }
+                }
+                Err(e) => {
+                    let error_msg = format!("{}", e);
+                    log_webhook_delivery(db, &DeliveryLogEntry {
+                        delivery_group: &delivery_group, monitor_id, event: &payload.event,
+                        url, attempt, status: "failed", status_code: None,
+                        error_message: Some(&error_msg), response_time_ms: elapsed_ms,
+                    });
+                    if attempt == MAX_WEBHOOK_ATTEMPTS {
+                        println!(
+                            "⚠️  Webhook delivery to {} exhausted after {} attempts (last: {})",
+                            url, MAX_WEBHOOK_ATTEMPTS, error_msg
+                        );
+                    }
+                }
+            }
+        }
     }
+}
+
+/// Parameters for logging a webhook delivery attempt.
+struct DeliveryLogEntry<'a> {
+    delivery_group: &'a str,
+    monitor_id: &'a str,
+    event: &'a str,
+    url: &'a str,
+    attempt: u32,
+    status: &'a str,
+    status_code: Option<i64>,
+    error_message: Option<&'a str>,
+    response_time_ms: i64,
+}
+
+/// Log a single webhook delivery attempt to the database.
+fn log_webhook_delivery(db: &Db, entry: &DeliveryLogEntry<'_>) {
+    let conn = db.conn.lock().unwrap();
+    let id = uuid::Uuid::new_v4().to_string();
+    let seq: i64 = conn
+        .query_row(
+            "SELECT COALESCE(MAX(seq), 0) + 1 FROM webhook_deliveries",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(1);
+    let _ = conn.execute(
+        "INSERT INTO webhook_deliveries (id, delivery_group, monitor_id, event, url, attempt, status, status_code, error_message, response_time_ms, seq) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        params![id, entry.delivery_group, entry.monitor_id, entry.event, entry.url, entry.attempt, entry.status, entry.status_code, entry.error_message, entry.response_time_ms, seq],
+    );
 }
 
 // ─── Email Notifications ────────────────────────────────────────────────────

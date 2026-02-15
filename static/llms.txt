@@ -67,6 +67,16 @@ webhook (POST JSON to URL), email (SMTP)
 ### Webhook Notifications
 POST /api/v1/monitors/:id/notifications with {"name": "Slack", "channel_type": "webhook", "config": {"url": "https://hooks.slack.com/..."}}
 On incident, POSTs JSON with event, monitor info, and incident details to the URL.
+Delivery includes automatic retry: up to 3 attempts with exponential backoff (2s, 4s delays between retries).
+Every delivery attempt is logged for audit via GET /api/v1/monitors/:id/webhook-deliveries.
+
+### Webhook Delivery Log
+GET /api/v1/monitors/:id/webhook-deliveries — list delivery attempts (manage key required)
+  ?limit=N (1-200, default 50), ?after=<seq> cursor, ?event=incident.created, ?status=failed
+  Returns: {deliveries: [{id, delivery_group, event, url, attempt, status, status_code, error_message, response_time_ms, created_at, seq}], total: N}
+  delivery_group groups all retry attempts for one notification dispatch.
+  status values: success, failed.
+  Retry policy: 3 attempts max, 2s then 4s backoff. Logged per attempt.
 
 ### Email Notifications
 POST /api/v1/monitors/:id/notifications with {"name": "Ops Email", "channel_type": "email", "config": {"address": "ops@example.com"}}
@@ -165,6 +175,7 @@ PUT /api/v1/monitors/:id/alert-rules — set alert rules (auth)
 GET /api/v1/monitors/:id/alert-rules — get alert rules (auth)
 DELETE /api/v1/monitors/:id/alert-rules — remove alert rules (auth)
 GET /api/v1/monitors/:id/alert-log — alert notification log (auth, ?limit= ?after=)
+GET /api/v1/monitors/:id/webhook-deliveries — webhook delivery audit log (auth, ?limit= ?after= ?event= ?status=)
 
 ## Status Page Branding
 GET /api/v1/settings — returns current branding: {"title": "...", "description": "...", "logo_url": "..."}

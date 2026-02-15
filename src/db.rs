@@ -232,6 +232,27 @@ impl Db {
             CREATE INDEX IF NOT EXISTS idx_alert_log_incident ON alert_log(incident_id, sent_at DESC);
         ").ok();
 
+        // Webhook delivery log (retry tracking + audit trail)
+        conn.execute_batch("
+            CREATE TABLE IF NOT EXISTS webhook_deliveries (
+                id TEXT PRIMARY KEY,
+                delivery_group TEXT NOT NULL,
+                monitor_id TEXT NOT NULL REFERENCES monitors(id) ON DELETE CASCADE,
+                event TEXT NOT NULL,
+                url TEXT NOT NULL,
+                attempt INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                status_code INTEGER,
+                error_message TEXT,
+                response_time_ms INTEGER,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                seq INTEGER
+            );
+            CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_monitor ON webhook_deliveries(monitor_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_group ON webhook_deliveries(delivery_group);
+            CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_seq ON webhook_deliveries(seq);
+        ").ok();
+
         // Backfill seq for existing heartbeats
         let needs_hb_backfill: i64 = conn
             .query_row("SELECT COUNT(*) FROM heartbeats WHERE seq IS NULL", [], |r| r.get(0))

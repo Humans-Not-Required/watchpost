@@ -226,7 +226,7 @@ pub async fn evaluate_and_apply(
 
         let urls = notifications::get_webhook_urls(db, monitor_id);
         if !urls.is_empty() {
-            notifications::fire_webhooks(http_client, &urls, payload).await;
+            notifications::fire_webhooks(db, http_client, monitor_id, &urls, payload).await;
         }
 
         let emails = notifications::get_email_addresses(db, monitor_id);
