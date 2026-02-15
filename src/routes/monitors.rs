@@ -82,9 +82,9 @@ pub fn create_monitor(
         }))));
     }
     let interval = data.interval_seconds.unwrap_or(600).max(600);
-    let timeout = data.timeout_ms.unwrap_or(10000).max(1000).min(60000);
+    let timeout = data.timeout_ms.unwrap_or(10000).clamp(1000, 60000);
     let expected_status = data.expected_status.unwrap_or(200);
-    let confirmation = data.confirmation_threshold.unwrap_or(2).max(1).min(10);
+    let confirmation = data.confirmation_threshold.unwrap_or(2).clamp(1, 10);
 
     let id = uuid::Uuid::new_v4().to_string();
     let manage_key = generate_key();
@@ -226,9 +226,9 @@ pub fn bulk_create_monitors(
         }
 
         let interval = monitor_data.interval_seconds.unwrap_or(600).max(600);
-        let timeout = monitor_data.timeout_ms.unwrap_or(10000).max(1000).min(60000);
+        let timeout = monitor_data.timeout_ms.unwrap_or(10000).clamp(1000, 60000);
         let expected_status = monitor_data.expected_status.unwrap_or(200);
-        let confirmation = monitor_data.confirmation_threshold.unwrap_or(2).max(1).min(10);
+        let confirmation = monitor_data.confirmation_threshold.unwrap_or(2).clamp(1, 10);
         let rt_threshold = monitor_data.response_time_threshold_ms.map(|v| v.max(100));
 
         let id = uuid::Uuid::new_v4().to_string();
@@ -547,7 +547,7 @@ pub fn update_monitor(
         return Ok(Json(serde_json::json!({"message": "No changes"})));
     }
 
-    updates.push(format!("updated_at = datetime('now')"));
+    updates.push("updated_at = datetime('now')".to_string());
     let sql = format!("UPDATE monitors SET {} WHERE id = ?{}", updates.join(", "), values.len() + 1);
     values.push(Box::new(id.to_string()));
 

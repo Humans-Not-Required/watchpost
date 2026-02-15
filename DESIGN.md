@@ -203,9 +203,55 @@ Heartbeats are the main storage cost. Default retention: 90 days. Older heartbea
 - ~~Email notifications (need SMTP config)~~ ✅ Shipped
 - ~~TCP checks~~ ✅ Shipped (monitor_type: tcp)
 - ~~DNS checks~~ ✅ Shipped (monitor_type: dns, 10 record types, expected value matching)
+- ~~Maintenance windows~~ ✅ Shipped (schedule windows where checks are skipped)
+- ~~Monitor groups~~ ✅ Shipped (organize monitors into named groups)
+- ~~Tags~~ ✅ Shipped (arbitrary key-value tags on monitors for filtering)
+- ~~Status page branding~~ ✅ Shipped (custom title, description, logo via settings API)
+- ~~Shields.io-style badges~~ ✅ Shipped (uptime + status SVG badges per monitor)
+- ~~Dashboard API~~ ✅ Shipped (aggregated stats: total, up, down, degraded, maintenance, paused)
+- ~~Response time alerts~~ ✅ Shipped (configurable thresholds)
+- ~~Search/filter~~ ✅ Shipped (filter monitors by name, status, group, tags)
+- ~~Heartbeat retention~~ ✅ Shipped (configurable, auto-prune old heartbeats)
+- ~~Follow redirects~~ ✅ Shipped (HTTP monitors follow 301/302/etc by default)
+- ~~Notification toggle~~ ✅ Shipped (per-monitor notification enable/disable)
+- ~~Seq-based cursor pagination~~ ✅ Shipped (heartbeats + incidents use `?after=<seq>`)
 - UDP checks
 - Multi-region checking
-- Maintenance windows
 - Custom incident severity
 - SLA tracking
 - Alerting rules (escalation)
+
+## Implemented Features Beyond MVP
+
+### Maintenance Windows
+- `POST /api/v1/monitors/:id/maintenance` — Create a maintenance window (title, starts_at, ends_at)
+- `GET /api/v1/monitors/:id/maintenance` — List maintenance windows for a monitor
+- `DELETE /api/v1/maintenance/:id` — Delete a maintenance window
+- During active maintenance windows, checks are skipped and monitor status shows as "maintenance"
+
+### Monitor Groups
+- Monitors can be assigned to named groups for organization
+- Groups allow logical grouping on dashboards (e.g., "Production", "Staging")
+
+### Tags
+- Arbitrary key-value tags on monitors (`POST /api/v1/monitors/:id/tags`)
+- Filter monitors by tag values
+- Useful for categorization beyond groups
+
+### Badges (Shields.io-style SVGs)
+- `GET /api/v1/monitors/:id/badge/uptime?period=30d&label=...` — Uptime percentage badge
+- `GET /api/v1/monitors/:id/badge/status?label=...` — Current status badge
+- Color-coded: green (up), red (down), orange (degraded), grey (maintenance)
+- Embeddable in READMEs and dashboards
+
+### Settings / Branding
+- `GET /api/v1/settings` — Read status page settings
+- `PATCH /api/v1/settings` — Update branding (title, description, logo URL)
+- Applied to the public status page
+
+### Dashboard API
+- `GET /api/v1/dashboard` — Aggregated statistics (total monitors, up, down, degraded, maintenance, paused counts)
+
+### Response Time Alerts
+- Configurable response time thresholds per monitor
+- Alerts fire when response time exceeds threshold

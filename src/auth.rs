@@ -23,10 +23,8 @@ impl<'r> FromRequest<'r> for ManageToken {
         }
 
         // 3. ?key=<token>
-        if let Some(key) = request.query_value::<String>("key") {
-            if let Ok(key) = key {
-                return Outcome::Success(ManageToken(key));
-            }
+        if let Some(Ok(key)) = request.query_value::<String>("key") {
+            return Outcome::Success(ManageToken(key));
         }
 
         Outcome::Error((Status::Unauthorized, "Missing manage key"))

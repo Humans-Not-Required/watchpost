@@ -12,7 +12,7 @@ pub fn uptime_history(
     days: Option<u32>,
     db: &State<Arc<Db>>,
 ) -> Result<Json<Vec<UptimeHistoryDay>>, (Status, Json<serde_json::Value>)> {
-    let days = days.unwrap_or(30).min(90).max(1);
+    let days = days.unwrap_or(30).clamp(1, 90);
     let conn = db.conn.lock().unwrap();
     let err_map = |e: rusqlite::Error| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()})));
 
@@ -53,7 +53,7 @@ pub fn monitor_uptime_history(
     days: Option<u32>,
     db: &State<Arc<Db>>,
 ) -> Result<Json<Vec<UptimeHistoryDay>>, (Status, Json<serde_json::Value>)> {
-    let days = days.unwrap_or(30).min(90).max(1);
+    let days = days.unwrap_or(30).clamp(1, 90);
     let conn = db.conn.lock().unwrap();
     let err_map = |e: rusqlite::Error| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()})));
 
