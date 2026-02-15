@@ -1,6 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
-import { getStatusPages, getStatusPageDetail, createStatusPageApi, updateStatusPage, deleteStatusPage, addPageMonitors, removePageMonitor } from '../api';
-import { IconGlobe, IconSettings, IconTrash } from '../Icons';
+import { getStatusPages, getStatusPageDetail, createStatusPageApi, updateStatusPage, deleteStatusPage, addPageMonitors, removePageMonitor, getMonitors } from '../api';
+import { IconGlobe, IconWrench, IconTrash, IconEdit, IconKey, IconPlus, IconX } from '../Icons';
+
+const inputStyle = { width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #334155', borderRadius: 6, color: '#e2e8f0', fontSize: '0.9rem', boxSizing: 'border-box' };
+const labelStyle = { display: 'block', fontSize: '0.8rem', color: '#94a3b8', marginBottom: 4 };
+const fieldStyle = { marginBottom: 12 };
 
 // ── Status Page List View ──
 function StatusPageList({ onSelect, onCreateNew }) {
@@ -92,6 +96,10 @@ function CreateStatusPage({ onCreated, onCancel }) {
       if (customDomain.trim()) data.custom_domain = customDomain.trim();
 
       const res = await createStatusPageApi(data);
+      // Auto-save manage key to localStorage
+      if (res.manage_key && res.status_page?.slug) {
+        try { localStorage.setItem(`watchpost_page_key_${res.status_page.slug}`, res.manage_key); } catch (e) { /* silent */ }
+      }
       setResult(res);
     } catch (err) {
       setError(err.message);
@@ -115,6 +123,7 @@ function CreateStatusPage({ onCreated, onCancel }) {
             onClick={() => navigator.clipboard.writeText(result.manage_key)}
           >Copy</button>
         </div>
+        <p style={{ fontSize: '0.75rem', color: '#64748b' }}>Key saved to browser storage for this page.</p>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-primary" onClick={() => onCreated(result.status_page.slug)}>View Page</button>
           <button className="btn" onClick={onCancel}>Done</button>
@@ -127,75 +136,15 @@ function CreateStatusPage({ onCreated, onCancel }) {
     <div>
       <h2 style={{ marginBottom: 16 }}>Create Status Page</h2>
       <form onSubmit={handleSubmit} className="card" style={{ padding: 20 }}>
-        <div style={{ marginBottom: 12 }}>
-          <label style={{ display: 'block', fontSize: '0.8rem', color: '#94a3b8', marginBottom: 4 }}>Slug *</label>
-          <input
-            type="text"
-            value={slug}
-            onChange={(e) => setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ''))}
-            placeholder="e.g., production"
-            required
-            style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #334155', borderRadius: 6, color: '#e2e8f0', fontSize: '0.9rem' }}
-          />
-          <div style={{ fontSize: '0.7rem', color: '#64748b', marginTop: 2 }}>URL-safe identifier (a-z, 0-9, hyphens, underscores)</div>
-        </div>
-
-        <div style={{ marginBottom: 12 }}>
-          <label style={{ display: 'block', fontSize: '0.8rem', color: '#94a3b8', marginBottom: 4 }}>Title *</label>
-          <input
-            type="text"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder="e.g., Production Status"
-            required
-            style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #334155', borderRadius: 6, color: '#e2e8f0', fontSize: '0.9rem' }}
-          />
-        </div>
-
-        <div style={{ marginBottom: 12 }}>
-          <label style={{ display: 'block', fontSize: '0.8rem', color: '#94a3b8', marginBottom: 4 }}>Description</label>
-          <textarea
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="Brief description of this status page"
-            rows={2}
-            style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #334155', borderRadius: 6, color: '#e2e8f0', fontSize: '0.9rem', resize: 'vertical' }}
-          />
-        </div>
-
-        <div style={{ marginBottom: 12 }}>
-          <label style={{ display: 'block', fontSize: '0.8rem', color: '#94a3b8', marginBottom: 4 }}>Logo URL</label>
-          <input
-            type="url"
-            value={logoUrl}
-            onChange={(e) => setLogoUrl(e.target.value)}
-            placeholder="https://example.com/logo.png"
-            style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #334155', borderRadius: 6, color: '#e2e8f0', fontSize: '0.9rem' }}
-          />
-        </div>
-
-        <div style={{ marginBottom: 12 }}>
-          <label style={{ display: 'block', fontSize: '0.8rem', color: '#94a3b8', marginBottom: 4 }}>Custom Domain</label>
-          <input
-            type="text"
-            value={customDomain}
-            onChange={(e) => setCustomDomain(e.target.value)}
-            placeholder="status.example.com"
-            style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #334155', borderRadius: 6, color: '#e2e8f0', fontSize: '0.9rem' }}
-          />
-          <div style={{ fontSize: '0.7rem', color: '#64748b', marginTop: 2 }}>Optional: point a CNAME to this service</div>
-        </div>
-
-        <div style={{ marginBottom: 16 }}>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-            <input
-              type="checkbox"
-              checked={isPublic}
-              onChange={(e) => setIsPublic(e.target.checked)}
-            />
-            <span style={{ fontSize: '0.85rem' }}>Public (listed on status pages index)</span>
-          </label>
-        </div>
+        <StatusPageForm
+          slug={slug} setSlug={setSlug}
+          title={title} setTitle={setTitle}
+          description={description} setDescription={setDescription}
+          logoUrl={logoUrl} setLogoUrl={setLogoUrl}
+          customDomain={customDomain} setCustomDomain={setCustomDomain}
+          isPublic={isPublic} setIsPublic={setIsPublic}
+          showSlug={true}
+        />
 
         {error && <div style={{ color: '#f87171', fontSize: '0.85rem', marginBottom: 12 }}>{error}</div>}
 
@@ -210,11 +159,353 @@ function CreateStatusPage({ onCreated, onCancel }) {
   );
 }
 
+// ── Shared Form Fields ──
+function StatusPageForm({ slug, setSlug, title, setTitle, description, setDescription, logoUrl, setLogoUrl, customDomain, setCustomDomain, isPublic, setIsPublic, showSlug }) {
+  return (
+    <>
+      {showSlug && (
+        <div style={fieldStyle}>
+          <label style={labelStyle}>Slug *</label>
+          <input
+            type="text"
+            value={slug}
+            onChange={(e) => setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ''))}
+            placeholder="e.g., production"
+            required
+            style={inputStyle}
+          />
+          <div style={{ fontSize: '0.7rem', color: '#64748b', marginTop: 2 }}>URL-safe identifier (a-z, 0-9, hyphens, underscores)</div>
+        </div>
+      )}
+
+      <div style={fieldStyle}>
+        <label style={labelStyle}>Title *</label>
+        <input
+          type="text"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder="e.g., Production Status"
+          required
+          style={inputStyle}
+        />
+      </div>
+
+      <div style={fieldStyle}>
+        <label style={labelStyle}>Description</label>
+        <textarea
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder="Brief description of this status page"
+          rows={2}
+          style={{ ...inputStyle, resize: 'vertical' }}
+        />
+      </div>
+
+      <div style={fieldStyle}>
+        <label style={labelStyle}>Logo URL</label>
+        <input
+          type="url"
+          value={logoUrl}
+          onChange={(e) => setLogoUrl(e.target.value)}
+          placeholder="https://example.com/logo.png"
+          style={inputStyle}
+        />
+      </div>
+
+      <div style={fieldStyle}>
+        <label style={labelStyle}>Custom Domain</label>
+        <input
+          type="text"
+          value={customDomain}
+          onChange={(e) => setCustomDomain(e.target.value)}
+          placeholder="status.example.com"
+          style={inputStyle}
+        />
+        <div style={{ fontSize: '0.7rem', color: '#64748b', marginTop: 2 }}>Optional: point a CNAME to this service</div>
+      </div>
+
+      <div style={{ marginBottom: 16 }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={isPublic}
+            onChange={(e) => setIsPublic(e.target.checked)}
+          />
+          <span style={{ fontSize: '0.85rem' }}>Public (listed on status pages index)</span>
+        </label>
+      </div>
+    </>
+  );
+}
+
+// ── Manage Key Input ──
+function ManageKeyInput({ slug, manageKey, setManageKey }) {
+  const [keyInput, setKeyInput] = useState('');
+  const [saved, setSaved] = useState(false);
+
+  const handleSave = () => {
+    const k = keyInput.trim();
+    if (!k) return;
+    setManageKey(k);
+    try { localStorage.setItem(`watchpost_page_key_${slug}`, k); } catch (e) { /* silent */ }
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  };
+
+  const handleClear = () => {
+    setManageKey('');
+    setKeyInput('');
+    try { localStorage.removeItem(`watchpost_page_key_${slug}`); } catch (e) { /* silent */ }
+  };
+
+  if (manageKey) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.8rem' }}>
+        <IconKey size={14} />
+        <span style={{ color: '#00d4aa' }}>Manage key active</span>
+        <button className="btn" style={{ fontSize: '0.7rem', padding: '2px 8px' }} onClick={handleClear}>Clear Key</button>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <IconKey size={14} style={{ color: '#94a3b8', flexShrink: 0 }} />
+      <input
+        type="password"
+        value={keyInput}
+        onChange={(e) => setKeyInput(e.target.value)}
+        placeholder="Enter manage key to edit..."
+        onKeyDown={(e) => e.key === 'Enter' && handleSave()}
+        style={{ ...inputStyle, width: 220, fontSize: '0.8rem', padding: '4px 8px' }}
+      />
+      <button className="btn" style={{ fontSize: '0.7rem', padding: '4px 10px' }} onClick={handleSave}>
+        {saved ? '✓' : 'Unlock'}
+      </button>
+    </div>
+  );
+}
+
+// ── Edit Status Page Panel ──
+function EditStatusPage({ page, slug, manageKey, onUpdated, onCancel }) {
+  const [title, setTitle] = useState(page.title || '');
+  const [description, setDescription] = useState(page.description || '');
+  const [logoUrl, setLogoUrl] = useState(page.logo_url || '');
+  const [customDomain, setCustomDomain] = useState(page.custom_domain || '');
+  const [isPublic, setIsPublic] = useState(page.is_public !== false);
+  const [error, setError] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError(null);
+    setSubmitting(true);
+    try {
+      const data = { title: title.trim(), is_public: isPublic };
+      // Only send changed fields; send null to clear optional fields
+      data.description = description.trim() || null;
+      data.logo_url = logoUrl.trim() || null;
+      data.custom_domain = customDomain.trim() || null;
+
+      await updateStatusPage(slug, data, manageKey);
+      onUpdated();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="card" style={{ padding: 20, marginBottom: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <h3 style={{ margin: 0, fontSize: '1rem' }}><IconEdit size={16} style={{ marginRight: 6, verticalAlign: 'middle' }} />Edit Status Page</h3>
+        <button className="btn" style={{ fontSize: '0.7rem', padding: '2px 8px' }} onClick={onCancel}><IconX size={14} /></button>
+      </div>
+      <form onSubmit={handleSubmit}>
+        <StatusPageForm
+          title={title} setTitle={setTitle}
+          description={description} setDescription={setDescription}
+          logoUrl={logoUrl} setLogoUrl={setLogoUrl}
+          customDomain={customDomain} setCustomDomain={setCustomDomain}
+          isPublic={isPublic} setIsPublic={setIsPublic}
+          showSlug={false}
+        />
+
+        {error && <div style={{ color: '#f87171', fontSize: '0.85rem', marginBottom: 12 }}>{error}</div>}
+
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button type="submit" className="btn btn-primary" disabled={submitting}>
+            {submitting ? 'Saving...' : 'Save Changes'}
+          </button>
+          <button type="button" className="btn" onClick={onCancel}>Cancel</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+// ── Monitor Management Panel ──
+function MonitorManager({ slug, pageMonitors, manageKey, onUpdated }) {
+  const [allMonitors, setAllMonitors] = useState(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [search, setSearch] = useState('');
+  const [adding, setAdding] = useState(false);
+  const [removing, setRemoving] = useState(null);
+  const [error, setError] = useState(null);
+
+  const loadMonitors = useCallback(() => {
+    getMonitors().then(data => {
+      // data might be { monitors: [...] } or just [...]
+      setAllMonitors(Array.isArray(data) ? data : (data.monitors || []));
+    }).catch(() => setAllMonitors([]));
+  }, []);
+
+  useEffect(() => {
+    if (showAdd && allMonitors === null) {
+      loadMonitors();
+    }
+  }, [showAdd, allMonitors, loadMonitors]);
+
+  const pageMonitorIds = new Set((pageMonitors || []).map(m => m.id));
+
+  const available = (allMonitors || []).filter(m => !pageMonitorIds.has(m.id));
+  const filtered = search.trim()
+    ? available.filter(m => m.name.toLowerCase().includes(search.toLowerCase()) || (m.url || '').toLowerCase().includes(search.toLowerCase()))
+    : available;
+
+  const handleAdd = async (monitorId) => {
+    setError(null);
+    setAdding(true);
+    try {
+      await addPageMonitors(slug, [monitorId], manageKey);
+      onUpdated();
+      // If only one was left, close the add panel
+      if (filtered.length <= 1) setShowAdd(false);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const handleRemove = async (monitorId) => {
+    if (!window.confirm('Remove this monitor from the status page? (The monitor itself is not deleted.)')) return;
+    setError(null);
+    setRemoving(monitorId);
+    try {
+      await removePageMonitor(slug, monitorId, manageKey);
+      onUpdated();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setRemoving(null);
+    }
+  };
+
+  return (
+    <div className="card" style={{ padding: 20, marginBottom: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <h3 style={{ margin: 0, fontSize: '1rem' }}>Monitors ({pageMonitors.length})</h3>
+        <button className="btn btn-primary" style={{ fontSize: '0.75rem', padding: '4px 12px' }} onClick={() => setShowAdd(!showAdd)}>
+          {showAdd ? 'Done' : <><IconPlus size={12} /> Add Monitor</>}
+        </button>
+      </div>
+
+      {error && <div style={{ color: '#f87171', fontSize: '0.8rem', marginBottom: 8 }}>{error}</div>}
+
+      {/* Current monitors with remove buttons */}
+      {pageMonitors.length === 0 ? (
+        <div style={{ color: '#64748b', fontSize: '0.85rem', padding: '8px 0' }}>No monitors assigned yet. Add some to populate your status page.</div>
+      ) : (
+        <div style={{ display: 'grid', gap: 6, marginBottom: showAdd ? 16 : 0 }}>
+          {pageMonitors.map(m => {
+            const statusColors = { up: '#00d4aa', down: '#ef4444', degraded: '#fbbf24', maintenance: '#8b5cf6', unknown: '#64748b' };
+            const color = statusColors[m.current_status] || '#64748b';
+            return (
+              <div key={m.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: '#0f172a', borderRadius: 6, border: '1px solid #1e293b' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ width: 8, height: 8, borderRadius: '50%', background: color, flexShrink: 0 }} />
+                  <span style={{ fontSize: '0.85rem' }}>{m.name}</span>
+                  <span style={{ fontSize: '0.7rem', color: '#64748b' }}>{m.uptime_24h?.toFixed(1)}%</span>
+                </div>
+                <button
+                  className="btn"
+                  style={{ fontSize: '0.65rem', padding: '2px 6px', color: '#f87171' }}
+                  onClick={() => handleRemove(m.id)}
+                  disabled={removing === m.id}
+                  title="Remove from page"
+                >
+                  {removing === m.id ? '...' : <IconX size={12} />}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Add monitors panel */}
+      {showAdd && (
+        <div>
+          <div style={{ borderTop: '1px solid #2a2a4a', paddingTop: 12, marginTop: 4 }}>
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search monitors..."
+              style={{ ...inputStyle, fontSize: '0.8rem', padding: '6px 10px', marginBottom: 8 }}
+            />
+            {allMonitors === null ? (
+              <div style={{ color: '#94a3b8', fontSize: '0.8rem', padding: 8 }}>Loading monitors...</div>
+            ) : filtered.length === 0 ? (
+              <div style={{ color: '#64748b', fontSize: '0.8rem', padding: 8 }}>
+                {available.length === 0 ? 'All monitors are already on this page.' : 'No matches.'}
+              </div>
+            ) : (
+              <div style={{ maxHeight: 240, overflowY: 'auto', display: 'grid', gap: 4 }}>
+                {filtered.slice(0, 50).map(m => {
+                  const statusColors = { up: '#00d4aa', down: '#ef4444', degraded: '#fbbf24', maintenance: '#8b5cf6', unknown: '#64748b' };
+                  const color = statusColors[m.current_status] || '#64748b';
+                  return (
+                    <div key={m.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 10px', background: '#12122a', borderRadius: 4, border: '1px solid #1e293b' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div style={{ width: 8, height: 8, borderRadius: '50%', background: color, flexShrink: 0 }} />
+                        <span style={{ fontSize: '0.8rem' }}>{m.name}</span>
+                        {m.url && <span style={{ fontSize: '0.65rem', color: '#475569', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.url}</span>}
+                      </div>
+                      <button
+                        className="btn btn-primary"
+                        style={{ fontSize: '0.65rem', padding: '2px 8px' }}
+                        onClick={() => handleAdd(m.id)}
+                        disabled={adding}
+                      >
+                        {adding ? '...' : 'Add'}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Status Page Detail View ──
-function StatusPageView({ slug, onBack, onMonitorSelect }) {
+function StatusPageView({ slug, onBack, onMonitorSelect, onDeleted }) {
   const [page, setPage] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [manageKey, setManageKey] = useState(() => {
+    try { return localStorage.getItem(`watchpost_page_key_${slug}`) || ''; } catch (e) { return ''; }
+  });
+  const [showSettings, setShowSettings] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState(null);
 
   const load = useCallback(() => {
     getStatusPageDetail(slug)
@@ -228,6 +519,20 @@ function StatusPageView({ slug, onBack, onMonitorSelect }) {
     const interval = setInterval(load, 30000);
     return () => clearInterval(interval);
   }, [load]);
+
+  const handleDelete = async () => {
+    setDeleteError(null);
+    setDeleting(true);
+    try {
+      await deleteStatusPage(slug, manageKey);
+      try { localStorage.removeItem(`watchpost_page_key_${slug}`); } catch (e) { /* silent */ }
+      onDeleted();
+    } catch (err) {
+      setDeleteError(err.message);
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   if (loading) return <div style={{ textAlign: 'center', padding: 40, color: '#94a3b8' }}>Loading...</div>;
   if (error) return <div style={{ textAlign: 'center', padding: 40, color: '#f87171' }}>{error}</div>;
@@ -250,7 +555,7 @@ function StatusPageView({ slug, onBack, onMonitorSelect }) {
   // Group monitors by group_name
   const grouped = {};
   const ungrouped = [];
-  page.monitors.forEach(m => {
+  (page.monitors || []).forEach(m => {
     if (m.group_name) {
       if (!grouped[m.group_name]) grouped[m.group_name] = [];
       grouped[m.group_name].push(m);
@@ -261,8 +566,100 @@ function StatusPageView({ slug, onBack, onMonitorSelect }) {
 
   return (
     <div>
-      <button className="btn" onClick={onBack} style={{ marginBottom: 16, fontSize: '0.8rem' }}>← Back to Pages</button>
+      {/* Header bar */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <button className="btn" onClick={onBack} style={{ fontSize: '0.8rem' }}>← Back to Pages</button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {manageKey && (
+            <button
+              className="btn"
+              style={{ fontSize: '0.75rem', padding: '4px 10px' }}
+              onClick={() => { setShowSettings(!showSettings); setEditing(false); setConfirmDelete(false); }}
+            >
+              <IconWrench size={14} style={{ marginRight: 4, verticalAlign: 'middle' }} />
+              Settings
+            </button>
+          )}
+        </div>
+      </div>
 
+      {/* Manage key input */}
+      <div style={{ marginBottom: 16 }}>
+        <ManageKeyInput slug={slug} manageKey={manageKey} setManageKey={setManageKey} />
+      </div>
+
+      {/* Settings panel (edit, monitor management, delete) */}
+      {showSettings && manageKey && (
+        <>
+          {/* Edit form */}
+          {editing ? (
+            <EditStatusPage
+              page={page}
+              slug={slug}
+              manageKey={manageKey}
+              onUpdated={() => { setEditing(false); load(); }}
+              onCancel={() => setEditing(false)}
+            />
+          ) : (
+            <div className="card" style={{ padding: '12px 20px', marginBottom: 16 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '0.85rem', color: '#94a3b8' }}>
+                  /{page.slug}
+                  {page.custom_domain && <span> · {page.custom_domain}</span>}
+                  {page.is_public === false && <span style={{ color: '#fbbf24', marginLeft: 8 }}>Private</span>}
+                </span>
+                <button className="btn" style={{ fontSize: '0.75rem', padding: '4px 10px' }} onClick={() => setEditing(true)}>
+                  <IconEdit size={14} style={{ marginRight: 4, verticalAlign: 'middle' }} /> Edit
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Monitor management */}
+          <MonitorManager
+            slug={slug}
+            pageMonitors={page.monitors || []}
+            manageKey={manageKey}
+            onUpdated={load}
+          />
+
+          {/* Delete zone */}
+          <div className="card" style={{ padding: '12px 20px', marginBottom: 16, borderLeft: '3px solid #ef4444' }}>
+            {!confirmDelete ? (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '0.85rem', color: '#94a3b8' }}>Danger zone</span>
+                <button
+                  className="btn"
+                  style={{ fontSize: '0.75rem', padding: '4px 10px', color: '#f87171', borderColor: '#7f1d1d' }}
+                  onClick={() => setConfirmDelete(true)}
+                >
+                  <IconTrash size={14} style={{ marginRight: 4, verticalAlign: 'middle' }} /> Delete Page
+                </button>
+              </div>
+            ) : (
+              <div>
+                <p style={{ fontSize: '0.85rem', color: '#f87171', marginTop: 0 }}>
+                  Delete <strong>"{page.title}"</strong>? This removes the status page and its monitor assignments. Monitors themselves are not deleted.
+                </p>
+                {deleteError && <div style={{ color: '#f87171', fontSize: '0.8rem', marginBottom: 8 }}>{deleteError}</div>}
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button
+                    className="btn"
+                    style={{ fontSize: '0.75rem', padding: '4px 12px', background: '#7f1d1d', color: '#fca5a5', borderColor: '#991b1b' }}
+                    onClick={handleDelete}
+                    disabled={deleting}
+                  >
+                    {deleting ? 'Deleting...' : 'Yes, Delete'}
+                  </button>
+                  <button className="btn" style={{ fontSize: '0.75rem', padding: '4px 12px' }} onClick={() => setConfirmDelete(false)}>Cancel</button>
+                </div>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* Page header */}
       <div style={{ textAlign: 'center', marginBottom: 24 }}>
         {page.logo_url && <img src={page.logo_url} alt="" style={{ width: 48, height: 48, borderRadius: 8, marginBottom: 8 }} />}
         <h2 style={{ margin: '4px 0' }}>{page.title}</h2>
@@ -277,9 +674,10 @@ function StatusPageView({ slug, onBack, onMonitorSelect }) {
         </div>
       </div>
 
-      {page.monitors.length === 0 ? (
+      {(page.monitors || []).length === 0 ? (
         <div style={{ textAlign: 'center', padding: 40, color: '#64748b' }}>
           <p>No monitors assigned to this page yet.</p>
+          {manageKey && <p style={{ fontSize: '0.8rem' }}>Open Settings to add monitors.</p>}
         </div>
       ) : (
         <>
@@ -357,6 +755,7 @@ export default function StatusPages({ route, onNavigate }) {
         slug={slug}
         onBack={() => onNavigate('/pages')}
         onMonitorSelect={(id) => onNavigate(`/monitor/${id}`)}
+        onDeleted={() => onNavigate('/pages')}
       />
     );
   }
