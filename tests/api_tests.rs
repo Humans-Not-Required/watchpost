@@ -74,6 +74,10 @@ fn test_client_with_db() -> (Client, String) {
             watchpost::routes::add_page_monitors,
             watchpost::routes::remove_page_monitor,
             watchpost::routes::list_page_monitors,
+            watchpost::routes::set_alert_rules,
+            watchpost::routes::get_alert_rules,
+            watchpost::routes::delete_alert_rules,
+            watchpost::routes::get_alert_log,
         ])
         .register("/", rocket::catchers![
             watchpost::catchers::bad_request,
@@ -5299,4 +5303,349 @@ fn test_create_status_page_with_logo() {
     assert_eq!(resp.status(), Status::Created);
     let body: serde_json::Value = resp.into_json().unwrap();
     assert_eq!(body["status_page"]["logo_url"], "https://example.com/logo.png");
+}
+
+// ── Alert Rules Tests ──
+
+#[test]
+fn test_set_alert_rules() {
+    let client = test_client();
+    let (id, key) = create_test_monitor(&client);
+
+    let resp = client.put(format!("/api/v1/monitors/{}/alert-rules", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"repeat_interval_minutes": 15, "max_repeats": 5, "escalation_after_minutes": 30}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["monitor_id"], id);
+    assert_eq!(body["repeat_interval_minutes"], 15);
+    assert_eq!(body["max_repeats"], 5);
+    assert_eq!(body["escalation_after_minutes"], 30);
+}
+
+#[test]
+fn test_get_alert_rules() {
+    let client = test_client();
+    let (id, key) = create_test_monitor(&client);
+
+    // Set rules first
+    client.put(format!("/api/v1/monitors/{}/alert-rules", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"repeat_interval_minutes": 10, "escalation_after_minutes": 60}"#)
+        .dispatch();
+
+    // Get rules
+    let resp = client.get(format!("/api/v1/monitors/{}/alert-rules", id))
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["repeat_interval_minutes"], 10);
+    assert_eq!(body["max_repeats"], 10); // default
+    assert_eq!(body["escalation_after_minutes"], 60);
+}
+
+#[test]
+fn test_get_alert_rules_not_found() {
+    let client = test_client();
+    let (id, key) = create_test_monitor(&client);
+
+    let resp = client.get(format!("/api/v1/monitors/{}/alert-rules", id))
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .dispatch();
+    assert_eq!(resp.status(), Status::NotFound);
+}
+
+#[test]
+fn test_update_alert_rules() {
+    let client = test_client();
+    let (id, key) = create_test_monitor(&client);
+
+    // Set initial rules
+    client.put(format!("/api/v1/monitors/{}/alert-rules", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"repeat_interval_minutes": 10}"#)
+        .dispatch();
+
+    // Update with new values (upsert)
+    let resp = client.put(format!("/api/v1/monitors/{}/alert-rules", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"repeat_interval_minutes": 30, "max_repeats": 3}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["repeat_interval_minutes"], 30);
+    assert_eq!(body["max_repeats"], 3);
+}
+
+#[test]
+fn test_delete_alert_rules() {
+    let client = test_client();
+    let (id, key) = create_test_monitor(&client);
+
+    // Set rules
+    client.put(format!("/api/v1/monitors/{}/alert-rules", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"repeat_interval_minutes": 15}"#)
+        .dispatch();
+
+    // Delete
+    let resp = client.delete(format!("/api/v1/monitors/{}/alert-rules", id))
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+
+    // Verify gone
+    let resp = client.get(format!("/api/v1/monitors/{}/alert-rules", id))
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .dispatch();
+    assert_eq!(resp.status(), Status::NotFound);
+}
+
+#[test]
+fn test_delete_alert_rules_not_found() {
+    let client = test_client();
+    let (id, key) = create_test_monitor(&client);
+
+    let resp = client.delete(format!("/api/v1/monitors/{}/alert-rules", id))
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .dispatch();
+    assert_eq!(resp.status(), Status::NotFound);
+}
+
+#[test]
+fn test_alert_rules_require_auth() {
+    let client = test_client();
+    let (id, _key) = create_test_monitor(&client);
+
+    // No auth
+    let resp = client.put(format!("/api/v1/monitors/{}/alert-rules", id))
+        .header(ContentType::JSON)
+        .body(r#"{"repeat_interval_minutes": 15}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Unauthorized);
+
+    // Wrong key
+    let resp = client.put(format!("/api/v1/monitors/{}/alert-rules", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", "Bearer wrong_key"))
+        .body(r#"{"repeat_interval_minutes": 15}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Forbidden);
+}
+
+#[test]
+fn test_alert_rules_validation_repeat_too_low() {
+    let client = test_client();
+    let (id, key) = create_test_monitor(&client);
+
+    let resp = client.put(format!("/api/v1/monitors/{}/alert-rules", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"repeat_interval_minutes": 2}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::BadRequest);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert!(body["error"].as_str().unwrap().contains("at least 5"));
+}
+
+#[test]
+fn test_alert_rules_validation_max_repeats_too_high() {
+    let client = test_client();
+    let (id, key) = create_test_monitor(&client);
+
+    let resp = client.put(format!("/api/v1/monitors/{}/alert-rules", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"repeat_interval_minutes": 10, "max_repeats": 200}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::BadRequest);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert!(body["error"].as_str().unwrap().contains("100 or less"));
+}
+
+#[test]
+fn test_alert_rules_validation_escalation_too_low() {
+    let client = test_client();
+    let (id, key) = create_test_monitor(&client);
+
+    let resp = client.put(format!("/api/v1/monitors/{}/alert-rules", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"escalation_after_minutes": 3}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::BadRequest);
+}
+
+#[test]
+fn test_alert_rules_zero_disables() {
+    let client = test_client();
+    let (id, key) = create_test_monitor(&client);
+
+    // Setting 0 should be valid (disabled)
+    let resp = client.put(format!("/api/v1/monitors/{}/alert-rules", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"repeat_interval_minutes": 0, "escalation_after_minutes": 0}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["repeat_interval_minutes"], 0);
+    assert_eq!(body["escalation_after_minutes"], 0);
+}
+
+#[test]
+fn test_alert_rules_defaults() {
+    let client = test_client();
+    let (id, key) = create_test_monitor(&client);
+
+    // Empty body should use all defaults
+    let resp = client.put(format!("/api/v1/monitors/{}/alert-rules", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["repeat_interval_minutes"], 0);
+    assert_eq!(body["max_repeats"], 10);
+    assert_eq!(body["escalation_after_minutes"], 0);
+}
+
+#[test]
+fn test_alert_log_empty() {
+    let client = test_client();
+    let (id, key) = create_test_monitor(&client);
+
+    let resp = client.get(format!("/api/v1/monitors/{}/alert-log", id))
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert!(body.as_array().unwrap().is_empty());
+}
+
+#[test]
+fn test_alert_log_requires_auth() {
+    let client = test_client();
+    let (id, _key) = create_test_monitor(&client);
+
+    let resp = client.get(format!("/api/v1/monitors/{}/alert-log", id))
+        .dispatch();
+    assert_eq!(resp.status(), Status::Unauthorized);
+}
+
+#[test]
+fn test_alert_log_with_entries() {
+    let (client, db_path) = test_client_with_db();
+    let (id, key) = create_test_monitor(&client);
+
+    // Manually insert alert log entries
+    let db = rusqlite::Connection::open(&db_path).unwrap();
+    db.execute(
+        "INSERT INTO alert_log (id, monitor_id, incident_id, alert_type, event, sent_at)
+         VALUES ('log1', ?1, NULL, 'initial', 'incident.created', '2026-01-01 12:00:00')",
+        params![id],
+    ).unwrap();
+    db.execute(
+        "INSERT INTO alert_log (id, monitor_id, incident_id, alert_type, event, sent_at)
+         VALUES ('log2', ?1, NULL, 'repeat', 'incident.reminder', '2026-01-01 12:15:00')",
+        params![id],
+    ).unwrap();
+    drop(db);
+
+    let resp = client.get(format!("/api/v1/monitors/{}/alert-log", id))
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let entries = body.as_array().unwrap();
+    assert_eq!(entries.len(), 2);
+    // Newest first
+    assert_eq!(entries[0]["alert_type"], "repeat");
+    assert_eq!(entries[1]["alert_type"], "initial");
+}
+
+#[test]
+fn test_alert_log_with_limit() {
+    let (client, db_path) = test_client_with_db();
+    let (id, key) = create_test_monitor(&client);
+
+    let db = rusqlite::Connection::open(&db_path).unwrap();
+    for i in 0..5 {
+        db.execute(
+            "INSERT INTO alert_log (id, monitor_id, alert_type, event, sent_at)
+             VALUES (?1, ?2, 'repeat', 'incident.reminder', ?3)",
+            params![format!("log{}", i), id, format!("2026-01-01 12:{:02}:00", i)],
+        ).unwrap();
+    }
+    drop(db);
+
+    let resp = client.get(format!("/api/v1/monitors/{}/alert-log?limit=2", id))
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body.as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn test_alert_log_with_after_filter() {
+    let (client, db_path) = test_client_with_db();
+    let (id, key) = create_test_monitor(&client);
+
+    let db = rusqlite::Connection::open(&db_path).unwrap();
+    db.execute(
+        "INSERT INTO alert_log (id, monitor_id, alert_type, event, sent_at)
+         VALUES ('old', ?1, 'initial', 'incident.created', '2026-01-01T10:00:00Z')",
+        params![id],
+    ).unwrap();
+    db.execute(
+        "INSERT INTO alert_log (id, monitor_id, alert_type, event, sent_at)
+         VALUES ('new', ?1, 'repeat', 'incident.reminder', '2026-01-01T14:00:00Z')",
+        params![id],
+    ).unwrap();
+    drop(db);
+
+    let resp = client.get(format!("/api/v1/monitors/{}/alert-log?after=2026-01-01T12:00:00Z", id))
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let entries = body.as_array().unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["id"], "new");
+}
+
+#[test]
+fn test_alert_rules_cascade_on_monitor_delete() {
+    let client = test_client();
+    let (id, key) = create_test_monitor(&client);
+
+    // Set rules
+    let resp = client.put(format!("/api/v1/monitors/{}/alert-rules", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"repeat_interval_minutes": 15}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+
+    // Delete monitor
+    let resp = client.delete(format!("/api/v1/monitors/{}", id))
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+
+    // Verify rules are gone (monitor doesn't exist anymore)
+    let resp = client.get(format!("/api/v1/monitors/{}/alert-rules", id))
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .dispatch();
+    // Will get NotFound since monitor itself is gone
+    assert!(resp.status() == Status::NotFound || resp.status() == Status::Forbidden);
 }

@@ -17,6 +17,7 @@ mod sla;
 mod stream;
 mod locations;
 mod status_pages;
+mod alerts;
 
 // Re-export all route handlers so main.rs can use routes::* unchanged
 pub use monitors::{create_monitor, bulk_create_monitors, export_monitor, list_monitors, get_monitor, update_monitor, delete_monitor, pause_monitor, resume_monitor};
@@ -35,6 +36,7 @@ pub use sla::monitor_sla;
 pub use stream::{global_events, monitor_events};
 pub use locations::{create_location, list_locations, get_location, delete_location, submit_probe, monitor_location_status, monitor_consensus};
 pub use status_pages::{create_status_page, list_status_pages, get_status_page_detail, update_status_page, delete_status_page, add_page_monitors, remove_page_monitor, list_page_monitors};
+pub use alerts::{set_alert_rules, get_alert_rules, delete_alert_rules, get_alert_log};
 
 use rocket::{http::Status, serde::json::Json};
 use crate::models::Monitor;

@@ -568,3 +568,43 @@ pub struct StatusPageDetail {
 pub struct AddMonitorsToPage {
     pub monitor_ids: Vec<String>,
 }
+
+// ── Alert Rules ──
+
+#[derive(Debug, Serialize, Clone)]
+pub struct AlertRule {
+    pub monitor_id: String,
+    pub repeat_interval_minutes: u32,
+    pub max_repeats: u32,
+    pub escalation_after_minutes: u32,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateAlertRule {
+    /// Minutes between repeat notifications while incident is open. 0 = disabled.
+    #[serde(default)]
+    pub repeat_interval_minutes: u32,
+    /// Maximum repeat notifications per incident. Default 10.
+    #[serde(default = "default_max_repeats")]
+    pub max_repeats: u32,
+    /// Minutes before escalation if incident not acknowledged. 0 = disabled.
+    #[serde(default)]
+    pub escalation_after_minutes: u32,
+}
+
+fn default_max_repeats() -> u32 { 10 }
+
+#[derive(Debug, Serialize, Clone)]
+pub struct AlertLogEntry {
+    pub id: String,
+    pub monitor_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub incident_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub channel_id: Option<String>,
+    pub alert_type: String,
+    pub event: String,
+    pub sent_at: String,
+}

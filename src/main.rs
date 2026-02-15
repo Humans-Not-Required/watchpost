@@ -103,6 +103,10 @@ fn rocket() -> _ {
             routes::add_page_monitors,
             routes::remove_page_monitor,
             routes::list_page_monitors,
+            routes::set_alert_rules,
+            routes::get_alert_rules,
+            routes::delete_alert_rules,
+            routes::get_alert_log,
         ])
         .register("/", catchers![
             catchers::bad_request,

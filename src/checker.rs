@@ -595,7 +595,13 @@ async fn process_check_result(
         if !emails.is_empty() {
             notifications::fire_emails(&emails, payload).await;
         }
+
+        // Log to alert_log
+        log_alert(db, &monitor.id, payload, "initial");
     }
+
+    // ── Repeat notifications (alert rules) ───────────────────────────────
+    process_repeat_notifications(db, monitor, http_client, &broadcaster).await;
 
     // Always emit check.completed SSE event
     let mut sse_data = serde_json::json!({
@@ -734,4 +740,204 @@ fn resolve_transition(
     }
 
     None
+}
+
+/// Log a notification to the alert_log table.
+fn log_alert(db: &Db, monitor_id: &str, payload: &WebhookPayload, alert_type: &str) {
+    let conn = db.conn.lock().unwrap();
+    let id = uuid::Uuid::new_v4().to_string();
+    let incident_id = payload.incident.as_ref().map(|i| i.id.clone());
+    let _ = conn.execute(
+        "INSERT INTO alert_log (id, monitor_id, incident_id, alert_type, event, sent_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, datetime('now'))",
+        params![id, monitor_id, incident_id, alert_type, payload.event],
+    );
+}
+
+/// Check if a monitor has repeat alert rules and an open incident, then fire
+/// repeat notifications if enough time has passed since the last alert.
+async fn process_repeat_notifications(
+    db: &Db,
+    monitor: &MonitorCheck,
+    http_client: &reqwest::Client,
+    broadcaster: &EventBroadcaster,
+) {
+    // Only process if monitor is currently down
+    if monitor.current_status != "down" {
+        return;
+    }
+
+    let (repeat_interval, max_repeats, escalation_after) = {
+        let conn = db.conn.lock().unwrap();
+        match conn.query_row(
+            "SELECT repeat_interval_minutes, max_repeats, escalation_after_minutes
+             FROM alert_rules WHERE monitor_id = ?1",
+            params![monitor.id],
+            |row| Ok((row.get::<_, u32>(0)?, row.get::<_, u32>(1)?, row.get::<_, u32>(2)?)),
+        ) {
+            Ok(r) => r,
+            Err(_) => return, // No alert rules configured
+        }
+    };
+
+    // Get the open incident
+    let (incident_id, incident_cause, incident_started, is_acked) = {
+        let conn = db.conn.lock().unwrap();
+        match conn.query_row(
+            "SELECT id, cause, started_at, CASE WHEN acknowledgement IS NOT NULL THEN 1 ELSE 0 END
+             FROM incidents WHERE monitor_id = ?1 AND resolved_at IS NULL
+             ORDER BY started_at DESC LIMIT 1",
+            params![monitor.id],
+            |row| Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i32>(3)? != 0,
+            )),
+        ) {
+            Ok(r) => r,
+            Err(_) => return, // No open incident
+        }
+    };
+
+    let now_str = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+
+    // ── Repeat notifications ─────────────────────────────────────────────
+    if repeat_interval > 0 {
+        let (repeat_count, last_repeat_at) = {
+            let conn = db.conn.lock().unwrap();
+            let count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM alert_log
+                 WHERE monitor_id = ?1 AND incident_id = ?2 AND alert_type IN ('initial', 'repeat')",
+                params![monitor.id, incident_id],
+                |row| row.get(0),
+            ).unwrap_or(0);
+
+            let last_at: Option<String> = conn.query_row(
+                "SELECT MAX(sent_at) FROM alert_log
+                 WHERE monitor_id = ?1 AND incident_id = ?2 AND alert_type IN ('initial', 'repeat')",
+                params![monitor.id, incident_id],
+                |row| row.get(0),
+            ).unwrap_or(None);
+
+            (count as u32, last_at)
+        };
+
+        if repeat_count < max_repeats {
+            let should_repeat = match last_repeat_at {
+                Some(ref ts) => minutes_since(ts) >= repeat_interval as i64,
+                None => true, // No prior alert logged — fire immediately
+            };
+
+            if should_repeat {
+                let payload = WebhookPayload {
+                    event: "incident.reminder".to_string(),
+                    monitor: WebhookMonitor {
+                        id: monitor.id.clone(),
+                        name: monitor.name.clone(),
+                        url: monitor.url.clone(),
+                        current_status: "down".to_string(),
+                    },
+                    incident: Some(WebhookIncident {
+                        id: incident_id.clone(),
+                        cause: incident_cause.clone(),
+                        started_at: incident_started.clone(),
+                        resolved_at: None,
+                    }),
+                    timestamp: now_str.clone(),
+                };
+
+                // SSE
+                broadcaster.send(SseEvent {
+                    event_type: "incident.reminder".to_string(),
+                    monitor_id: monitor.id.clone(),
+                    data: serde_json::to_value(&payload).unwrap_or_default(),
+                });
+
+                // Webhooks
+                let urls = notifications::get_webhook_urls(db, &monitor.id);
+                if !urls.is_empty() {
+                    notifications::fire_webhooks(http_client, &urls, &payload).await;
+                }
+
+                // Emails
+                let emails = notifications::get_email_addresses(db, &monitor.id);
+                if !emails.is_empty() {
+                    notifications::fire_emails(&emails, &payload).await;
+                }
+
+                log_alert(db, &monitor.id, &payload, "repeat");
+            }
+        }
+    }
+
+    // ── Escalation ───────────────────────────────────────────────────────
+    if escalation_after > 0 && !is_acked {
+        // Check if incident has been open longer than escalation_after minutes
+        let incident_age_minutes = minutes_since(&incident_started);
+        if incident_age_minutes >= escalation_after as i64 {
+            // Check if we already sent an escalation for this incident
+            let already_escalated = {
+                let conn = db.conn.lock().unwrap();
+                let count: i64 = conn.query_row(
+                    "SELECT COUNT(*) FROM alert_log
+                     WHERE monitor_id = ?1 AND incident_id = ?2 AND alert_type = 'escalation'",
+                    params![monitor.id, incident_id],
+                    |row| row.get(0),
+                ).unwrap_or(0);
+                count > 0
+            };
+
+            if !already_escalated {
+                let payload = WebhookPayload {
+                    event: "incident.escalated".to_string(),
+                    monitor: WebhookMonitor {
+                        id: monitor.id.clone(),
+                        name: monitor.name.clone(),
+                        url: monitor.url.clone(),
+                        current_status: "down".to_string(),
+                    },
+                    incident: Some(WebhookIncident {
+                        id: incident_id.clone(),
+                        cause: incident_cause.clone(),
+                        started_at: incident_started.clone(),
+                        resolved_at: None,
+                    }),
+                    timestamp: now_str.clone(),
+                };
+
+                // SSE
+                broadcaster.send(SseEvent {
+                    event_type: "incident.escalated".to_string(),
+                    monitor_id: monitor.id.clone(),
+                    data: serde_json::to_value(&payload).unwrap_or_default(),
+                });
+
+                // Fire to ALL channels (escalation = notify everything)
+                let urls = notifications::get_webhook_urls(db, &monitor.id);
+                if !urls.is_empty() {
+                    notifications::fire_webhooks(http_client, &urls, &payload).await;
+                }
+                let emails = notifications::get_email_addresses(db, &monitor.id);
+                if !emails.is_empty() {
+                    notifications::fire_emails(&emails, &payload).await;
+                }
+
+                log_alert(db, &monitor.id, &payload, "escalation");
+            }
+        }
+    }
+}
+
+/// Calculate minutes elapsed since a datetime string.
+fn minutes_since(datetime_str: &str) -> i64 {
+    use chrono::{NaiveDateTime, Utc};
+    let formats = ["%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%d %H:%M:%S"];
+    for fmt in &formats {
+        if let Ok(dt) = NaiveDateTime::parse_from_str(datetime_str, fmt) {
+            let then = dt.and_utc();
+            return (Utc::now() - then).num_minutes();
+        }
+    }
+    0 // fallback: treat as "just now"
 }
