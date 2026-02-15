@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/li
 COPY Cargo.toml Cargo.lock ./
 COPY src/ src/
 COPY tests/ tests/
+COPY static/ static/
 RUN cargo build --release
 
 # Stage 3: Runtime
