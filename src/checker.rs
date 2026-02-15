@@ -560,6 +560,16 @@ async fn process_check_result(
             effective_status = "maintenance".to_string();
         }
 
+        // ── Dependency chain suppression ────────────────────────────────
+        // Check if any upstream dependency is currently down.
+        // If so, suppress incident creation but still record the heartbeat
+        // and update status honestly.
+        let deps_suppressed = if effective_status == "down" {
+            crate::routes::has_dependency_down(&conn, &monitor.id)
+        } else {
+            false
+        };
+
         // Persist status + failure counter
         let _ = conn.execute(
             "UPDATE monitors SET current_status = ?1, last_checked_at = datetime('now'), consecutive_failures = ?2, updated_at = datetime('now') WHERE id = ?3",
@@ -570,9 +580,51 @@ async fn process_check_result(
         let prev = &monitor.current_status;
         let now_str = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
-        webhook_event = resolve_transition(
-            &conn, monitor, prev, &effective_status, &result.error_message, &now_str,
-        );
+        if deps_suppressed {
+            // Dependency is down — suppress incident creation and notifications.
+            // Heartbeat is already recorded; status is updated honestly.
+            webhook_event = None;
+        } else {
+            // Check for delayed incident: monitor was previously down with
+            // suppressed deps, now deps recovered but monitor is still down.
+            // If there's no open incident, create one now.
+            let need_delayed_incident = prev == "down" && effective_status == "down"
+                && !crate::routes::has_open_incident(&conn, &monitor.id);
+
+            if need_delayed_incident {
+                // Create the incident now that dependencies are healthy
+                let inc_id = uuid::Uuid::new_v4().to_string();
+                let cause = result.error_message.clone()
+                    .unwrap_or_else(|| "Monitor is down (dependency recovered)".to_string());
+                let inc_seq: i64 = conn
+                    .query_row("SELECT COALESCE(MAX(seq), 0) + 1 FROM incidents", [], |r| r.get(0))
+                    .unwrap_or(1);
+                let _ = conn.execute(
+                    "INSERT INTO incidents (id, monitor_id, cause, seq) VALUES (?1, ?2, ?3, ?4)",
+                    params![inc_id, monitor.id, cause, inc_seq],
+                );
+                webhook_event = Some(WebhookPayload {
+                    event: "incident.created".to_string(),
+                    monitor: WebhookMonitor {
+                        id: monitor.id.clone(),
+                        name: monitor.name.clone(),
+                        url: monitor.url.clone(),
+                        current_status: "down".to_string(),
+                    },
+                    incident: Some(WebhookIncident {
+                        id: inc_id,
+                        cause,
+                        started_at: now_str.clone(),
+                        resolved_at: None,
+                    }),
+                    timestamp: now_str,
+                });
+            } else {
+                webhook_event = resolve_transition(
+                    &conn, monitor, prev, &effective_status, &result.error_message, &now_str,
+                );
+            }
+        }
     } // DB lock released
 
     // ── Fire notifications outside the lock ──────────────────────────────
@@ -715,28 +767,35 @@ fn resolve_transition(
 
     // Transition: down → recovered (resolve open incidents)
     if prev == "down" && effective != "down" && effective != "maintenance" {
-        let _ = conn.execute(
+        let resolved_count = conn.execute(
             "UPDATE incidents SET resolved_at = datetime('now') WHERE monitor_id = ?1 AND resolved_at IS NULL",
             params![monitor.id],
-        );
-        let incident_info: Option<(String, String, String)> = conn
-            .query_row(
-                "SELECT id, cause, started_at FROM incidents WHERE monitor_id = ?1 ORDER BY started_at DESC LIMIT 1",
-                params![monitor.id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .ok();
-        return Some(WebhookPayload {
-            event: "incident.resolved".to_string(),
-            monitor: mk_monitor(effective),
-            incident: incident_info.map(|(id, cause, started_at)| WebhookIncident {
-                id,
-                cause,
-                started_at,
-                resolved_at: Some(now_str.to_string()),
-            }),
-            timestamp: now_str.to_string(),
-        });
+        ).unwrap_or(0);
+
+        // Only emit resolved event if there was actually an open incident.
+        // If deps were suppressed, there may be no open incident to resolve.
+        if resolved_count > 0 {
+            let incident_info: Option<(String, String, String)> = conn
+                .query_row(
+                    "SELECT id, cause, started_at FROM incidents WHERE monitor_id = ?1 ORDER BY started_at DESC LIMIT 1",
+                    params![monitor.id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .ok();
+            return Some(WebhookPayload {
+                event: "incident.resolved".to_string(),
+                monitor: mk_monitor(effective),
+                incident: incident_info.map(|(id, cause, started_at)| WebhookIncident {
+                    id,
+                    cause,
+                    started_at,
+                    resolved_at: Some(now_str.to_string()),
+                }),
+                timestamp: now_str.to_string(),
+            });
+        }
+        // If no open incident (was suppressed by deps), silently recover
+        return None;
     }
 
     None

@@ -253,6 +253,19 @@ impl Db {
             CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_seq ON webhook_deliveries(seq);
         ").ok();
 
+        // Monitor dependencies table (for alert suppression when upstream is down)
+        conn.execute_batch("
+            CREATE TABLE IF NOT EXISTS monitor_dependencies (
+                id TEXT PRIMARY KEY,
+                monitor_id TEXT NOT NULL REFERENCES monitors(id) ON DELETE CASCADE,
+                depends_on_id TEXT NOT NULL REFERENCES monitors(id) ON DELETE CASCADE,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(monitor_id, depends_on_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_deps_monitor ON monitor_dependencies(monitor_id);
+            CREATE INDEX IF NOT EXISTS idx_deps_depends_on ON monitor_dependencies(depends_on_id);
+        ").ok();
+
         // Backfill seq for existing heartbeats
         let needs_hb_backfill: i64 = conn
             .query_row("SELECT COUNT(*) FROM heartbeats WHERE seq IS NULL", [], |r| r.get(0))

@@ -2062,31 +2062,61 @@
       "get": {
         "summary": "Get alert rules",
         "description": "Returns the current alert rules for a monitor. Returns 404 if no rules are configured.",
-        "tags": ["Alert Rules"],
-        "parameters": [
-          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        "tags": [
+          "Alert Rules"
         ],
-        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
         "responses": {
           "200": {
             "description": "Alert rules",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/AlertRule" }
+                "schema": {
+                  "$ref": "#/components/schemas/AlertRule"
+                }
               }
             }
           },
-          "404": { "description": "No alert rules configured" }
+          "404": {
+            "description": "No alert rules configured"
+          }
         }
       },
       "put": {
         "summary": "Set alert rules",
         "description": "Create or update alert rules for a monitor (upsert). Controls repeat notifications and escalation policies.",
-        "tags": ["Alert Rules"],
-        "parameters": [
-          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        "tags": [
+          "Alert Rules"
         ],
-        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -2119,24 +2149,45 @@
             "description": "Alert rules saved",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/AlertRule" }
+                "schema": {
+                  "$ref": "#/components/schemas/AlertRule"
+                }
               }
             }
           },
-          "400": { "description": "Validation error" }
+          "400": {
+            "description": "Validation error"
+          }
         }
       },
       "delete": {
         "summary": "Remove alert rules",
         "description": "Delete all alert rules for a monitor.",
-        "tags": ["Alert Rules"],
-        "parameters": [
-          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        "tags": [
+          "Alert Rules"
         ],
-        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
         "responses": {
-          "200": { "description": "Alert rules removed" },
-          "404": { "description": "No alert rules configured" }
+          "200": {
+            "description": "Alert rules removed"
+          },
+          "404": {
+            "description": "No alert rules configured"
+          }
         }
       }
     },
@@ -2144,13 +2195,42 @@
       "get": {
         "summary": "Alert notification log",
         "description": "View the history of alert notifications sent for a monitor. Includes initial alerts, reminders, escalations, and resolution notifications.",
-        "tags": ["Alert Rules"],
-        "parameters": [
-          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
-          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 50, "maximum": 200 } },
-          { "name": "after", "in": "query", "schema": { "type": "string", "format": "date-time" }, "description": "Only return entries sent after this timestamp" }
+        "tags": [
+          "Alert Rules"
         ],
-        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 50,
+              "maximum": 200
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "description": "Only return entries sent after this timestamp"
+          }
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
         "responses": {
           "200": {
             "description": "Alert log entries",
@@ -2158,7 +2238,9 @@
               "application/json": {
                 "schema": {
                   "type": "array",
-                  "items": { "$ref": "#/components/schemas/AlertLogEntry" }
+                  "items": {
+                    "$ref": "#/components/schemas/AlertLogEntry"
+                  }
                 }
               }
             }
@@ -2170,15 +2252,62 @@
       "get": {
         "summary": "Webhook delivery log",
         "description": "View the history of webhook delivery attempts for a monitor, including retries. Each delivery attempt is logged with status, response time, and error details. Grouped by delivery_group (one group per notification dispatch).",
-        "tags": ["Notifications"],
-        "parameters": [
-          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
-          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 50, "minimum": 1, "maximum": 200 } },
-          { "name": "after", "in": "query", "schema": { "type": "integer" }, "description": "Cursor: only return entries with seq > this value" },
-          { "name": "event", "in": "query", "schema": { "type": "string" }, "description": "Filter by event type (e.g., incident.created)" },
-          { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["success", "failed"] }, "description": "Filter by delivery status" }
+        "tags": [
+          "Notifications"
         ],
-        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 50,
+              "minimum": 1,
+              "maximum": 200
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Cursor: only return entries with seq > this value"
+          },
+          {
+            "name": "event",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter by event type (e.g., incident.created)"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "success",
+                "failed"
+              ]
+            },
+            "description": "Filter by delivery status"
+          }
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
         "responses": {
           "200": {
             "description": "Webhook delivery log",
@@ -2192,30 +2321,71 @@
                       "items": {
                         "type": "object",
                         "properties": {
-                          "id": { "type": "string" },
-                          "delivery_group": { "type": "string", "description": "Groups all retry attempts for one dispatch" },
-                          "monitor_id": { "type": "string" },
-                          "event": { "type": "string" },
-                          "url": { "type": "string" },
-                          "attempt": { "type": "integer", "description": "Attempt number (1-3)" },
-                          "status": { "type": "string", "enum": ["success", "failed"] },
-                          "status_code": { "type": "integer", "nullable": true },
-                          "error_message": { "type": "string", "nullable": true },
-                          "response_time_ms": { "type": "integer" },
-                          "created_at": { "type": "string", "format": "date-time" },
-                          "seq": { "type": "integer" }
+                          "id": {
+                            "type": "string"
+                          },
+                          "delivery_group": {
+                            "type": "string",
+                            "description": "Groups all retry attempts for one dispatch"
+                          },
+                          "monitor_id": {
+                            "type": "string"
+                          },
+                          "event": {
+                            "type": "string"
+                          },
+                          "url": {
+                            "type": "string"
+                          },
+                          "attempt": {
+                            "type": "integer",
+                            "description": "Attempt number (1-3)"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "success",
+                              "failed"
+                            ]
+                          },
+                          "status_code": {
+                            "type": "integer",
+                            "nullable": true
+                          },
+                          "error_message": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "response_time_ms": {
+                            "type": "integer"
+                          },
+                          "created_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "seq": {
+                            "type": "integer"
+                          }
                         }
                       }
                     },
-                    "total": { "type": "integer" }
+                    "total": {
+                      "type": "integer"
+                    }
                   }
                 }
               }
             }
           },
-          "401": { "description": "Missing manage key" },
-          "403": { "description": "Invalid manage key" },
-          "404": { "description": "Monitor not found" }
+          "401": {
+            "description": "Missing manage key"
+          },
+          "403": {
+            "description": "Invalid manage key"
+          },
+          "404": {
+            "description": "Monitor not found"
+          }
         }
       }
     },
@@ -2532,6 +2702,196 @@
           }
         }
       }
+    },
+    "/api/v1/monitors/{id}/dependencies": {
+      "post": {
+        "summary": "Add a dependency",
+        "description": "Add an upstream dependency to this monitor. When the upstream is down, incident creation is suppressed.",
+        "tags": [
+          "Dependencies"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "apiKeyHeader": []
+          },
+          {
+            "apiKeyQuery": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "depends_on_id"
+                ],
+                "properties": {
+                  "depends_on_id": {
+                    "type": "string",
+                    "description": "ID of the upstream monitor"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Dependency created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MonitorDependency"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Self-dependency, circular chain, or dependency not found"
+          },
+          "403": {
+            "description": "Invalid manage key"
+          },
+          "409": {
+            "description": "Duplicate dependency"
+          }
+        }
+      },
+      "get": {
+        "summary": "List dependencies",
+        "description": "List all upstream dependencies of this monitor.",
+        "tags": [
+          "Dependencies"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of dependencies",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MonitorDependency"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Monitor not found"
+          }
+        }
+      }
+    },
+    "/api/v1/monitors/{id}/dependencies/{dep_id}": {
+      "delete": {
+        "summary": "Remove a dependency",
+        "tags": [
+          "Dependencies"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "dep_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "apiKeyHeader": []
+          },
+          {
+            "apiKeyQuery": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Dependency removed"
+          },
+          "403": {
+            "description": "Invalid manage key"
+          },
+          "404": {
+            "description": "Dependency not found"
+          }
+        }
+      }
+    },
+    "/api/v1/monitors/{id}/dependents": {
+      "get": {
+        "summary": "List dependents",
+        "description": "List monitors that depend on this monitor (reverse lookup).",
+        "tags": [
+          "Dependencies"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of dependents",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MonitorDependency"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Monitor not found"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2551,24 +2911,71 @@
       "AlertRule": {
         "type": "object",
         "properties": {
-          "monitor_id": { "type": "string", "format": "uuid" },
-          "repeat_interval_minutes": { "type": "integer", "description": "Minutes between repeat notifications. 0 = disabled." },
-          "max_repeats": { "type": "integer", "description": "Maximum repeat notifications per incident." },
-          "escalation_after_minutes": { "type": "integer", "description": "Minutes before escalation if not acknowledged. 0 = disabled." },
-          "created_at": { "type": "string", "format": "date-time" },
-          "updated_at": { "type": "string", "format": "date-time" }
+          "monitor_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "repeat_interval_minutes": {
+            "type": "integer",
+            "description": "Minutes between repeat notifications. 0 = disabled."
+          },
+          "max_repeats": {
+            "type": "integer",
+            "description": "Maximum repeat notifications per incident."
+          },
+          "escalation_after_minutes": {
+            "type": "integer",
+            "description": "Minutes before escalation if not acknowledged. 0 = disabled."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
         }
       },
       "AlertLogEntry": {
         "type": "object",
         "properties": {
-          "id": { "type": "string", "format": "uuid" },
-          "monitor_id": { "type": "string", "format": "uuid" },
-          "incident_id": { "type": "string", "format": "uuid", "nullable": true },
-          "channel_id": { "type": "string", "format": "uuid", "nullable": true },
-          "alert_type": { "type": "string", "enum": ["initial", "reminder", "escalation", "resolved"], "description": "Type of alert notification" },
-          "event": { "type": "string", "description": "Event that triggered this alert (e.g. incident.created, incident.reminder)" },
-          "sent_at": { "type": "string", "format": "date-time" }
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "monitor_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "incident_id": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "channel_id": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "alert_type": {
+            "type": "string",
+            "enum": [
+              "initial",
+              "reminder",
+              "escalation",
+              "resolved"
+            ],
+            "description": "Type of alert notification"
+          },
+          "event": {
+            "type": "string",
+            "description": "Event that triggered this alert (e.g. incident.created, incident.reminder)"
+          },
+          "sent_at": {
+            "type": "string",
+            "format": "date-time"
+          }
         }
       },
       "Monitor": {
@@ -3577,6 +3984,30 @@
                 }
               }
             }
+          }
+        }
+      },
+      "MonitorDependency": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "monitor_id": {
+            "type": "string"
+          },
+          "depends_on_id": {
+            "type": "string"
+          },
+          "depends_on_name": {
+            "type": "string"
+          },
+          "depends_on_status": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       }

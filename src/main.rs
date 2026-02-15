@@ -108,6 +108,10 @@ fn rocket() -> _ {
             routes::delete_alert_rules,
             routes::get_alert_log,
             routes::list_webhook_deliveries,
+            routes::add_dependency,
+            routes::list_dependencies,
+            routes::remove_dependency,
+            routes::list_dependents,
         ])
         .register("/", catchers![
             catchers::bad_request,

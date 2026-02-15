@@ -228,6 +228,7 @@ Heartbeats are the main storage cost. Default retention: 90 days. Older heartbea
 - UDP checks
 - ~~Multi-region checking~~ ✅ Shipped (check locations + probe API)
 - ~~Multi-region consensus~~ ✅ Shipped (configurable threshold, incident lifecycle integration)
+- ~~Monitor dependency chains (alert suppression when upstream is down)~~ ✅ Shipped
 - Custom incident severity
 - ~~SLA tracking~~ ✅ Shipped (per-monitor targets with error budget tracking)
 - ~~Alerting rules (escalation)~~ ✅ Shipped (alert rules API + frontend UI)
@@ -293,6 +294,21 @@ Remote check locations allow distributed monitoring from multiple geographic reg
 - Heartbeats include optional `location_id` field (null = local checker)
 - Consensus: `consensus_threshold` field on monitors. When set, status is determined by aggregating results across all locations. Down only when N+ locations report failure.
 - `GET /api/v1/monitors/:id/consensus` — consensus status with per-location breakdown
+
+### Monitor Dependencies (Alert Suppression)
+Define upstream dependencies between monitors to prevent alert storms when shared infrastructure goes down.
+- `POST /api/v1/monitors/:id/dependencies` — Add dependency (manage_key auth)
+  - Body: `{"depends_on_id": "<upstream_monitor_id>"}`
+  - Validates: no self-dependency, no circular chains (BFS graph walk), both monitors exist, no duplicates
+  - Returns 201 with dependency details
+- `GET /api/v1/monitors/:id/dependencies` — List dependencies (public)
+  - Returns dependency info with upstream monitor name and current status
+- `DELETE /api/v1/monitors/:id/dependencies/:dep_id` — Remove dependency (manage_key auth)
+- `GET /api/v1/monitors/:id/dependents` — Reverse lookup: who depends on this monitor? (public)
+- DB: `monitor_dependencies` table with `UNIQUE(monitor_id, depends_on_id)`, CASCADE delete on both sides
+- Checker integration: when a monitor transitions to "down", checks if any dependency is currently down.
+  If yes, suppresses incident creation and notifications. Heartbeats still recorded honestly.
+  When dependency recovers, next check creates the delayed incident if monitor is still down.
 
 ### Webhook Delivery Retry
 Webhook notifications are delivered with automatic retry and exponential backoff.

@@ -176,6 +176,10 @@ GET /api/v1/monitors/:id/alert-rules — get alert rules (auth)
 DELETE /api/v1/monitors/:id/alert-rules — remove alert rules (auth)
 GET /api/v1/monitors/:id/alert-log — alert notification log (auth, ?limit= ?after=)
 GET /api/v1/monitors/:id/webhook-deliveries — webhook delivery audit log (auth, ?limit= ?after= ?event= ?status=)
+POST /api/v1/monitors/:id/dependencies — add dependency (auth)
+GET /api/v1/monitors/:id/dependencies — list dependencies (no auth)
+DELETE /api/v1/monitors/:id/dependencies/:dep_id — remove dependency (auth)
+GET /api/v1/monitors/:id/dependents — list monitors that depend on this one (no auth)
 
 ## Status Page Branding
 GET /api/v1/settings — returns current branding: {"title": "...", "description": "...", "logo_url": "..."}
@@ -284,6 +288,32 @@ Consensus logic:
 Heartbeats from remote probes include a location_id field linking to the check location.
 Local checker heartbeats have location_id: null.
 GET /api/v1/monitors/:id/heartbeats — heartbeats include location_id when present.
+
+## Monitor Dependencies (Alert Suppression)
+Define upstream dependencies between monitors. When an upstream monitor is down,
+downstream monitor alerts are suppressed to prevent alert storms.
+
+POST /api/v1/monitors/:id/dependencies — Add dependency (auth required)
+  Body: {"depends_on_id": "<upstream_monitor_id>"}
+  Validates: no self-dependency, no circular chains, both monitors exist.
+  Returns 201 with dependency details including upstream name and status.
+GET /api/v1/monitors/:id/dependencies — List dependencies (no auth)
+  Returns: [{id, monitor_id, depends_on_id, depends_on_name, depends_on_status, created_at}]
+DELETE /api/v1/monitors/:id/dependencies/:dep_id — Remove dependency (auth required)
+GET /api/v1/monitors/:id/dependents — Reverse lookup: who depends on me? (no auth)
+
+### How Suppression Works
+- When a monitor goes down, the checker checks all its dependencies
+- If any dependency is currently "down", incident creation is suppressed
+- Heartbeats are still recorded honestly (status reflects reality)
+- When the dependency recovers, the next check creates the incident if still down
+- Circular dependencies are prevented at creation time (graph walk)
+- CASCADE delete: deleting either monitor removes the dependency
+
+### Example Topology
+  Database → API → Web App
+  If Database goes down: API and Web App get "down" heartbeats but no incidents.
+  When Database recovers: API and Web App get incidents if still failing.
 
 ## Status Pages
 

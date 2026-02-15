@@ -596,6 +596,23 @@ pub struct CreateAlertRule {
 
 fn default_max_repeats() -> u32 { 10 }
 
+// ── Monitor Dependencies ──
+
+#[derive(Debug, Serialize, Clone)]
+pub struct MonitorDependency {
+    pub id: String,
+    pub monitor_id: String,
+    pub depends_on_id: String,
+    pub depends_on_name: String,
+    pub depends_on_status: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateDependency {
+    pub depends_on_id: String,
+}
+
 #[derive(Debug, Serialize, Clone)]
 pub struct AlertLogEntry {
     pub id: String,

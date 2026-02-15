@@ -79,6 +79,10 @@ fn test_client_with_db() -> (Client, String) {
             watchpost::routes::delete_alert_rules,
             watchpost::routes::get_alert_log,
             watchpost::routes::list_webhook_deliveries,
+            watchpost::routes::add_dependency,
+            watchpost::routes::list_dependencies,
+            watchpost::routes::remove_dependency,
+            watchpost::routes::list_dependents,
         ])
         .register("/", rocket::catchers![
             watchpost::catchers::bad_request,
@@ -5903,4 +5907,405 @@ fn test_webhook_deliveries_response_fields() {
     assert_eq!(d["response_time_ms"], 1500);
     assert_eq!(d["seq"], 42);
     assert!(d["created_at"].as_str().is_some());
+}
+
+// ── Monitor Dependencies Tests ──────────────────────────────────────────────
+
+/// Helper: create a named monitor and return (id, key)
+fn create_named_monitor(client: &Client, name: &str) -> (String, String) {
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(format!(r#"{{"name": "{}", "url": "https://example.com/{}", "is_public": true}}"#, name, name))
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let id = body["monitor"]["id"].as_str().unwrap().to_string();
+    let key = body["manage_key"].as_str().unwrap().to_string();
+    (id, key)
+}
+
+#[test]
+fn test_add_dependency() {
+    let client = test_client();
+    let (web_id, web_key) = create_named_monitor(&client, "Web App");
+    let (db_id, _db_key) = create_named_monitor(&client, "Database");
+
+    // Web App depends on Database
+    let resp = client.post(format!("/api/v1/monitors/{}/dependencies", web_id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", web_key)))
+        .body(format!(r#"{{"depends_on_id": "{}"}}"#, db_id))
+        .dispatch();
+    assert_eq!(resp.status(), Status::Created);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["monitor_id"], web_id);
+    assert_eq!(body["depends_on_id"], db_id);
+    assert_eq!(body["depends_on_name"], "Database");
+    assert!(body["id"].as_str().is_some());
+    assert!(body["created_at"].as_str().is_some());
+}
+
+#[test]
+fn test_list_dependencies() {
+    let client = test_client();
+    let (web_id, web_key) = create_named_monitor(&client, "Web App");
+    let (db_id, _) = create_named_monitor(&client, "Database");
+    let (cache_id, _) = create_named_monitor(&client, "Cache");
+
+    // Add two dependencies
+    client.post(format!("/api/v1/monitors/{}/dependencies", web_id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", web_key)))
+        .body(format!(r#"{{"depends_on_id": "{}"}}"#, db_id))
+        .dispatch();
+    client.post(format!("/api/v1/monitors/{}/dependencies", web_id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", web_key)))
+        .body(format!(r#"{{"depends_on_id": "{}"}}"#, cache_id))
+        .dispatch();
+
+    // List (no auth required)
+    let resp = client.get(format!("/api/v1/monitors/{}/dependencies", web_id)).dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert_eq!(body.len(), 2);
+    let names: Vec<&str> = body.iter().map(|d| d["depends_on_name"].as_str().unwrap()).collect();
+    assert!(names.contains(&"Database"));
+    assert!(names.contains(&"Cache"));
+}
+
+#[test]
+fn test_remove_dependency() {
+    let client = test_client();
+    let (web_id, web_key) = create_named_monitor(&client, "Web App");
+    let (db_id, _) = create_named_monitor(&client, "Database");
+
+    // Add dependency
+    let resp = client.post(format!("/api/v1/monitors/{}/dependencies", web_id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", web_key)))
+        .body(format!(r#"{{"depends_on_id": "{}"}}"#, db_id))
+        .dispatch();
+    let dep_id = resp.into_json::<serde_json::Value>().unwrap()["id"].as_str().unwrap().to_string();
+
+    // Remove it
+    let resp = client.delete(format!("/api/v1/monitors/{}/dependencies/{}", web_id, dep_id))
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", web_key)))
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["deleted"], true);
+
+    // Verify gone
+    let resp = client.get(format!("/api/v1/monitors/{}/dependencies", web_id)).dispatch();
+    let deps: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert_eq!(deps.len(), 0);
+}
+
+#[test]
+fn test_dependency_requires_auth() {
+    let client = test_client();
+    let (web_id, _web_key) = create_named_monitor(&client, "Web App");
+    let (db_id, _) = create_named_monitor(&client, "Database");
+
+    // No auth header
+    let resp = client.post(format!("/api/v1/monitors/{}/dependencies", web_id))
+        .header(ContentType::JSON)
+        .body(format!(r#"{{"depends_on_id": "{}"}}"#, db_id))
+        .dispatch();
+    assert_eq!(resp.status(), Status::Unauthorized);
+}
+
+#[test]
+fn test_dependency_wrong_key() {
+    let client = test_client();
+    let (web_id, _) = create_named_monitor(&client, "Web App");
+    let (db_id, _) = create_named_monitor(&client, "Database");
+
+    let resp = client.post(format!("/api/v1/monitors/{}/dependencies", web_id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", "Bearer wrong_key"))
+        .body(format!(r#"{{"depends_on_id": "{}"}}"#, db_id))
+        .dispatch();
+    assert_eq!(resp.status(), Status::Forbidden);
+}
+
+#[test]
+fn test_dependency_self_reference() {
+    let client = test_client();
+    let (web_id, web_key) = create_named_monitor(&client, "Web App");
+
+    let resp = client.post(format!("/api/v1/monitors/{}/dependencies", web_id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", web_key)))
+        .body(format!(r#"{{"depends_on_id": "{}"}}"#, web_id))
+        .dispatch();
+    assert_eq!(resp.status(), Status::BadRequest);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["code"], "SELF_DEPENDENCY");
+}
+
+#[test]
+fn test_dependency_nonexistent_target() {
+    let client = test_client();
+    let (web_id, web_key) = create_named_monitor(&client, "Web App");
+
+    let resp = client.post(format!("/api/v1/monitors/{}/dependencies", web_id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", web_key)))
+        .body(r#"{"depends_on_id": "nonexistent-uuid"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::BadRequest);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["code"], "DEPENDENCY_NOT_FOUND");
+}
+
+#[test]
+fn test_dependency_duplicate() {
+    let client = test_client();
+    let (web_id, web_key) = create_named_monitor(&client, "Web App");
+    let (db_id, _) = create_named_monitor(&client, "Database");
+
+    // First add succeeds
+    let resp = client.post(format!("/api/v1/monitors/{}/dependencies", web_id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", web_key)))
+        .body(format!(r#"{{"depends_on_id": "{}"}}"#, db_id))
+        .dispatch();
+    assert_eq!(resp.status(), Status::Created);
+
+    // Second add fails with 409
+    let resp = client.post(format!("/api/v1/monitors/{}/dependencies", web_id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", web_key)))
+        .body(format!(r#"{{"depends_on_id": "{}"}}"#, db_id))
+        .dispatch();
+    assert_eq!(resp.status(), Status::Conflict);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["code"], "DUPLICATE_DEPENDENCY");
+}
+
+#[test]
+fn test_dependency_circular_detection() {
+    let client = test_client();
+    let (a_id, a_key) = create_named_monitor(&client, "Service A");
+    let (b_id, b_key) = create_named_monitor(&client, "Service B");
+
+    // A depends on B
+    let resp = client.post(format!("/api/v1/monitors/{}/dependencies", a_id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", a_key)))
+        .body(format!(r#"{{"depends_on_id": "{}"}}"#, b_id))
+        .dispatch();
+    assert_eq!(resp.status(), Status::Created);
+
+    // B depends on A → circular!
+    let resp = client.post(format!("/api/v1/monitors/{}/dependencies", b_id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", b_key)))
+        .body(format!(r#"{{"depends_on_id": "{}"}}"#, a_id))
+        .dispatch();
+    assert_eq!(resp.status(), Status::BadRequest);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["code"], "CIRCULAR_DEPENDENCY");
+}
+
+#[test]
+fn test_dependency_circular_three_way() {
+    let client = test_client();
+    let (a_id, a_key) = create_named_monitor(&client, "Service A");
+    let (b_id, b_key) = create_named_monitor(&client, "Service B");
+    let (c_id, c_key) = create_named_monitor(&client, "Service C");
+
+    // A → B
+    client.post(format!("/api/v1/monitors/{}/dependencies", a_id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", a_key)))
+        .body(format!(r#"{{"depends_on_id": "{}"}}"#, b_id))
+        .dispatch();
+
+    // B → C
+    client.post(format!("/api/v1/monitors/{}/dependencies", b_id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", b_key)))
+        .body(format!(r#"{{"depends_on_id": "{}"}}"#, c_id))
+        .dispatch();
+
+    // C → A would create a cycle
+    let resp = client.post(format!("/api/v1/monitors/{}/dependencies", c_id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", c_key)))
+        .body(format!(r#"{{"depends_on_id": "{}"}}"#, a_id))
+        .dispatch();
+    assert_eq!(resp.status(), Status::BadRequest);
+    assert_eq!(resp.into_json::<serde_json::Value>().unwrap()["code"], "CIRCULAR_DEPENDENCY");
+}
+
+#[test]
+fn test_list_dependents() {
+    let client = test_client();
+    let (web_id, web_key) = create_named_monitor(&client, "Web App");
+    let (api_id, api_key) = create_named_monitor(&client, "API");
+    let (db_id, _) = create_named_monitor(&client, "Database");
+
+    // Both Web App and API depend on Database
+    client.post(format!("/api/v1/monitors/{}/dependencies", web_id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", web_key)))
+        .body(format!(r#"{{"depends_on_id": "{}"}}"#, db_id))
+        .dispatch();
+    client.post(format!("/api/v1/monitors/{}/dependencies", api_id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", api_key)))
+        .body(format!(r#"{{"depends_on_id": "{}"}}"#, db_id))
+        .dispatch();
+
+    // List dependents of Database (who depends on me?)
+    let resp = client.get(format!("/api/v1/monitors/{}/dependents", db_id)).dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert_eq!(body.len(), 2);
+    let names: Vec<&str> = body.iter().map(|d| d["depends_on_name"].as_str().unwrap()).collect();
+    assert!(names.contains(&"Web App"));
+    assert!(names.contains(&"API"));
+}
+
+#[test]
+fn test_dependency_cascade_on_monitor_delete() {
+    let client = test_client();
+    let (web_id, web_key) = create_named_monitor(&client, "Web App");
+    let (db_id, db_key) = create_named_monitor(&client, "Database");
+
+    // Web App depends on Database
+    client.post(format!("/api/v1/monitors/{}/dependencies", web_id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", web_key)))
+        .body(format!(r#"{{"depends_on_id": "{}"}}"#, db_id))
+        .dispatch();
+
+    // Delete the dependency monitor (Database)
+    client.delete(format!("/api/v1/monitors/{}", db_id))
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", db_key)))
+        .dispatch();
+
+    // Dependencies should be cascade-deleted
+    let resp = client.get(format!("/api/v1/monitors/{}/dependencies", web_id)).dispatch();
+    let deps: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert_eq!(deps.len(), 0);
+}
+
+#[test]
+fn test_dependency_cascade_on_dependent_delete() {
+    let client = test_client();
+    let (web_id, web_key) = create_named_monitor(&client, "Web App");
+    let (db_id, _) = create_named_monitor(&client, "Database");
+
+    // Web App depends on Database
+    client.post(format!("/api/v1/monitors/{}/dependencies", web_id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", web_key)))
+        .body(format!(r#"{{"depends_on_id": "{}"}}"#, db_id))
+        .dispatch();
+
+    // Delete Web App
+    client.delete(format!("/api/v1/monitors/{}", web_id))
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", web_key)))
+        .dispatch();
+
+    // Database should have no dependents
+    let resp = client.get(format!("/api/v1/monitors/{}/dependents", db_id)).dispatch();
+    let deps: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert_eq!(deps.len(), 0);
+}
+
+#[test]
+fn test_dependency_list_empty() {
+    let client = test_client();
+    let (web_id, _) = create_named_monitor(&client, "Web App");
+
+    let resp = client.get(format!("/api/v1/monitors/{}/dependencies", web_id)).dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let deps: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert_eq!(deps.len(), 0);
+}
+
+#[test]
+fn test_dependency_list_not_found() {
+    let client = test_client();
+
+    let resp = client.get("/api/v1/monitors/nonexistent-uuid/dependencies").dispatch();
+    assert_eq!(resp.status(), Status::NotFound);
+}
+
+#[test]
+fn test_dependency_remove_not_found() {
+    let client = test_client();
+    let (web_id, web_key) = create_named_monitor(&client, "Web App");
+
+    let resp = client.delete(format!("/api/v1/monitors/{}/dependencies/nonexistent", web_id))
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", web_key)))
+        .dispatch();
+    assert_eq!(resp.status(), Status::NotFound);
+}
+
+#[test]
+fn test_dependency_shows_current_status() {
+    let (client, db_path) = test_client_with_db();
+    let (web_id, web_key) = create_named_monitor(&client, "Web App");
+    let (db_id, _) = create_named_monitor(&client, "Database");
+
+    // Manually set Database status to "down"
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    conn.execute("UPDATE monitors SET current_status = 'down' WHERE id = ?1", params![db_id]).unwrap();
+    drop(conn);
+
+    // Add dependency
+    client.post(format!("/api/v1/monitors/{}/dependencies", web_id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", web_key)))
+        .body(format!(r#"{{"depends_on_id": "{}"}}"#, db_id))
+        .dispatch();
+
+    // List shows current status
+    let resp = client.get(format!("/api/v1/monitors/{}/dependencies", web_id)).dispatch();
+    let deps: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert_eq!(deps[0]["depends_on_status"], "down");
+}
+
+#[test]
+fn test_dependency_multiple_chain() {
+    let client = test_client();
+    let (app_id, app_key) = create_named_monitor(&client, "App");
+    let (api_id, api_key) = create_named_monitor(&client, "API");
+    let (db_id, _) = create_named_monitor(&client, "Database");
+
+    // App → API → Database (chain)
+    client.post(format!("/api/v1/monitors/{}/dependencies", app_id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", app_key)))
+        .body(format!(r#"{{"depends_on_id": "{}"}}"#, api_id))
+        .dispatch();
+
+    client.post(format!("/api/v1/monitors/{}/dependencies", api_id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", api_key)))
+        .body(format!(r#"{{"depends_on_id": "{}"}}"#, db_id))
+        .dispatch();
+
+    // App has 1 direct dependency (API)
+    let resp = client.get(format!("/api/v1/monitors/{}/dependencies", app_id)).dispatch();
+    let deps: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert_eq!(deps.len(), 1);
+    assert_eq!(deps[0]["depends_on_name"], "API");
+
+    // API has 1 direct dependency (Database)
+    let resp = client.get(format!("/api/v1/monitors/{}/dependencies", api_id)).dispatch();
+    let deps: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert_eq!(deps.len(), 1);
+    assert_eq!(deps[0]["depends_on_name"], "Database");
+
+    // Database has 1 dependent (API)
+    let resp = client.get(format!("/api/v1/monitors/{}/dependents", db_id)).dispatch();
+    let deps: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert_eq!(deps.len(), 1);
 }
