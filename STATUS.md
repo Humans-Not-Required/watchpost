@@ -65,9 +65,8 @@
   - OpenAPI spec updated
 ### What's Next (Priority Order)
 
-1. **Frontend SLA UI** — SLA fields on create/edit forms, SLA card on monitor detail page with error budget gauge
-2. **Multi-region checks** — Check from multiple locations, consensus-based status
-3. **Custom domain support** — Allow monitors to specify custom status page domain
+1. **Multi-region checks** — Check from multiple locations, consensus-based status
+2. **Custom domain support** — Allow monitors to specify custom status page domain
 
 ### ⚠️ Jordan's Questions
 - ~~**Task ef781225:** Jordan asked "What is this about?"~~ — Stale, no further context. Board manager should close if no update.
@@ -77,7 +76,7 @@
 
 ### ✅ Completed (most recent)
 
-- **SLA tracking** — Per-monitor uptime targets with error budget tracking. New `sla_target` (0-100%) and `sla_period_days` (1-365, default 30) fields on monitors. New `GET /api/v1/monitors/:id/sla` endpoint returns target, current uptime, error budget (total/remaining/used %), and status (met/at_risk/breached). Degraded checks count as successful. Set via create/update/bulk create, clear via null. 14 new tests (157 total). Full docs: llms.txt, OpenAPI, DESIGN.md.
+- **SLA tracking** — Per-monitor uptime targets with error budget tracking. New `sla_target` (0-100%) and `sla_period_days` (1-365, default 30) fields on monitors. New `GET /api/v1/monitors/:id/sla` endpoint returns target, current uptime, error budget (total/remaining/used %), and status (met/at_risk/breached). Degraded checks count as successful. Set via create/update/bulk create, clear via null. Frontend: SLA fields on create/edit forms, SLA card on monitor detail with error budget bar (color-coded progress), status badge. 14 new tests (157 total). Full docs: llms.txt, OpenAPI, DESIGN.md.
 - **Backend route decomposition** (commit 2a0338c) — Monolithic 2963-line `src/routes.rs` split into 14 focused module files under `src/routes/`. Shared types (RateLimiter), helpers (get_monitor_from_db, verify_manage_key, validators) in mod.rs; domain routes in individual files (monitors, heartbeats, incidents, dashboard_route, uptime, status, notifications, maintenance, tags, settings, system, badges, stream). Static content (llms.txt, openapi.json) extracted to `static/` and loaded via `include_str!`. No file over 604 lines. Zero functional changes. All 143 tests pass. Zero warnings.
 - **CI fix: static/ in Docker build** (commit 6cd8505) — Added `COPY static/ static/` to Dockerfile backend build stage. Required after route decomposition moved `include_str!` paths for llms.txt and openapi.json.
 - **DNS health checks** (commit ff58548) — New `monitor_type: 'dns'` for DNS record resolution monitoring. URL = hostname to resolve (e.g., 'example.com' or 'dns://example.com'). `dns_record_type`: 10 types (A, AAAA, CNAME, MX, TXT, NS, SOA, PTR, SRV, CAA). `dns_expected`: optional value matching (case-insensitive, trailing dot ignored). Full incident lifecycle. Frontend: 3-way monitor type toggle (HTTP/TCP/DNS), DNS-specific fields (record type dropdown, expected value), detail view shows DNS info. DB migration adds dns_record_type + dns_expected columns. Updated OpenAPI spec + llms.txt + DESIGN.md. 15 new tests (143 total).
