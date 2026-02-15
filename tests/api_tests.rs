@@ -65,6 +65,7 @@ fn test_client_with_db() -> (Client, String) {
             watchpost::routes::delete_location,
             watchpost::routes::submit_probe,
             watchpost::routes::monitor_location_status,
+            watchpost::routes::monitor_consensus,
         ])
         .register("/", rocket::catchers![
             watchpost::catchers::bad_request,
