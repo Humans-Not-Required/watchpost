@@ -5,6 +5,7 @@ mod models;
 mod auth;
 mod routes;
 mod checker;
+mod consensus;
 mod notifications;
 mod sse;
 mod catchers;
@@ -93,6 +94,7 @@ fn rocket() -> _ {
             routes::delete_location,
             routes::submit_probe,
             routes::monitor_location_status,
+            routes::monitor_consensus,
         ])
         .register("/", catchers![
             catchers::bad_request,

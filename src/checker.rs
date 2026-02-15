@@ -47,6 +47,7 @@ struct MonitorCheck {
     monitor_type: String,
     dns_record_type: String,
     dns_expected: Option<String>,
+    consensus_threshold: Option<u32>,
 }
 
 /// Result of executing a check (before incident lifecycle processing).
@@ -63,6 +64,11 @@ struct CheckResult {
 
 /// Background check scheduler. Runs in a tokio task.
 pub async fn run_checker(db: Arc<Db>, broadcaster: Arc<EventBroadcaster>, shutdown: rocket::Shutdown) {
+    // Webhook client for consensus evaluation (shared, built once)
+    let consensus_client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .expect("Failed to build consensus webhook client");
     // Wait 30s for server to warm up
     tokio::select! {
         _ = time::sleep(Duration::from_secs(30)) => {},
@@ -105,7 +111,7 @@ pub async fn run_checker(db: Arc<Db>, broadcaster: Arc<EventBroadcaster>, shutdo
         let monitor = {
             let conn = db.conn.lock().unwrap();
             conn.query_row(
-                "SELECT id, name, url, method, timeout_ms, expected_status, body_contains, headers, confirmation_threshold, consecutive_failures, current_status, interval_seconds, response_time_threshold_ms, follow_redirects, COALESCE(monitor_type, 'http'), COALESCE(dns_record_type, 'A'), dns_expected
+                "SELECT id, name, url, method, timeout_ms, expected_status, body_contains, headers, confirmation_threshold, consecutive_failures, current_status, interval_seconds, response_time_threshold_ms, follow_redirects, COALESCE(monitor_type, 'http'), COALESCE(dns_record_type, 'A'), dns_expected, consensus_threshold
                  FROM monitors
                  WHERE is_paused = 0
                    AND (last_checked_at IS NULL OR datetime(last_checked_at, '+' || interval_seconds || ' seconds') <= datetime('now'))
@@ -132,6 +138,7 @@ pub async fn run_checker(db: Arc<Db>, broadcaster: Arc<EventBroadcaster>, shutdo
                         monitor_type: row.get(14)?,
                         dns_record_type: row.get(15)?,
                         dns_expected: row.get(16)?,
+                        consensus_threshold: row.get(17)?,
                     })
                 },
             ).ok()
@@ -149,14 +156,19 @@ pub async fn run_checker(db: Arc<Db>, broadcaster: Arc<EventBroadcaster>, shutdo
                     }
                 };
 
-                // Pick the right HTTP client for webhook delivery
-                let notif_client = match m.monitor_type.as_str() {
-                    "tcp" | "dns" => &webhook_client,
-                    _ => if m.follow_redirects { &client_follow } else { &client_no_follow },
-                };
-
-                // Shared lifecycle: heartbeat, incidents, notifications, SSE
-                process_check_result(&db, &broadcaster, notif_client, &m, result).await;
+                if m.consensus_threshold.is_some() {
+                    // Consensus mode: write heartbeat + update timing, then defer to consensus
+                    process_check_result_heartbeat_only(&db, &broadcaster, &m, result).await;
+                    // Evaluate consensus across all locations
+                    crate::consensus::evaluate_and_apply(&db, &broadcaster, &consensus_client, &m.id).await;
+                } else {
+                    // Single-location mode: full incident lifecycle
+                    let notif_client = match m.monitor_type.as_str() {
+                        "tcp" | "dns" => &webhook_client,
+                        _ => if m.follow_redirects { &client_follow } else { &client_no_follow },
+                    };
+                    process_check_result(&db, &broadcaster, notif_client, &m, result).await;
+                }
             }
             None => {
                 // No monitors due — sleep a bit before checking again
@@ -437,6 +449,66 @@ async fn dns_lookup(
         }
         _ => Err(format!("Unsupported record type: {}", record_type)),
     }
+}
+
+// ─── Heartbeat-Only Processing (for consensus-enabled monitors) ─────────────
+//
+// Writes the heartbeat and updates last_checked_at + consecutive_failures,
+// but does NOT process incident lifecycle or update current_status.
+// The consensus evaluator handles status transitions separately.
+
+async fn process_check_result_heartbeat_only(
+    db: &Db,
+    broadcaster: &EventBroadcaster,
+    monitor: &MonitorCheck,
+    result: CheckResult,
+) {
+    {
+        let conn = db.conn.lock().unwrap();
+
+        // Write heartbeat
+        let hb_id = uuid::Uuid::new_v4().to_string();
+        let hb_seq: i64 = conn
+            .query_row("SELECT COALESCE(MAX(seq), 0) + 1 FROM heartbeats", [], |r| r.get(0))
+            .unwrap_or(1);
+        let _ = conn.execute(
+            "INSERT INTO heartbeats (id, monitor_id, status, response_time_ms, status_code, error_message, seq) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![hb_id, monitor.id, result.status, result.response_time_ms, result.status_code, result.error_message, hb_seq],
+        );
+
+        // Update consecutive failures + last_checked_at (but NOT current_status — consensus handles that)
+        let new_consecutive = if result.status == "down" {
+            monitor.consecutive_failures + 1
+        } else {
+            0
+        };
+
+        let _ = conn.execute(
+            "UPDATE monitors SET last_checked_at = datetime('now'), consecutive_failures = ?1, updated_at = datetime('now') WHERE id = ?2",
+            params![new_consecutive, monitor.id],
+        );
+    }
+
+    // Emit check.completed SSE event
+    let mut sse_data = serde_json::json!({
+        "status": result.status,
+        "response_time_ms": result.response_time_ms,
+    });
+    if let Some(code) = result.status_code {
+        sse_data["status_code"] = serde_json::json!(code);
+    }
+    if let Some(extra) = result.extra_sse_data {
+        if let (Some(base), Some(ext)) = (sse_data.as_object_mut(), extra.as_object()) {
+            for (k, v) in ext {
+                base.insert(k.clone(), v.clone());
+            }
+        }
+    }
+    broadcaster.send(SseEvent {
+        event_type: "check.completed".to_string(),
+        monitor_id: monitor.id.clone(),
+        data: sse_data,
+    });
 }
 
 // ─── Shared Check Result Processing ─────────────────────────────────────────

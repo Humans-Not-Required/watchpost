@@ -32,7 +32,7 @@ pub use system::{health, llms_txt, openapi_spec, spa_fallback};
 pub use badges::{monitor_uptime_badge, monitor_status_badge};
 pub use sla::monitor_sla;
 pub use stream::{global_events, monitor_events};
-pub use locations::{create_location, list_locations, get_location, delete_location, submit_probe, monitor_location_status};
+pub use locations::{create_location, list_locations, get_location, delete_location, submit_probe, monitor_location_status, monitor_consensus};
 
 use rocket::{http::Status, serde::json::Json};
 use crate::models::Monitor;
@@ -82,7 +82,7 @@ pub(crate) const VALID_DNS_RECORD_TYPES: &[&str] = &["A", "AAAA", "CNAME", "MX",
 
 pub(crate) fn get_monitor_from_db(conn: &rusqlite::Connection, id: &str) -> rusqlite::Result<Monitor> {
     conn.query_row(
-        "SELECT id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, is_public, is_paused, current_status, last_checked_at, confirmation_threshold, created_at, updated_at, tags, response_time_threshold_ms, follow_redirects, group_name, monitor_type, dns_record_type, dns_expected, sla_target, sla_period_days
+        "SELECT id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, is_public, is_paused, current_status, last_checked_at, confirmation_threshold, created_at, updated_at, tags, response_time_threshold_ms, follow_redirects, group_name, monitor_type, dns_record_type, dns_expected, sla_target, sla_period_days, consensus_threshold
          FROM monitors WHERE id = ?1",
         params![id],
         |row| Ok(row_to_monitor(row)),
@@ -116,6 +116,7 @@ pub(crate) fn row_to_monitor(row: &rusqlite::Row) -> Monitor {
         sla_period_days: row.get::<_, Option<u32>>(24).unwrap_or(None),
         tags: parse_tags(&tags_str),
         group_name: row.get::<_, Option<String>>(19).unwrap_or(None),
+        consensus_threshold: row.get::<_, Option<u32>>(25).unwrap_or(None),
         created_at: row.get(14).unwrap(),
         updated_at: row.get(15).unwrap(),
     }

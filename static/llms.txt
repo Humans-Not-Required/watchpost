@@ -160,6 +160,7 @@ GET /api/v1/locations/:id — get check location
 DELETE /api/v1/locations/:id — remove check location (admin key required)
 POST /api/v1/probe — submit probe results from remote location (probe_key auth)
 GET /api/v1/monitors/:id/locations — per-location status for a monitor
+GET /api/v1/monitors/:id/consensus — multi-region consensus status
 
 ## Status Page Branding
 GET /api/v1/settings — returns current branding: {"title": "...", "description": "...", "logo_url": "..."}
@@ -231,6 +232,25 @@ POST /api/v1/probe — Submit check results from a remote location
 GET /api/v1/monitors/:id/locations — Per-location status for a monitor
   Returns the latest probe result from each active check location for the given monitor.
   Response: [{"location_id": "...", "location_name": "US East", "region": "us-east-1", "last_status": "up", "last_response_time_ms": 50, "last_checked_at": "..."}]
+
+### Multi-Region Consensus
+When a monitor has `consensus_threshold` set, status is determined by aggregating results across all check locations.
+The monitor is marked "down" only when at least `consensus_threshold` locations report down.
+This prevents false positives from a single location experiencing issues.
+
+POST /api/v1/monitors with "consensus_threshold": 2 — require 2+ locations to agree on "down"
+PATCH /api/v1/monitors/:id with "consensus_threshold": 3 — update threshold. Set to null to disable consensus.
+GET /api/v1/monitors/:id/consensus — current consensus status
+  Returns: consensus_threshold, total_locations, up_count, down_count, degraded_count,
+           unknown_count, effective_status, and per-location details.
+  Returns 400 with code CONSENSUS_NOT_CONFIGURED if no threshold is set.
+
+Consensus logic:
+- If down_count >= threshold → monitor is "down" (incident created)
+- If (down_count + degraded_count) >= threshold → "degraded"
+- Otherwise → "up"
+- Evaluated automatically after every local check and every probe submission.
+- When consensus is active, the local checker writes heartbeats but defers incident lifecycle to the consensus evaluator.
 
 ### Heartbeat Location Tracking
 Heartbeats from remote probes include a location_id field linking to the check location.

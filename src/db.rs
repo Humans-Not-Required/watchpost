@@ -172,6 +172,9 @@ impl Db {
         conn.execute_batch("ALTER TABLE heartbeats ADD COLUMN location_id TEXT REFERENCES check_locations(id) ON DELETE SET NULL;").ok();
         conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_heartbeats_location ON heartbeats(location_id, monitor_id, checked_at DESC);").ok();
 
+        // Add consensus_threshold column (nullable — null means no consensus, single-location behavior)
+        conn.execute_batch("ALTER TABLE monitors ADD COLUMN consensus_threshold INTEGER;").ok();
+
         // Backfill seq for existing heartbeats
         let needs_hb_backfill: i64 = conn
             .query_row("SELECT COUNT(*) FROM heartbeats WHERE seq IS NULL", [], |r| r.get(0))

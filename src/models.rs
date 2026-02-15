@@ -43,6 +43,8 @@ pub struct Monitor {
     pub tags: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub group_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub consensus_threshold: Option<u32>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -77,6 +79,7 @@ pub struct CreateMonitor {
     #[serde(default)]
     pub tags: Vec<String>,
     pub group_name: Option<String>,
+    pub consensus_threshold: Option<u32>,
 }
 
 fn default_follow_redirects() -> Option<bool> { Some(true) }
@@ -111,6 +114,8 @@ pub struct UpdateMonitor {
     pub sla_period_days: Option<Option<u32>>,
     pub tags: Option<Vec<String>>,
     pub group_name: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_nullable")]
+    pub consensus_threshold: Option<Option<u32>>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -332,6 +337,8 @@ pub struct ExportedMonitor {
     pub tags: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub group_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub consensus_threshold: Option<u32>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -459,6 +466,30 @@ pub struct ProbeError {
 #[derive(Debug, Serialize)]
 pub struct MonitorLocationStatus {
     pub location_id: String,
+    pub location_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
+    pub last_status: String,
+    pub last_response_time_ms: u32,
+    pub last_checked_at: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ConsensusStatus {
+    pub monitor_id: String,
+    pub consensus_threshold: u32,
+    pub total_locations: u32,
+    pub up_count: u32,
+    pub down_count: u32,
+    pub degraded_count: u32,
+    pub unknown_count: u32,
+    pub effective_status: String,
+    pub locations: Vec<ConsensusLocationDetail>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ConsensusLocationDetail {
+    pub location_id: Option<String>,
     pub location_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub region: Option<String>,

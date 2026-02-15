@@ -2004,6 +2004,54 @@
           }
         }
       }
+    },
+    "/api/v1/monitors/{id}/consensus": {
+      "get": {
+        "summary": "Multi-region consensus status",
+        "description": "Returns the current consensus evaluation for a monitor with consensus_threshold configured. Shows per-location status and the aggregate effective status.",
+        "tags": [
+          "Check Locations"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Consensus status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsensusStatus"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Consensus not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "code": { "type": "string", "example": "CONSENSUS_NOT_CONFIGURED" }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2149,6 +2197,12 @@
             "nullable": true,
             "description": "Group name for organizing monitors into sections on the status page"
           },
+          "consensus_threshold": {
+            "type": "integer",
+            "nullable": true,
+            "minimum": 1,
+            "description": "Minimum number of check locations that must report 'down' for the monitor to be considered down. Null = no consensus (single-location behavior). Requires multi-region check locations."
+          },
           "created_at": {
             "type": "string"
           },
@@ -2278,6 +2332,12 @@
             "type": "string",
             "nullable": true,
             "description": "Group name for organizing monitors into sections on the status page. Empty string clears."
+          },
+          "consensus_threshold": {
+            "type": "integer",
+            "nullable": true,
+            "minimum": 1,
+            "description": "Minimum number of check locations reporting 'down' to consider monitor down. Null = disabled."
           }
         }
       },
@@ -2946,6 +3006,69 @@
           "last_checked_at": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "ConsensusStatus": {
+        "type": "object",
+        "properties": {
+          "monitor_id": {
+            "type": "string"
+          },
+          "consensus_threshold": {
+            "type": "integer",
+            "description": "Minimum locations reporting down to trigger incident"
+          },
+          "total_locations": {
+            "type": "integer",
+            "description": "Total number of locations with recent heartbeats"
+          },
+          "up_count": {
+            "type": "integer"
+          },
+          "down_count": {
+            "type": "integer"
+          },
+          "degraded_count": {
+            "type": "integer"
+          },
+          "unknown_count": {
+            "type": "integer"
+          },
+          "effective_status": {
+            "type": "string",
+            "enum": ["up", "down", "degraded", "unknown"],
+            "description": "Aggregate status determined by consensus logic"
+          },
+          "locations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "location_id": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "Null for the local checker"
+                },
+                "location_name": {
+                  "type": "string"
+                },
+                "region": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "last_status": {
+                  "type": "string"
+                },
+                "last_response_time_ms": {
+                  "type": "integer"
+                },
+                "last_checked_at": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              }
+            }
           }
         }
       }

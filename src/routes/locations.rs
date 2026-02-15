@@ -5,10 +5,11 @@ use std::sync::Arc;
 
 use crate::db::Db;
 use crate::auth::{ManageToken, hash_key, generate_key};
+use crate::sse::EventBroadcaster;
 use crate::models::{
     CheckLocation, CreateCheckLocation, CreateCheckLocationResponse,
     ProbeSubmission, ProbeSubmissionResponse, ProbeError,
-    MonitorLocationStatus,
+    MonitorLocationStatus, ConsensusStatus,
 };
 
 // ── Verify admin key against settings table ──
@@ -179,107 +180,176 @@ pub fn delete_location(
 
 /// POST /api/v1/probe — Submit probe results from a remote check location (probe key auth)
 #[post("/probe", data = "<body>")]
-pub fn submit_probe(
+pub async fn submit_probe(
     body: Json<ProbeSubmission>,
     token: ManageToken,
     db: &State<Arc<Db>>,
+    broadcaster: &State<Arc<EventBroadcaster>>,
 ) -> Result<Json<ProbeSubmissionResponse>, (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
-    let location_id = verify_probe_key(&conn, &token.0)?;
+    let mut consensus_monitor_ids: Vec<String> = Vec::new();
 
-    if body.results.is_empty() {
-        return Err((Status::BadRequest, Json(serde_json::json!({
-            "error": "No probe results provided", "code": "VALIDATION_ERROR"
-        }))));
-    }
+    let (accepted, rejected, errors) = {
+        let conn = db.conn.lock().unwrap();
+        let location_id = verify_probe_key(&conn, &token.0)?;
 
-    if body.results.len() > 100 {
-        return Err((Status::BadRequest, Json(serde_json::json!({
-            "error": "Maximum 100 probe results per submission", "code": "VALIDATION_ERROR"
-        }))));
-    }
-
-    let valid_statuses = ["up", "down", "degraded"];
-    let mut accepted = 0usize;
-    let mut errors: Vec<ProbeError> = Vec::new();
-
-    for (i, result) in body.results.iter().enumerate() {
-        // Validate status
-        if !valid_statuses.contains(&result.status.as_str()) {
-            errors.push(ProbeError {
-                index: i,
-                monitor_id: result.monitor_id.clone(),
-                error: format!("Invalid status '{}'. Must be one of: up, down, degraded", result.status),
-            });
-            continue;
+        if body.results.is_empty() {
+            return Err((Status::BadRequest, Json(serde_json::json!({
+                "error": "No probe results provided", "code": "VALIDATION_ERROR"
+            }))));
         }
 
-        // Verify monitor exists
-        let monitor_exists: bool = conn.query_row(
-            "SELECT COUNT(*) FROM monitors WHERE id = ?1",
-            params![result.monitor_id],
-            |r| r.get::<_, i64>(0),
-        ).unwrap_or(0) > 0;
-
-        if !monitor_exists {
-            errors.push(ProbeError {
-                index: i,
-                monitor_id: result.monitor_id.clone(),
-                error: "Monitor not found".to_string(),
-            });
-            continue;
+        if body.results.len() > 100 {
+            return Err((Status::BadRequest, Json(serde_json::json!({
+                "error": "Maximum 100 probe results per submission", "code": "VALIDATION_ERROR"
+            }))));
         }
 
-        let heartbeat_id = Uuid::new_v4().to_string();
-        let checked_at = result.checked_at.clone()
-            .unwrap_or_else(|| chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string());
+        let valid_statuses = ["up", "down", "degraded"];
+        let mut accepted = 0usize;
+        let mut errors: Vec<ProbeError> = Vec::new();
 
-        // Get next seq
-        let next_seq: i64 = conn.query_row(
-            "SELECT COALESCE(MAX(seq), 0) + 1 FROM heartbeats",
-            [],
-            |r| r.get(0),
-        ).unwrap_or(1);
+        for (i, result) in body.results.iter().enumerate() {
+            // Validate status
+            if !valid_statuses.contains(&result.status.as_str()) {
+                errors.push(ProbeError {
+                    index: i,
+                    monitor_id: result.monitor_id.clone(),
+                    error: format!("Invalid status '{}'. Must be one of: up, down, degraded", result.status),
+                });
+                continue;
+            }
 
+            // Verify monitor exists and check if consensus is configured
+            let monitor_info: Option<Option<u32>> = conn.query_row(
+                "SELECT consensus_threshold FROM monitors WHERE id = ?1",
+                params![result.monitor_id],
+                |r| r.get(0),
+            ).ok();
+
+            if monitor_info.is_none() {
+                errors.push(ProbeError {
+                    index: i,
+                    monitor_id: result.monitor_id.clone(),
+                    error: "Monitor not found".to_string(),
+                });
+                continue;
+            }
+
+            // Track monitors with consensus for post-submission evaluation
+            if let Some(Some(_threshold)) = monitor_info {
+                if !consensus_monitor_ids.contains(&result.monitor_id) {
+                    consensus_monitor_ids.push(result.monitor_id.clone());
+                }
+            }
+
+            let heartbeat_id = Uuid::new_v4().to_string();
+            let checked_at = result.checked_at.clone()
+                .unwrap_or_else(|| chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string());
+
+            // Get next seq
+            let next_seq: i64 = conn.query_row(
+                "SELECT COALESCE(MAX(seq), 0) + 1 FROM heartbeats",
+                [],
+                |r| r.get(0),
+            ).unwrap_or(1);
+
+            conn.execute(
+                "INSERT INTO heartbeats (id, monitor_id, status, response_time_ms, status_code, error_message, checked_at, seq, location_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![
+                    heartbeat_id,
+                    result.monitor_id,
+                    result.status,
+                    result.response_time_ms,
+                    result.status_code,
+                    result.error_message,
+                    checked_at,
+                    next_seq,
+                    location_id,
+                ],
+            ).map_err(|e| {
+                errors.push(ProbeError {
+                    index: i,
+                    monitor_id: result.monitor_id.clone(),
+                    error: format!("Failed to store: {}", e),
+                });
+            }).ok();
+
+            if errors.len() <= i { // No error was pushed for this one
+                accepted += 1;
+            }
+        }
+
+        // Update last_seen_at
         conn.execute(
-            "INSERT INTO heartbeats (id, monitor_id, status, response_time_ms, status_code, error_message, checked_at, seq, location_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            params![
-                heartbeat_id,
-                result.monitor_id,
-                result.status,
-                result.response_time_ms,
-                result.status_code,
-                result.error_message,
-                checked_at,
-                next_seq,
-                location_id,
-            ],
-        ).map_err(|e| {
-            errors.push(ProbeError {
-                index: i,
-                monitor_id: result.monitor_id.clone(),
-                error: format!("Failed to store: {}", e),
-            });
-        }).ok();
+            "UPDATE check_locations SET last_seen_at = datetime('now') WHERE id = ?1",
+            params![location_id],
+        ).ok();
 
-        if errors.len() <= i { // No error was pushed for this one
-            accepted += 1;
+        let rejected = errors.len();
+        (accepted, rejected, errors)
+    }; // DB lock released
+
+    // Evaluate consensus for affected monitors (outside DB lock)
+    if !consensus_monitor_ids.is_empty() {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .unwrap_or_default();
+        for monitor_id in &consensus_monitor_ids {
+            crate::consensus::evaluate_and_apply(db, broadcaster, &client, monitor_id).await;
         }
     }
 
-    // Update last_seen_at
-    conn.execute(
-        "UPDATE check_locations SET last_seen_at = datetime('now') WHERE id = ?1",
-        params![location_id],
-    ).ok();
-
-    let rejected = errors.len();
     Ok(Json(ProbeSubmissionResponse {
         accepted,
         rejected,
         errors,
     }))
+}
+
+/// GET /api/v1/monitors/<monitor_id>/consensus — Multi-region consensus status
+#[get("/monitors/<monitor_id>/consensus")]
+pub fn monitor_consensus(
+    monitor_id: &str,
+    db: &State<Arc<Db>>,
+) -> Result<Json<ConsensusStatus>, (Status, Json<serde_json::Value>)> {
+    let conn = db.conn.lock().unwrap();
+
+    // Verify monitor exists
+    let exists: bool = conn.query_row(
+        "SELECT COUNT(*) FROM monitors WHERE id = ?1",
+        params![monitor_id],
+        |r| r.get::<_, i64>(0),
+    ).unwrap_or(0) > 0;
+
+    if !exists {
+        return Err((Status::NotFound, Json(serde_json::json!({
+            "error": "Monitor not found", "code": "NOT_FOUND"
+        }))));
+    }
+
+    // Check if consensus is configured
+    let threshold: Option<u32> = conn.query_row(
+        "SELECT consensus_threshold FROM monitors WHERE id = ?1",
+        params![monitor_id],
+        |row| row.get(0),
+    ).unwrap_or(None);
+
+    if threshold.is_none() {
+        return Err((Status::BadRequest, Json(serde_json::json!({
+            "error": "Consensus not configured for this monitor. Set consensus_threshold to enable.",
+            "code": "CONSENSUS_NOT_CONFIGURED"
+        }))));
+    }
+
+    drop(conn); // Release lock before calling consensus module
+
+    crate::consensus::get_consensus_status(db, monitor_id)
+        .ok_or_else(|| (Status::InternalServerError, Json(serde_json::json!({
+            "error": "Failed to evaluate consensus", "code": "SERVER_ERROR"
+        }))))
+        .map(Json)
 }
 
 /// GET /api/v1/monitors/<monitor_id>/locations — Per-location status for a monitor
