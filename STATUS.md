@@ -67,16 +67,16 @@
 
 1. **Multi-region checks** — Check from multiple locations, consensus-based status
 2. **Custom domain support** — Allow monitors to specify custom status page domain
-3. **DNS checks** — Resolve hostname, verify expected IP/records (extends monitor_type to 'dns')
 
 ### ⚠️ Jordan's Questions
 - ~~**Task ef781225:** Jordan asked "What is this about?"~~ — Stale, no further context. Board manager should close if no update.
 - ~~**Task b446f607 (Follow 301 redirects):** Completed (commit a7fc268). Monitors follow redirects by default.~~
 
-- Test suite: **128 tests passing** (`cargo test`) — parallel-safe, includes 8 settings/branding tests, 9 monitor group tests, 7 badge tests, 3 dashboard tests, 7 maintenance window tests, 4 response time alert tests, 6 tag tests, 3 search/filter tests, 3 heartbeat retention tests, 2 notification toggle tests, 5 follow_redirects tests, 13 validation/coverage tests, 7 email notification tests
+- Test suite: **143 tests passing** (`cargo test`) — parallel-safe, includes 15 DNS monitor tests, 11 TCP monitor tests, 8 settings/branding tests, 9 monitor group tests, 7 badge tests, 3 dashboard tests, 7 maintenance window tests, 4 response time alert tests, 6 tag tests, 3 search/filter tests, 3 heartbeat retention tests, 2 notification toggle tests, 5 follow_redirects tests, 13 validation/coverage tests, 7 email notification tests
 
 ### ✅ Completed (most recent)
 
+- **DNS health checks** (commit ff58548) — New `monitor_type: 'dns'` for DNS record resolution monitoring. URL = hostname to resolve (e.g., 'example.com' or 'dns://example.com'). `dns_record_type`: 10 types (A, AAAA, CNAME, MX, TXT, NS, SOA, PTR, SRV, CAA). `dns_expected`: optional value matching (case-insensitive, trailing dot ignored). Full incident lifecycle. Frontend: 3-way monitor type toggle (HTTP/TCP/DNS), DNS-specific fields (record type dropdown, expected value), detail view shows DNS info. DB migration adds dns_record_type + dns_expected columns. Updated OpenAPI spec + llms.txt + DESIGN.md. 15 new tests (143 total).
 - **TCP health checks** (commit 42b522d) — New `monitor_type` field: 'http' (default) or 'tcp'. TCP monitors check port connectivity (connect to host:port with timeout). URL format: 'host:port' or 'tcp://host:port'. Full incident lifecycle (down/degraded/maintenance). Frontend: monitor type toggle on create form, conditional fields (HTTP-specific fields hidden for TCP), TCP indicator in detail view. DB migration adds monitor_type column with 'http' default. Updated OpenAPI spec + llms.txt. 11 new tests (128 total).
 - **Status page branding** (commit 74ec06e) — Custom title, description, and logo for the public status page. Settings table with auto-generated admin key (printed on first run). GET /api/v1/settings (public), PUT /api/v1/settings (admin key auth). Empty string clears fields, partial updates supported. Branding included in GET /api/v1/status response. Frontend renders branding header above status banner. OpenAPI spec + llms.txt updated. 8 new tests (117 total).
 - **Monitor groups** (commit c33dcf6) — `group_name` field on monitors for organizing into sections on the status page. Full-stack: DB migration, create/update/bulk-create support, GET /groups endpoint, ?group= filter on list + status endpoints, frontend grouped sections with headers and filter chips, group input on create/edit forms, group badge on detail view. OpenAPI spec + llms.txt updated. 9 new tests (109 total).
