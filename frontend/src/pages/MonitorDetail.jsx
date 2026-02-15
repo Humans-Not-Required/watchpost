@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
-import { getMonitor, getHeartbeats, getUptime, getIncidents, getMonitorSla, pauseMonitor, resumeMonitor, deleteMonitor, updateMonitor, acknowledgeIncident, getNotifications, createNotification, deleteNotification, updateNotification, getMaintenanceWindows, createMaintenanceWindow, deleteMaintenanceWindow } from '../api'
-import { IconTrendUp, IconCheckCircle, IconAlertCircle, IconBell, IconMail, IconPause, IconPlay, IconX, IconWrench, IconCalendar, IconKey, IconEdit, IconSave, IconLink, IconLock, IconGlobe, IconClipboard, IconTrash, IconDashboard, IconHeart, IconZap, IconTag } from '../Icons'
+import { getMonitor, getHeartbeats, getUptime, getIncidents, getMonitorSla, pauseMonitor, resumeMonitor, deleteMonitor, updateMonitor, acknowledgeIncident, getNotifications, createNotification, deleteNotification, updateNotification, getMaintenanceWindows, createMaintenanceWindow, deleteMaintenanceWindow, getIncidentNotes, createIncidentNote, getIncident } from '../api'
+import { IconTrendUp, IconCheckCircle, IconAlertCircle, IconBell, IconMail, IconPause, IconPlay, IconX, IconWrench, IconCalendar, IconKey, IconEdit, IconSave, IconLink, IconLock, IconGlobe, IconClipboard, IconTrash, IconDashboard, IconHeart, IconZap, IconTag, IconFileText, IconClock, IconPlus } from '../Icons'
 
 function formatTime(ts) {
   if (!ts) return 'Never';
@@ -230,10 +230,201 @@ function IncidentList({ incidents, manageKey, onAck }) {
   );
 }
 
+function IncidentNotes({ incidentId, manageKey }) {
+  const [notes, setNotes] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showAdd, setShowAdd] = useState(false);
+  const [newContent, setNewContent] = useState('');
+  const [newAuthor, setNewAuthor] = useState('');
+  const [adding, setAdding] = useState(false);
+  const [error, setError] = useState(null);
+
+  const loadNotes = async () => {
+    try {
+      const data = await getIncidentNotes(incidentId);
+      setNotes(data);
+    } catch (err) {
+      // silent
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { loadNotes(); }, [incidentId]);
+
+  const handleAdd = async () => {
+    if (!newContent.trim()) {
+      setError('Note content is required');
+      return;
+    }
+    setAdding(true);
+    setError(null);
+    try {
+      await createIncidentNote(
+        incidentId,
+        newContent.trim(),
+        newAuthor.trim() || 'anonymous',
+        manageKey
+      );
+      setNewContent('');
+      setNewAuthor('');
+      setShowAdd(false);
+      await loadNotes();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  if (loading) {
+    return <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem', padding: '8px 0' }}>Loading notes...</div>;
+  }
+
+  return (
+    <div style={{ marginTop: 10 }}>
+      {/* Timeline */}
+      {notes.length > 0 && (
+        <div style={{ position: 'relative', paddingLeft: 20 }}>
+          {/* Vertical timeline line */}
+          <div style={{
+            position: 'absolute',
+            left: 6,
+            top: 4,
+            bottom: notes.length > 1 ? 4 : 'auto',
+            width: 2,
+            background: 'var(--border)',
+            borderRadius: 1,
+          }} />
+          {notes.map((note, i) => (
+            <div key={note.id} style={{ position: 'relative', marginBottom: i < notes.length - 1 ? 12 : 0, paddingBottom: 2 }}>
+              {/* Timeline dot */}
+              <div style={{
+                position: 'absolute',
+                left: -16,
+                top: 5,
+                width: 8,
+                height: 8,
+                borderRadius: '50%',
+                background: 'var(--accent)',
+                border: '2px solid var(--bg-card)',
+                zIndex: 1,
+              }} />
+              <div style={{
+                background: 'rgba(255,255,255,0.02)',
+                borderRadius: 6,
+                padding: '8px 12px',
+                border: '1px solid var(--border)',
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                  <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                    {note.author}
+                  </span>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }} title={formatTime(note.created_at)}>
+                    <IconClock size={10} style={{ marginRight: 3 }} />{relativeTime(note.created_at)}
+                  </span>
+                </div>
+                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                  {note.content}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {notes.length === 0 && !manageKey && (
+        <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', padding: '4px 0' }}>No investigation notes yet</div>
+      )}
+
+      {/* Add note form */}
+      {manageKey && (
+        <div style={{ marginTop: notes.length > 0 ? 10 : 0 }}>
+          {!showAdd ? (
+            <button
+              className="btn btn-secondary"
+              style={{ fontSize: '0.8rem', padding: '5px 12px' }}
+              onClick={() => setShowAdd(true)}
+            >
+              <IconPlus size={12} /> Add Note
+            </button>
+          ) : (
+            <div style={{
+              background: 'rgba(255,255,255,0.02)',
+              borderRadius: 6,
+              padding: 12,
+              border: '1px solid var(--accent)',
+            }}>
+              {error && (
+                <div style={{
+                  background: 'var(--danger-bg)',
+                  border: '1px solid var(--danger)',
+                  borderRadius: 'var(--radius)',
+                  padding: '6px 10px',
+                  marginBottom: 10,
+                  fontSize: '0.8rem',
+                  color: 'var(--danger)',
+                }}>
+                  {error}
+                </div>
+              )}
+              <div className="form-group" style={{ marginBottom: 8 }}>
+                <input
+                  className="form-input"
+                  style={{ fontSize: '0.85rem', padding: '6px 10px' }}
+                  placeholder="Author (default: anonymous)"
+                  value={newAuthor}
+                  onChange={(e) => setNewAuthor(e.target.value)}
+                />
+              </div>
+              <div className="form-group" style={{ marginBottom: 8 }}>
+                <textarea
+                  className="form-input"
+                  style={{ fontSize: '0.85rem', padding: '6px 10px', minHeight: 60, resize: 'vertical' }}
+                  placeholder="Investigation note... What did you find? What actions were taken?"
+                  value={newContent}
+                  onChange={(e) => setNewContent(e.target.value)}
+                  autoFocus
+                />
+              </div>
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                <button
+                  className="btn btn-secondary"
+                  style={{ fontSize: '0.8rem', padding: '5px 12px' }}
+                  onClick={() => { setShowAdd(false); setError(null); setNewContent(''); setNewAuthor(''); }}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="btn btn-primary"
+                  style={{ fontSize: '0.8rem', padding: '5px 12px' }}
+                  disabled={adding || !newContent.trim()}
+                  onClick={handleAdd}
+                >
+                  {adding ? 'Adding...' : 'Add Note'}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function IncidentCard({ incident: inc, manageKey, onAck }) {
   const [ackNote, setAckNote] = useState('');
   const [acking, setAcking] = useState(false);
   const [showAckForm, setShowAckForm] = useState(false);
+  const [showNotes, setShowNotes] = useState(false);
+  const [notesCount, setNotesCount] = useState(null);
+
+  // Fetch notes count on mount
+  useEffect(() => {
+    getIncident(inc.id)
+      .then(data => setNotesCount(data.notes_count ?? 0))
+      .catch(() => setNotesCount(0));
+  }, [inc.id]);
 
   const handleAck = async () => {
     if (!ackNote.trim()) return;
@@ -263,7 +454,13 @@ function IncidentCard({ incident: inc, manageKey, onAck }) {
         </div>
         <div style={{ textAlign: 'right', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
           <div>Started: {relativeTime(inc.started_at)}</div>
-          {inc.resolved_at && <div>Resolved: {relativeTime(inc.resolved_at)}</div>}
+          <div title={formatTime(inc.started_at)} style={{ fontSize: '0.75rem' }}>{formatTime(inc.started_at)}</div>
+          {inc.resolved_at && (
+            <>
+              <div style={{ marginTop: 4 }}>Resolved: {relativeTime(inc.resolved_at)}</div>
+              <div title={formatTime(inc.resolved_at)} style={{ fontSize: '0.75rem' }}>{formatTime(inc.resolved_at)}</div>
+            </>
+          )}
         </div>
       </div>
       {inc.acknowledgement && (
@@ -318,6 +515,29 @@ function IncidentCard({ incident: inc, manageKey, onAck }) {
           )}
         </div>
       )}
+
+      {/* Investigation Notes toggle */}
+      <div style={{ marginTop: 10, borderTop: '1px solid var(--border)', paddingTop: 8 }}>
+        <button
+          onClick={() => setShowNotes(!showNotes)}
+          style={{
+            background: 'none',
+            border: 'none',
+            color: showNotes ? 'var(--accent)' : 'var(--text-muted)',
+            fontSize: '0.8rem',
+            cursor: 'pointer',
+            padding: '2px 0',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 5,
+          }}
+        >
+          <IconFileText size={13} />
+          Notes{notesCount !== null ? ` (${notesCount})` : ''}
+          <span style={{ fontSize: '0.7rem', marginLeft: 2 }}>{showNotes ? '▲' : '▼'}</span>
+        </button>
+        {showNotes && <IncidentNotes incidentId={inc.id} manageKey={manageKey} />}
+      </div>
     </div>
   );
 }

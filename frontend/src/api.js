@@ -167,6 +167,22 @@ export async function bulkCreateMonitors(monitors) {
   });
 }
 
+export async function getIncidentNotes(incidentId, limit = 50) {
+  return request(`/incidents/${incidentId}/notes?limit=${limit}`);
+}
+
+export async function createIncidentNote(incidentId, content, author, key) {
+  return request(`/incidents/${incidentId}/notes`, {
+    method: 'POST',
+    body: JSON.stringify({ content, author }),
+    headers: { Authorization: `Bearer ${key}` },
+  });
+}
+
+export async function getIncident(incidentId) {
+  return request(`/incidents/${incidentId}`);
+}
+
 export async function getSettings() {
   return request('/settings');
 }
