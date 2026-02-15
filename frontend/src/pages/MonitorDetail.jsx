@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { getMonitor, getHeartbeats, getUptime, getIncidents, getMonitorSla, pauseMonitor, resumeMonitor, deleteMonitor, updateMonitor, acknowledgeIncident, getNotifications, createNotification, deleteNotification, updateNotification, getMaintenanceWindows, createMaintenanceWindow, deleteMaintenanceWindow, getIncidentNotes, createIncidentNote, getIncident } from '../api'
+import { getMonitor, getHeartbeats, getUptime, getIncidents, getMonitorSla, pauseMonitor, resumeMonitor, deleteMonitor, updateMonitor, acknowledgeIncident, getNotifications, createNotification, deleteNotification, updateNotification, getMaintenanceWindows, createMaintenanceWindow, deleteMaintenanceWindow, getIncidentNotes, createIncidentNote, getIncident, getMonitorUptimeHistory } from '../api'
 import { IconTrendUp, IconCheckCircle, IconAlertCircle, IconBell, IconMail, IconPause, IconPlay, IconX, IconWrench, IconCalendar, IconKey, IconEdit, IconSave, IconLink, IconLock, IconGlobe, IconClipboard, IconTrash, IconDashboard, IconHeart, IconZap, IconTag, IconFileText, IconClock, IconPlus } from '../Icons'
 
 function formatTime(ts) {
@@ -186,6 +186,203 @@ function niceNum(range) {
   return nice * Math.pow(10, exp);
 }
 
+function MonitorUptimeHistoryChart({ monitorId }) {
+  const [data, setData] = useState(null);
+  const [days, setDays] = useState(30);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    getMonitorUptimeHistory(monitorId, days)
+      .then(d => { setData(d); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, [monitorId, days]);
+
+  if (loading) {
+    return (
+      <div className="card" style={{ marginTop: 16, padding: '16px 12px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <h4 style={{ fontSize: '0.9rem', fontWeight: 600 }}><IconTrendUp size={14} style={{ marginRight: 6 }} />Uptime History</h4>
+        </div>
+        <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', padding: '16px 0' }}>Loading...</div>
+      </div>
+    );
+  }
+
+  if (!data || data.length === 0) {
+    return (
+      <div className="card" style={{ marginTop: 16, padding: '16px 12px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <h4 style={{ fontSize: '0.9rem', fontWeight: 600 }}><IconTrendUp size={14} style={{ marginRight: 6 }} />Uptime History</h4>
+        </div>
+        <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', padding: '16px 0' }}>Not enough data yet</div>
+      </div>
+    );
+  }
+
+  // Fill missing days
+  const filled = fillDays(data, days);
+  const hasData = filled.filter(d => d.uptime_pct !== null);
+
+  if (hasData.length < 2) {
+    return (
+      <div className="card" style={{ marginTop: 16, padding: '16px 12px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <h4 style={{ fontSize: '0.9rem', fontWeight: 600 }}><IconTrendUp size={14} style={{ marginRight: 6 }} />Uptime History</h4>
+        </div>
+        <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', padding: '16px 0' }}>Not enough data for chart</div>
+      </div>
+    );
+  }
+
+  const W = 800, H = 180;
+  const PAD = { top: 16, right: 16, bottom: 36, left: 50 };
+  const plotW = W - PAD.left - PAD.right;
+  const plotH = H - PAD.top - PAD.bottom;
+
+  const minUp = Math.min(...hasData.map(d => d.uptime_pct));
+  const yMin = minUp >= 90 ? 90 : 0;
+  const yMax = 100;
+  const yRange = yMax - yMin || 1;
+
+  const toX = (i) => PAD.left + (i / Math.max(filled.length - 1, 1)) * plotW;
+  const toY = (pct) => PAD.top + plotH - ((pct - yMin) / yRange) * plotH;
+
+  // Build line segments skipping nulls
+  const segments = [];
+  let current = [];
+  for (let i = 0; i < filled.length; i++) {
+    if (filled[i].uptime_pct !== null) {
+      current.push({ idx: i, d: filled[i] });
+    } else {
+      if (current.length > 0) { segments.push(current); current = []; }
+    }
+  }
+  if (current.length > 0) segments.push(current);
+
+  // Y-axis ticks
+  const yStep = niceNum(yRange / 4);
+  const yTicks = [];
+  for (let v = Math.ceil(yMin / yStep) * yStep; v <= yMax; v += yStep) {
+    yTicks.push(Math.round(v * 10) / 10);
+  }
+
+  // X-axis labels
+  const labelInterval = Math.max(1, Math.floor(filled.length / 6));
+
+  // Colors
+  const lineColor = minUp >= 99.9 ? 'var(--success)' : minUp >= 99 ? 'var(--warning, #ffa502)' : 'var(--danger)';
+  const fillColor = minUp >= 99.9 ? 'rgba(0,212,170,0.1)' : minUp >= 99 ? 'rgba(255,165,2,0.1)' : 'rgba(255,71,87,0.1)';
+
+  const avgUp = hasData.reduce((s, d) => s + d.uptime_pct, 0) / hasData.length;
+
+  return (
+    <div className="card" style={{ marginTop: 16, padding: '16px 12px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
+        <h4 style={{ fontSize: '0.9rem', fontWeight: 600, margin: 0 }}><IconTrendUp size={14} style={{ marginRight: 6 }} />Uptime History</h4>
+        <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+          <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginRight: 4 }}>
+            avg {avgUp.toFixed(2)}%
+          </span>
+          {[7, 14, 30, 90].map(d => (
+            <button
+              key={d}
+              onClick={() => setDays(d)}
+              style={{
+                fontSize: '0.75rem',
+                padding: '2px 8px',
+                borderRadius: 4,
+                border: '1px solid var(--border)',
+                background: days === d ? 'var(--accent)' : 'var(--bg-secondary)',
+                color: days === d ? '#000' : 'var(--text-primary)',
+                cursor: 'pointer',
+                fontWeight: days === d ? 600 : 400,
+              }}
+            >
+              {d}d
+            </button>
+          ))}
+        </div>
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 'auto', display: 'block' }}>
+        {/* Grid + Y labels */}
+        {yTicks.map((v, i) => (
+          <g key={i}>
+            <line x1={PAD.left} y1={toY(v)} x2={W - PAD.right} y2={toY(v)}
+              stroke="var(--border)" strokeWidth="1" strokeDasharray="4,4" />
+            <text x={PAD.left - 6} y={toY(v) + 4} textAnchor="end" fontSize="10" fill="var(--text-muted)">
+              {v % 1 === 0 ? `${v}%` : `${v.toFixed(1)}%`}
+            </text>
+          </g>
+        ))}
+
+        {/* No-data zones */}
+        {filled.map((d, i) => {
+          if (d.uptime_pct !== null) return null;
+          const bw = Math.max(plotW / filled.length, 3);
+          return <rect key={`nd-${i}`} x={toX(i) - bw / 2} y={PAD.top} width={bw} height={plotH}
+            fill="rgba(255,255,255,0.03)" />;
+        })}
+
+        {/* Area + Line */}
+        {segments.map((seg, si) => {
+          if (seg.length === 0) return null;
+          const pts = seg.map(s => `${toX(s.idx).toFixed(1)},${toY(s.d.uptime_pct).toFixed(1)}`);
+          const linePath = `M${pts.join('L')}`;
+          const baseY = (PAD.top + plotH).toFixed(1);
+          const areaPath = `${linePath}L${toX(seg[seg.length - 1].idx).toFixed(1)},${baseY}L${toX(seg[0].idx).toFixed(1)},${baseY}Z`;
+          return (
+            <g key={`seg-${si}`}>
+              <path d={areaPath} fill={fillColor} />
+              <path d={linePath} fill="none" stroke={lineColor} strokeWidth="2" strokeLinejoin="round" />
+            </g>
+          );
+        })}
+
+        {/* Data points */}
+        {filled.map((d, i) => {
+          if (d.uptime_pct === null) return null;
+          return (
+            <circle key={i} cx={toX(i)} cy={toY(d.uptime_pct)} r="3"
+              fill={d.uptime_pct >= 99.9 ? 'var(--success)' : d.uptime_pct >= 99 ? 'var(--warning, #ffa502)' : 'var(--danger)'}
+              stroke="var(--bg-card)" strokeWidth="1.5" style={{ cursor: 'pointer' }}>
+              <title>{`${d.date}: ${d.uptime_pct.toFixed(2)}% (${d.total_checks} checks, avg ${Math.round(d.avg_response_ms || 0)}ms)`}</title>
+            </circle>
+          );
+        })}
+
+        {/* X-axis labels */}
+        {filled.map((d, i) => {
+          if (i % labelInterval !== 0 && i !== filled.length - 1) return null;
+          const label = d.date.slice(5); // MM-DD
+          return (
+            <text key={`x-${i}`} x={toX(i)} y={H - 8} textAnchor="middle" fontSize="10" fill="var(--text-muted)">
+              {label}
+            </text>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
+// Fill missing days in uptime history data
+function fillDays(data, numDays) {
+  if (!data || data.length === 0) return [];
+  const dateMap = {};
+  data.forEach(d => { dateMap[d.date] = d; });
+
+  const result = [];
+  const today = new Date();
+  for (let i = numDays - 1; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - i);
+    const key = d.toISOString().slice(0, 10);
+    result.push(dateMap[key] || { date: key, uptime_pct: null, total_checks: 0, avg_response_ms: null });
+  }
+  return result;
+}
+
 function UptimeStats({ stats }) {
   if (!stats) return null;
 
@@ -230,7 +427,7 @@ function IncidentList({ incidents, manageKey, onAck }) {
   );
 }
 
-function IncidentNotes({ incidentId, manageKey }) {
+function IncidentNotes({ incidentId, manageKey, onNotesChanged }) {
   const [notes, setNotes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
@@ -270,6 +467,7 @@ function IncidentNotes({ incidentId, manageKey }) {
       setNewAuthor('');
       setShowAdd(false);
       await loadNotes();
+      onNotesChanged?.();
     } catch (err) {
       setError(err.message);
     } finally {
@@ -536,7 +734,11 @@ function IncidentCard({ incident: inc, manageKey, onAck }) {
           Notes{notesCount !== null ? ` (${notesCount})` : ''}
           <span style={{ fontSize: '0.7rem', marginLeft: 2 }}>{showNotes ? '▲' : '▼'}</span>
         </button>
-        {showNotes && <IncidentNotes incidentId={inc.id} manageKey={manageKey} />}
+        {showNotes && <IncidentNotes incidentId={inc.id} manageKey={manageKey} onNotesChanged={() => {
+          getIncident(inc.id)
+            .then(data => setNotesCount(data.notes_count ?? 0))
+            .catch(() => {});
+        }} />}
       </div>
     </div>
   );
@@ -1735,6 +1937,7 @@ export default function MonitorDetail({ id, manageKey: urlKey, onBack }) {
         <div>
           <UptimeStats stats={uptime} />
           {sla && <SlaCard sla={sla} />}
+          <MonitorUptimeHistoryChart monitorId={id} />
           <ResponseTimeChart heartbeats={heartbeats} />
           {uptime?.avg_response_ms_24h != null && (
             <div style={{ textAlign: 'center', marginTop: 12, color: 'var(--text-muted)', fontSize: '0.85rem' }}>
