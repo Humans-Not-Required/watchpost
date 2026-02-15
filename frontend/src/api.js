@@ -141,6 +141,17 @@ export async function deleteMaintenanceWindow(id, key) {
   });
 }
 
+export async function getMonitorSla(id) {
+  const url = `${BASE}/monitors/${id}/sla`;
+  const res = await fetch(url);
+  if (res.status === 404) return null; // SLA not configured
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(body.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
 export async function getUptimeHistory(days = 30) {
   return request(`/uptime-history?days=${days}`);
 }

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { getMonitor, getHeartbeats, getUptime, getIncidents, pauseMonitor, resumeMonitor, deleteMonitor, updateMonitor, acknowledgeIncident, getNotifications, createNotification, deleteNotification, updateNotification, getMaintenanceWindows, createMaintenanceWindow, deleteMaintenanceWindow } from '../api'
+import { getMonitor, getHeartbeats, getUptime, getIncidents, getMonitorSla, pauseMonitor, resumeMonitor, deleteMonitor, updateMonitor, acknowledgeIncident, getNotifications, createNotification, deleteNotification, updateNotification, getMaintenanceWindows, createMaintenanceWindow, deleteMaintenanceWindow } from '../api'
 import { IconTrendUp, IconCheckCircle, IconAlertCircle, IconBell, IconMail, IconPause, IconPlay, IconX, IconWrench, IconCalendar, IconKey, IconEdit, IconSave, IconLink, IconLock, IconGlobe, IconClipboard, IconTrash, IconDashboard, IconHeart, IconZap, IconTag } from '../Icons'
 
 function formatTime(ts) {
@@ -763,6 +763,8 @@ function EditMonitorForm({ monitor, manageKey, onSaved, onCancel }) {
     group_name: monitor.group_name || '',
     dns_record_type: monitor.dns_record_type || 'A',
     dns_expected: monitor.dns_expected || '',
+    sla_target: monitor.sla_target ?? '',
+    sla_period_days: monitor.sla_period_days ?? 30,
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -805,6 +807,13 @@ function EditMonitorForm({ monitor, manageKey, onSaved, onCancel }) {
         const oldExpected = monitor.dns_expected || null;
         if (newExpected !== oldExpected) patch.dns_expected = newExpected;
       }
+      // SLA fields
+      const newSlaTarget = form.sla_target === '' ? null : Number(form.sla_target);
+      const oldSlaTarget = monitor.sla_target ?? null;
+      if (newSlaTarget !== oldSlaTarget) patch.sla_target = newSlaTarget;
+      const newSlaPeriod = form.sla_target === '' ? null : Number(form.sla_period_days);
+      const oldSlaPeriod = monitor.sla_period_days ?? null;
+      if (newSlaPeriod !== oldSlaPeriod) patch.sla_period_days = newSlaPeriod;
 
       if (Object.keys(patch).length === 0) {
         onCancel();
@@ -905,6 +914,19 @@ function EditMonitorForm({ monitor, manageKey, onSaved, onCancel }) {
           <label className="form-label">Response Time Alert (ms)</label>
           <input className="form-input" type="number" min="100" placeholder="Disabled" value={form.response_time_threshold_ms} onChange={e => set('response_time_threshold_ms', e.target.value)} />
           <div className="form-help">Mark as degraded above this threshold. Empty = disabled.</div>
+        </div>
+      </div>
+
+      <div className="form-row">
+        <div className="form-group">
+          <label className="form-label">SLA Target %</label>
+          <input className="form-input" type="number" min="0" max="100" step="0.01" placeholder="e.g. 99.9" value={form.sla_target} onChange={e => set('sla_target', e.target.value)} />
+          <div className="form-help">Uptime target for error budget tracking. Empty = disabled.</div>
+        </div>
+        <div className="form-group">
+          <label className="form-label">SLA Period (days)</label>
+          <input className="form-input" type="number" min="1" max="365" value={form.sla_period_days} onChange={e => set('sla_period_days', e.target.value)} disabled={form.sla_target === ''} />
+          <div className="form-help">Rolling window for SLA calculation</div>
         </div>
       </div>
 
@@ -1033,11 +1055,105 @@ function ManageKeyInput({ monitorId, onKeySet }) {
   );
 }
 
+// ── SLA Card ──
+
+function SlaCard({ sla }) {
+  const statusColor = sla.status === 'met' ? 'var(--success)' :
+    sla.status === 'at_risk' ? 'var(--warning, #f59e0b)' : 'var(--danger)';
+  const statusLabel = sla.status === 'met' ? 'SLA Met' :
+    sla.status === 'at_risk' ? 'At Risk' : 'SLA Breached';
+  const budgetPct = Math.min(sla.budget_used_pct, 100);
+
+  const formatSeconds = (s) => {
+    if (s < 0) return `-${formatSeconds(-s)}`;
+    if (s < 60) return `${Math.round(s)}s`;
+    if (s < 3600) return `${Math.round(s / 60)}m`;
+    if (s < 86400) return `${(s / 3600).toFixed(1)}h`;
+    return `${(s / 86400).toFixed(1)}d`;
+  };
+
+  return (
+    <div style={{
+      background: 'var(--card-bg)',
+      borderRadius: 8,
+      padding: 16,
+      marginTop: 16,
+      border: `1px solid ${sla.status === 'breached' ? 'var(--danger)' : sla.status === 'at_risk' ? 'var(--warning, #f59e0b)' : 'var(--border)'}`,
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <IconTrendUp size={16} />
+          <span style={{ fontWeight: 600, fontSize: '0.95rem' }}>SLA Tracking</span>
+          <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+            ({sla.period_days}d rolling)
+          </span>
+        </div>
+        <span style={{
+          padding: '2px 10px',
+          borderRadius: 12,
+          fontSize: '0.8rem',
+          fontWeight: 600,
+          background: statusColor + '22',
+          color: statusColor,
+        }}>
+          {statusLabel}
+        </span>
+      </div>
+
+      <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', marginBottom: 12 }}>
+        <div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Target</div>
+          <div style={{ fontSize: '1.1rem', fontWeight: 600 }}>{sla.target_pct}%</div>
+        </div>
+        <div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Current</div>
+          <div style={{ fontSize: '1.1rem', fontWeight: 600, color: sla.current_pct >= sla.target_pct ? 'var(--success)' : 'var(--danger)' }}>
+            {sla.current_pct.toFixed(3)}%
+          </div>
+        </div>
+        <div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Checks</div>
+          <div style={{ fontSize: '1.1rem', fontWeight: 600 }}>{sla.successful_checks}/{sla.total_checks}</div>
+        </div>
+        <div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Budget Left</div>
+          <div style={{ fontSize: '1.1rem', fontWeight: 600, color: sla.budget_remaining_seconds < 0 ? 'var(--danger)' : 'var(--text-primary)' }}>
+            {formatSeconds(sla.budget_remaining_seconds)}
+          </div>
+        </div>
+      </div>
+
+      {/* Error Budget Bar */}
+      <div style={{ marginTop: 4 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 4 }}>
+          <span>Error Budget</span>
+          <span>{budgetPct.toFixed(1)}% used of {formatSeconds(sla.budget_total_seconds)}</span>
+        </div>
+        <div style={{
+          height: 8,
+          borderRadius: 4,
+          background: 'var(--border)',
+          overflow: 'hidden',
+        }}>
+          <div style={{
+            height: '100%',
+            width: `${budgetPct}%`,
+            borderRadius: 4,
+            background: budgetPct > 75 ? 'var(--danger)' : budgetPct > 50 ? 'var(--warning, #f59e0b)' : 'var(--success)',
+            transition: 'width 0.3s ease',
+          }} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function MonitorDetail({ id, manageKey: urlKey, onBack }) {
   const [monitor, setMonitor] = useState(null);
   const [heartbeats, setHeartbeats] = useState([]);
   const [uptime, setUptime] = useState(null);
   const [incidents, setIncidents] = useState([]);
+  const [sla, setSla] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [tab, setTab] = useState('overview');
@@ -1063,17 +1179,19 @@ export default function MonitorDetail({ id, manageKey: urlKey, onBack }) {
     let mounted = true;
     const load = async () => {
       try {
-        const [m, hb, u, inc] = await Promise.all([
+        const [m, hb, u, inc, slaData] = await Promise.all([
           getMonitor(id),
           getHeartbeats(id, 100),
           getUptime(id),
           getIncidents(id),
+          getMonitorSla(id).catch(() => null),
         ]);
         if (mounted) {
           setMonitor(m);
           setHeartbeats(hb);
           setUptime(u);
           setIncidents(inc);
+          setSla(slaData);
           setLoading(false);
         }
       } catch (err) {
@@ -1274,6 +1392,12 @@ export default function MonitorDetail({ id, manageKey: urlKey, onBack }) {
             <span className="monitor-stat-label">RT Alert</span>
             <span className="monitor-stat-value">{monitor.response_time_threshold_ms ? `${monitor.response_time_threshold_ms}ms` : 'Off'}</span>
           </div>
+          {monitor.sla_target != null && (
+            <div className="monitor-stat">
+              <span className="monitor-stat-label">SLA</span>
+              <span className="monitor-stat-value">{monitor.sla_target}% / {monitor.sla_period_days || 30}d</span>
+            </div>
+          )}
           <div className="monitor-stat">
             <span className="monitor-stat-label">Last Check</span>
             <span className="monitor-stat-value">{relativeTime(monitor.last_checked_at)}</span>
@@ -1390,6 +1514,7 @@ export default function MonitorDetail({ id, manageKey: urlKey, onBack }) {
       {tab === 'overview' && (
         <div>
           <UptimeStats stats={uptime} />
+          {sla && <SlaCard sla={sla} />}
           <ResponseTimeChart heartbeats={heartbeats} />
           {uptime?.avg_response_ms_24h != null && (
             <div style={{ textAlign: 'center', marginTop: 12, color: 'var(--text-muted)', fontSize: '0.85rem' }}>

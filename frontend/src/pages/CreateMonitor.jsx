@@ -15,6 +15,8 @@ export default function CreateMonitor({ onCreated, onCancel }) {
     is_public: false,
     confirmation_threshold: 2,
     response_time_threshold_ms: '',
+    sla_target: '',
+    sla_period_days: 30,
     tagsInput: '',
     group_name: '',
     dns_record_type: 'A',
@@ -59,6 +61,10 @@ export default function CreateMonitor({ onCreated, onCancel }) {
       }
       if (form.response_time_threshold_ms !== '') {
         payload.response_time_threshold_ms = parseInt(form.response_time_threshold_ms, 10);
+      }
+      if (form.sla_target !== '') {
+        payload.sla_target = parseFloat(form.sla_target);
+        payload.sla_period_days = parseInt(form.sla_period_days, 10);
       }
       const tags = form.tagsInput.split(',').map(t => t.trim()).filter(Boolean);
       if (tags.length > 0) {
@@ -405,6 +411,37 @@ export default function CreateMonitor({ onCreated, onCancel }) {
               onChange={(e) => update('response_time_threshold_ms', e.target.value)}
             />
             <div className="form-help">Mark as degraded when response time exceeds this threshold. Leave empty to disable.</div>
+          </div>
+
+          <div className="form-row">
+            <div className="form-group">
+              <label className="form-label">SLA Target % (optional)</label>
+              <input
+                className="form-input"
+                type="number"
+                min="0"
+                max="100"
+                step="0.01"
+                placeholder="e.g. 99.9"
+                value={form.sla_target}
+                onChange={(e) => update('sla_target', e.target.value)}
+              />
+              <div className="form-help">Uptime target for SLA tracking and error budget</div>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">SLA Period (days)</label>
+              <input
+                className="form-input"
+                type="number"
+                min="1"
+                max="365"
+                value={form.sla_period_days}
+                onChange={(e) => update('sla_period_days', e.target.value)}
+                disabled={form.sla_target === ''}
+              />
+              <div className="form-help">Rolling evaluation window (default: 30 days)</div>
+            </div>
           </div>
 
           <div className="form-row">
