@@ -1,0 +1,174 @@
+# Watchpost — Agent-Native Monitoring Service
+# API Base: /api/v1
+
+## Quick Start
+POST /api/v1/monitors — Create a monitor (returns manage_key)
+GET /api/v1/monitors/:id — View monitor status
+GET /api/v1/monitors/:id/heartbeats — Check history
+GET /api/v1/monitors/:id/uptime — Uptime stats (24h/7d/30d/90d)
+GET /api/v1/monitors/:id/incidents — Incident history
+GET /api/v1/status — Public status page
+GET /api/v1/dashboard — Aggregate dashboard (total monitors, uptime averages, active incidents, recent incidents, slowest monitors)
+GET /api/v1/uptime-history?days=30 — Daily uptime percentages over time (aggregate across all monitors, max 90 days)
+GET /api/v1/monitors/:id/uptime-history?days=30 — Daily uptime percentages for a specific monitor
+
+## Auth
+- Create monitor: no auth (returns manage_key, save it!)
+- Read: no auth (use monitor UUID)
+- Write: manage_key via Bearer header, X-API-Key, or ?key= param
+
+## Monitor Types
+- http (default) — HTTP/HTTPS endpoint monitoring (GET, HEAD, POST)
+- tcp — TCP port connectivity check (connect to host:port)
+- dns — DNS record resolution check (verify hostname resolves correctly)
+
+Set monitor_type on create: {"monitor_type": "tcp", "url": "db.example.com:5432", "name": "Database"}
+DNS example: {"monitor_type": "dns", "url": "example.com", "dns_record_type": "A", "dns_expected": "93.184.216.34"}
+Default monitor_type is "http" if omitted.
+
+## DNS Monitors
+- url: hostname to resolve (e.g., "example.com" or "dns://example.com")
+- dns_record_type: A (default), AAAA, CNAME, MX, TXT, NS, SOA, PTR, SRV, CAA
+- dns_expected: optional — if set, resolved value must match (case-insensitive, trailing dot ignored)
+- If dns_expected is omitted, check passes as long as resolution succeeds (any value returned)
+- Response time = DNS resolution latency
+- Status: up (resolved, matches expected), down (no records, mismatch, timeout), degraded (slow resolution)
+
+## Validation
+- HTTP monitors: URL must start with http:// or https://
+- TCP monitors: URL must be host:port format (e.g., "example.com:443" or "tcp://example.com:443")
+- DNS monitors: URL must be a valid hostname (no http:// scheme, spaces not allowed)
+- Headers must be a JSON object (not array or string)
+- interval_seconds: min 600 (10 minutes), default 600
+- timeout_ms: min 1000, max 60000, default 10000
+- confirmation_threshold: min 1, max 10, default 2
+- response_time_threshold_ms: min 100 (if set)
+
+## Monitor Methods (HTTP only)
+GET, HEAD, POST
+(TCP and DNS monitors ignore the method field)
+
+## Redirect Handling
+By default, monitors follow HTTP redirects (301, 302, etc.) up to 10 hops.
+Set follow_redirects: false on create/update to disable redirect following (useful for monitoring that a redirect is in place).
+When follow_redirects is true (default), the final response after all redirects is evaluated against expected_status.
+
+## Check Statuses
+up, down, degraded (response time exceeds threshold), unknown (never checked)
+
+## Response Time Alerts
+Set response_time_threshold_ms on a monitor to get degraded status when response time exceeds threshold.
+Triggers monitor.degraded / monitor.recovered webhook events.
+Set to null to disable. Minimum: 100ms.
+
+## Notification Types
+webhook (POST JSON to URL), email (SMTP)
+
+### Webhook Notifications
+POST /api/v1/monitors/:id/notifications with {"name": "Slack", "channel_type": "webhook", "config": {"url": "https://hooks.slack.com/..."}}
+On incident, POSTs JSON with event, monitor info, and incident details to the URL.
+
+### Email Notifications
+POST /api/v1/monitors/:id/notifications with {"name": "Ops Email", "channel_type": "email", "config": {"address": "ops@example.com"}}
+Sends formatted email (HTML + plain text) on incident creation, resolution, degraded, and maintenance events.
+Requires SMTP server configuration via environment variables:
+  SMTP_HOST — SMTP server hostname (required to enable email)
+  SMTP_PORT — Port (default: 587)
+  SMTP_USERNAME — Auth username
+  SMTP_PASSWORD — Auth password
+  SMTP_FROM — Sender address (default: watchpost@<SMTP_HOST>)
+  SMTP_TLS — "starttls" (default), "tls", or "none"
+
+## SSE Event Streams (real-time)
+GET /api/v1/events — global event stream (all monitors)
+GET /api/v1/monitors/:id/events — per-monitor event stream
+
+Event types: check.completed, incident.created, incident.resolved
+
+## Monitor Groups
+POST /api/v1/monitors with "group_name": "Infrastructure" — assign monitors to a group on creation
+PATCH /api/v1/monitors/:id with "group_name": "APIs" — change group (empty string removes)
+GET /api/v1/groups — list all unique groups across public monitors
+GET /api/v1/monitors?group=Infrastructure — filter monitors by group
+GET /api/v1/status?group=Infrastructure — filter status page by group
+Groups organize monitors into sections on the status page. Grouped monitors are sorted by group name, then by name.
+
+## Tags
+POST /api/v1/monitors with "tags": ["api", "prod"] — tag monitors on creation
+PATCH /api/v1/monitors/:id with "tags": ["api", "staging"] — update tags
+GET /api/v1/tags — list all unique tags across public monitors
+GET /api/v1/monitors?tag=prod — filter monitors by tag
+GET /api/v1/status?tag=prod — filter status page by tag
+
+## Search & Filter
+GET /api/v1/monitors?search=keyword — filter by name/URL
+GET /api/v1/monitors?status=up — filter by status (up/down/degraded/unknown)
+GET /api/v1/status?search=keyword&status=down&group=Infrastructure — combined filters
+
+## Bulk Operations
+POST /api/v1/monitors/bulk — create up to 50 monitors at once
+  Body: {"monitors": [{"name": "...", "url": "..."}, ...]}
+  Returns: {"created": [...], "errors": [...], "total": N, "succeeded": N, "failed": N}
+  Each created monitor includes its manage_key (save them!)
+  Partial success: some monitors may fail while others succeed
+
+## Export
+GET /api/v1/monitors/:id/export — export monitor config (auth required)
+  Returns monitor settings in a format you can re-import via POST /monitors or /monitors/bulk
+  Useful for backup, migration, or cloning monitors
+
+## Endpoints
+POST /api/v1/monitors — create monitor
+POST /api/v1/monitors/bulk — bulk create monitors (up to 50)
+GET /api/v1/monitors/:id/export — export monitor config (auth)
+GET /api/v1/monitors — list public monitors (supports ?search= and ?status= filters)
+GET /api/v1/monitors/:id — get monitor
+PATCH /api/v1/monitors/:id — update (auth)
+DELETE /api/v1/monitors/:id — delete (auth)
+POST /api/v1/monitors/:id/pause — pause checks (auth)
+POST /api/v1/monitors/:id/resume — resume checks (auth)
+GET /api/v1/monitors/:id/heartbeats — check history
+GET /api/v1/monitors/:id/uptime — uptime stats
+GET /api/v1/monitors/:id/uptime-history — daily uptime history (?days=N, max 90)
+GET /api/v1/uptime-history — aggregate daily uptime history (?days=N, max 90)
+GET /api/v1/monitors/:id/incidents — incidents
+POST /api/v1/incidents/:id/acknowledge — ack incident (auth)
+POST /api/v1/monitors/:id/notifications — add notification (auth)
+GET /api/v1/monitors/:id/notifications — list notifications (auth)
+DELETE /api/v1/notifications/:id — remove notification (auth)
+PATCH /api/v1/notifications/:id — enable/disable notification (auth)
+POST /api/v1/monitors/:id/maintenance — create maintenance window (auth)
+GET /api/v1/monitors/:id/maintenance — list maintenance windows
+DELETE /api/v1/maintenance/:id — delete maintenance window (auth)
+GET /api/v1/tags — list all unique tags (public monitors)
+GET /api/v1/groups — list all unique groups (public monitors)
+GET /api/v1/monitors/:id/badge/uptime — SVG uptime badge (?period=24h|7d|30d|90d, ?label=)
+GET /api/v1/monitors/:id/badge/status — SVG status badge (?label=)
+GET /api/v1/events — global SSE event stream
+GET /api/v1/monitors/:id/events — per-monitor SSE event stream
+GET /api/v1/settings — get status page branding (title, description, logo_url)
+PUT /api/v1/settings — update branding (admin key required)
+GET /api/v1/status — public status page (supports ?tag= filter, includes branding)
+GET /api/v1/health — service health
+
+## Status Page Branding
+GET /api/v1/settings — returns current branding: {"title": "...", "description": "...", "logo_url": "..."}
+PUT /api/v1/settings — update branding fields (admin key via Bearer header). Send only fields to change; empty string clears a field.
+  Body: {"title": "My Status Page", "description": "Service availability dashboard", "logo_url": "https://..."}
+  Auth: admin key (auto-generated on first run, printed to stdout)
+Branding is also included in GET /api/v1/status response as a "branding" field (omitted when no branding is set).
+
+## Status Badges (SVG)
+GET /api/v1/monitors/:id/badge/uptime — SVG uptime badge (shields.io style)
+  ?period=24h|7d|30d|90d (default: 24h)
+  ?label=custom+label (default: "uptime 24h")
+  Returns image/svg+xml — embed in README: ![uptime](https://watch.example.com/api/v1/monitors/:id/badge/uptime?period=7d)
+GET /api/v1/monitors/:id/badge/status — SVG current status badge
+  ?label=custom+label (default: "status")
+  Color-coded: green=up, yellow=degraded, grey=paused/maintenance/unknown, red=down
+
+## Maintenance Windows
+Schedule downtime so checks still run but incidents are suppressed.
+POST /api/v1/monitors/:id/maintenance with {"title": "Deploy v2", "starts_at": "2026-02-10T14:00:00Z", "ends_at": "2026-02-10T15:00:00Z"}
+During an active window, monitor status shows "maintenance" instead of "down".
+Heartbeats are still recorded. No incidents created. SSE events: maintenance.started, maintenance.ended.

@@ -1,0 +1,907 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Watchpost",
+    "description": "Agent-native monitoring service. Create monitors, track uptime, receive alerts — all via REST API. No signup required.",
+    "version": "0.1.0",
+    "license": { "name": "MIT" }
+  },
+  "servers": [{ "url": "/api/v1" }],
+  "paths": {
+    "/health": {
+      "get": {
+        "summary": "Service health check",
+        "operationId": "health",
+        "tags": ["system"],
+        "responses": {
+          "200": { "description": "Service is healthy", "content": { "application/json": { "schema": { "type": "object", "properties": { "service": { "type": "string" }, "status": { "type": "string" }, "version": { "type": "string" } } } } } }
+        }
+      }
+    },
+    "/monitors": {
+      "get": {
+        "summary": "List public monitors",
+        "operationId": "listMonitors",
+        "tags": ["monitors"],
+        "parameters": [
+          { "name": "search", "in": "query", "schema": { "type": "string" }, "description": "Filter monitors by name or URL (case-insensitive substring match)" },
+          { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["up", "down", "degraded", "unknown"] }, "description": "Filter by current status" },
+          { "name": "tag", "in": "query", "schema": { "type": "string" }, "description": "Filter monitors by tag" },
+          { "name": "group", "in": "query", "schema": { "type": "string" }, "description": "Filter monitors by group name" }
+        ],
+        "responses": {
+          "200": { "description": "List of public monitors", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Monitor" } } } } }
+        }
+      },
+      "post": {
+        "summary": "Create a monitor",
+        "operationId": "createMonitor",
+        "tags": ["monitors"],
+        "description": "Creates a new monitor and returns a manage_key (shown once). Save this key to manage the monitor later.",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateMonitor" } } }
+        },
+        "responses": {
+          "200": { "description": "Monitor created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateMonitorResponse" } } } },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "429": { "$ref": "#/components/responses/RateLimitError" }
+        }
+      }
+    },
+    "/monitors/bulk": {
+      "post": {
+        "summary": "Bulk create monitors",
+        "operationId": "bulkCreateMonitors",
+        "tags": ["monitors"],
+        "description": "Create up to 50 monitors in one request. Each monitor gets its own manage_key. Partial success: some may fail while others succeed. Each monitor counts against rate limit.",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BulkCreateMonitors" } } }
+        },
+        "responses": {
+          "200": { "description": "Bulk creation results (may include partial failures)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BulkCreateResponse" } } } },
+          "400": { "$ref": "#/components/responses/ValidationError" }
+        }
+      }
+    },
+    "/monitors/{id}/export": {
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+      "get": {
+        "summary": "Export monitor config",
+        "operationId": "exportMonitor",
+        "tags": ["monitors"],
+        "description": "Export monitor configuration in a format compatible with POST /monitors or /monitors/bulk. Useful for backup, migration, or cloning.",
+        "security": [{ "manageKey": [] }],
+        "responses": {
+          "200": { "description": "Exportable monitor config", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ExportedMonitor" } } } },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/monitors/{id}": {
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+      "get": {
+        "summary": "Get monitor details",
+        "operationId": "getMonitor",
+        "tags": ["monitors"],
+        "responses": {
+          "200": { "description": "Monitor details", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Monitor" } } } },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "patch": {
+        "summary": "Update monitor config",
+        "operationId": "updateMonitor",
+        "tags": ["monitors"],
+        "security": [{ "manageKey": [] }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UpdateMonitor" } } }
+        },
+        "responses": {
+          "200": { "description": "Monitor updated" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "delete": {
+        "summary": "Delete monitor and all data",
+        "operationId": "deleteMonitor",
+        "tags": ["monitors"],
+        "security": [{ "manageKey": [] }],
+        "responses": {
+          "200": { "description": "Monitor deleted" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/monitors/{id}/pause": {
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+      "post": {
+        "summary": "Pause monitor checks",
+        "operationId": "pauseMonitor",
+        "tags": ["monitors"],
+        "security": [{ "manageKey": [] }],
+        "responses": {
+          "200": { "description": "Monitor paused" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/monitors/{id}/resume": {
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+      "post": {
+        "summary": "Resume monitor checks",
+        "operationId": "resumeMonitor",
+        "tags": ["monitors"],
+        "security": [{ "manageKey": [] }],
+        "responses": {
+          "200": { "description": "Monitor resumed" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/monitors/{id}/heartbeats": {
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+      "get": {
+        "summary": "Get check history",
+        "operationId": "getHeartbeats",
+        "tags": ["heartbeats"],
+        "parameters": [
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 50, "maximum": 200 }, "description": "Max results to return" },
+          { "name": "after", "in": "query", "schema": { "type": "integer" }, "description": "Return heartbeats with seq > this value (cursor-based pagination)" }
+        ],
+        "responses": {
+          "200": { "description": "Check history (use last item's seq as after= for next page)", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Heartbeat" } } } } },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/monitors/{id}/uptime": {
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+      "get": {
+        "summary": "Get uptime statistics",
+        "operationId": "getUptime",
+        "tags": ["heartbeats"],
+        "responses": {
+          "200": { "description": "Uptime stats", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UptimeStats" } } } },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/monitors/{id}/incidents": {
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+      "get": {
+        "summary": "Get incident history",
+        "operationId": "getIncidents",
+        "tags": ["incidents"],
+        "parameters": [
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 20, "maximum": 100 }, "description": "Max results to return" },
+          { "name": "after", "in": "query", "schema": { "type": "integer" }, "description": "Return incidents with seq > this value (cursor-based pagination)" }
+        ],
+        "responses": {
+          "200": { "description": "Incident list (use last item's seq as after= for next page)", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Incident" } } } } },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/incidents/{id}/acknowledge": {
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+      "post": {
+        "summary": "Acknowledge an incident",
+        "operationId": "acknowledgeIncident",
+        "tags": ["incidents"],
+        "security": [{ "manageKey": [] }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AcknowledgeIncident" } } }
+        },
+        "responses": {
+          "200": { "description": "Incident acknowledged" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/monitors/{id}/notifications": {
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+      "post": {
+        "summary": "Add notification channel",
+        "operationId": "createNotification",
+        "tags": ["notifications"],
+        "security": [{ "manageKey": [] }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateNotification" } } }
+        },
+        "responses": {
+          "200": { "description": "Notification channel created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NotificationChannel" } } } },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      },
+      "get": {
+        "summary": "List notification channels",
+        "operationId": "listNotifications",
+        "tags": ["notifications"],
+        "security": [{ "manageKey": [] }],
+        "responses": {
+          "200": { "description": "Notification channels", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/NotificationChannel" } } } } },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/notifications/{id}": {
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+      "delete": {
+        "summary": "Remove notification channel",
+        "operationId": "deleteNotification",
+        "tags": ["notifications"],
+        "security": [{ "manageKey": [] }],
+        "responses": {
+          "200": { "description": "Notification deleted" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "patch": {
+        "summary": "Enable or disable a notification channel",
+        "operationId": "updateNotification",
+        "tags": ["notifications"],
+        "security": [{ "manageKey": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "is_enabled": { "type": "boolean" },
+                  "name": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Notification channel updated" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/dashboard": {
+      "get": {
+        "summary": "Dashboard overview with aggregate stats",
+        "operationId": "dashboard",
+        "tags": ["system"],
+        "description": "Returns aggregate statistics across all monitors: counts by status, uptime averages, active incidents, recent incidents with monitor names, and slowest monitors.",
+        "responses": {
+          "200": {
+            "description": "Dashboard data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "total_monitors": { "type": "integer" },
+                    "public_monitors": { "type": "integer" },
+                    "paused_monitors": { "type": "integer" },
+                    "status_counts": {
+                      "type": "object",
+                      "properties": {
+                        "up": { "type": "integer" },
+                        "down": { "type": "integer" },
+                        "degraded": { "type": "integer" },
+                        "unknown": { "type": "integer" },
+                        "maintenance": { "type": "integer" }
+                      }
+                    },
+                    "active_incidents": { "type": "integer" },
+                    "avg_uptime_24h": { "type": "number" },
+                    "avg_uptime_7d": { "type": "number" },
+                    "avg_response_ms_24h": { "type": "number", "nullable": true },
+                    "total_checks_24h": { "type": "integer" },
+                    "recent_incidents": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": { "type": "string" },
+                          "monitor_id": { "type": "string" },
+                          "monitor_name": { "type": "string" },
+                          "started_at": { "type": "string" },
+                          "resolved_at": { "type": "string", "nullable": true },
+                          "cause": { "type": "string" }
+                        }
+                      }
+                    },
+                    "slowest_monitors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": { "type": "string" },
+                          "name": { "type": "string" },
+                          "avg_response_ms": { "type": "number" },
+                          "current_status": { "type": "string" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/uptime-history": {
+      "get": {
+        "summary": "Aggregate uptime history by day",
+        "operationId": "uptimeHistory",
+        "tags": ["system"],
+        "description": "Returns daily uptime percentages, check counts, and average response times aggregated across all monitors.",
+        "parameters": [
+          { "name": "days", "in": "query", "schema": { "type": "integer", "default": 30, "minimum": 1, "maximum": 90 }, "description": "Number of days of history" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Daily uptime data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "date": { "type": "string", "format": "date" },
+                      "uptime_pct": { "type": "number" },
+                      "total_checks": { "type": "integer" },
+                      "up_checks": { "type": "integer" },
+                      "down_checks": { "type": "integer" },
+                      "avg_response_ms": { "type": "number", "nullable": true }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/monitors/{id}/uptime-history": {
+      "get": {
+        "summary": "Per-monitor uptime history by day",
+        "operationId": "monitorUptimeHistory",
+        "tags": ["monitors"],
+        "description": "Returns daily uptime percentages, check counts, and average response times for a specific monitor.",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+          { "name": "days", "in": "query", "schema": { "type": "integer", "default": 30, "minimum": 1, "maximum": 90 }, "description": "Number of days of history" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Daily uptime data for the monitor",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "date": { "type": "string", "format": "date" },
+                      "uptime_pct": { "type": "number" },
+                      "total_checks": { "type": "integer" },
+                      "up_checks": { "type": "integer" },
+                      "down_checks": { "type": "integer" },
+                      "avg_response_ms": { "type": "number", "nullable": true }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": { "description": "Monitor not found" }
+        }
+      }
+    },
+    "/status": {
+      "get": {
+        "summary": "Public status page",
+        "operationId": "statusPage",
+        "tags": ["status"],
+        "parameters": [
+          { "name": "search", "in": "query", "schema": { "type": "string" }, "description": "Filter monitors by name or URL (case-insensitive substring match)" },
+          { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["up", "down", "degraded", "unknown"] }, "description": "Filter by current status" },
+          { "name": "tag", "in": "query", "schema": { "type": "string" }, "description": "Filter monitors by tag" },
+          { "name": "group", "in": "query", "schema": { "type": "string" }, "description": "Filter monitors by group name" }
+        ],
+        "responses": {
+          "200": { "description": "Status overview", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/StatusOverview" } } } }
+        }
+      }
+    },
+    "/tags": {
+      "get": {
+        "summary": "List all unique tags",
+        "operationId": "listTags",
+        "tags": ["monitors"],
+        "description": "Returns sorted list of unique tags across all public monitors.",
+        "responses": {
+          "200": { "description": "List of tags", "content": { "application/json": { "schema": { "type": "array", "items": { "type": "string" } } } } }
+        }
+      }
+    },
+    "/groups": {
+      "get": {
+        "summary": "List all unique monitor groups",
+        "operationId": "listGroups",
+        "tags": ["monitors"],
+        "description": "Returns sorted list of unique group names across all public monitors.",
+        "responses": {
+          "200": { "description": "List of group names", "content": { "application/json": { "schema": { "type": "array", "items": { "type": "string" } } } } }
+        }
+      }
+    },
+    "/events": {
+      "get": {
+        "summary": "Global SSE event stream",
+        "operationId": "globalEvents",
+        "tags": ["events"],
+        "responses": {
+          "200": { "description": "SSE stream", "content": { "text/event-stream": {} } }
+        }
+      }
+    },
+    "/monitors/{id}/events": {
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+      "get": {
+        "summary": "Per-monitor SSE event stream",
+        "operationId": "monitorEvents",
+        "tags": ["events"],
+        "responses": {
+          "200": { "description": "SSE stream", "content": { "text/event-stream": {} } }
+        }
+      }
+    },
+    "/monitors/{id}/badge/uptime": {
+      "parameters": [
+        { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+        { "name": "period", "in": "query", "schema": { "type": "string", "enum": ["24h", "7d", "30d", "90d"], "default": "24h" }, "description": "Time period for uptime calculation" },
+        { "name": "label", "in": "query", "schema": { "type": "string" }, "description": "Custom badge label (default: uptime {period})" }
+      ],
+      "get": {
+        "summary": "SVG uptime badge (shields.io style)",
+        "operationId": "monitorUptimeBadge",
+        "tags": ["badges"],
+        "description": "Returns an SVG badge showing the monitor uptime percentage. Embed in README markdown: ![uptime](url)",
+        "responses": {
+          "200": { "description": "SVG badge image", "content": { "image/svg+xml": { "schema": { "type": "string" } } } },
+          "404": { "$ref": "#/components/responses/NotFoundError" }
+        }
+      }
+    },
+    "/monitors/{id}/badge/status": {
+      "parameters": [
+        { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+        { "name": "label", "in": "query", "schema": { "type": "string" }, "description": "Custom badge label (default: status)" }
+      ],
+      "get": {
+        "summary": "SVG current status badge",
+        "operationId": "monitorStatusBadge",
+        "tags": ["badges"],
+        "description": "Returns an SVG badge showing the monitor current status (up/down/degraded/unknown). Color-coded.",
+        "responses": {
+          "200": { "description": "SVG badge image", "content": { "image/svg+xml": { "schema": { "type": "string" } } } },
+          "404": { "$ref": "#/components/responses/NotFoundError" }
+        }
+      }
+    },
+    "/monitors/{id}/maintenance": {
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+      "post": {
+        "summary": "Create a maintenance window (suppresses incidents during the window)",
+        "operationId": "createMaintenanceWindow",
+        "tags": ["maintenance"],
+        "security": [{ "manageKey": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["title", "starts_at", "ends_at"],
+                "properties": {
+                  "title": { "type": "string", "description": "Maintenance description" },
+                  "starts_at": { "type": "string", "format": "date-time", "description": "Window start (ISO-8601 UTC)" },
+                  "ends_at": { "type": "string", "format": "date-time", "description": "Window end (ISO-8601 UTC)" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Maintenance window created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MaintenanceWindow" } } } },
+          "400": { "description": "Validation error" },
+          "403": { "description": "Invalid manage key" }
+        }
+      },
+      "get": {
+        "summary": "List maintenance windows for a monitor",
+        "operationId": "listMaintenanceWindows",
+        "tags": ["maintenance"],
+        "responses": {
+          "200": { "description": "List of maintenance windows", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/MaintenanceWindow" } } } } },
+          "404": { "description": "Monitor not found" }
+        }
+      }
+    },
+    "/maintenance/{id}": {
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+      "delete": {
+        "summary": "Delete a maintenance window",
+        "operationId": "deleteMaintenanceWindow",
+        "tags": ["maintenance"],
+        "security": [{ "manageKey": [] }],
+        "responses": {
+          "200": { "description": "Deleted" },
+          "403": { "description": "Invalid manage key" },
+          "404": { "description": "Maintenance window not found" }
+        }
+      }
+    },
+    "/llms.txt": {
+      "get": {
+        "summary": "AI agent discovery document",
+        "operationId": "llmsTxt",
+        "tags": ["system"],
+        "responses": {
+          "200": { "description": "Agent-readable API summary", "content": { "text/plain": {} } }
+        }
+      }
+    },
+    "/settings": {
+      "get": {
+        "summary": "Get status page branding",
+        "operationId": "getSettings",
+        "tags": ["settings"],
+        "responses": {
+          "200": {
+            "description": "Current branding settings",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Settings" }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Update status page branding",
+        "operationId": "updateSettings",
+        "tags": ["settings"],
+        "security": [{ "adminKey": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/UpdateSettings" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated branding settings",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Settings" }
+              }
+            }
+          },
+          "403": { "description": "Invalid admin key" }
+        }
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "summary": "OpenAPI specification",
+        "operationId": "openapiSpec",
+        "tags": ["system"],
+        "responses": {
+          "200": { "description": "This document", "content": { "application/json": {} } }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "manageKey": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Monitor manage_key. Also accepted as X-API-Key header or ?key= query param."
+      },
+      "adminKey": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Service admin key (auto-generated on first run, printed to stdout). Used for service-level settings."
+      }
+    },
+    "schemas": {
+      "Monitor": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "name": { "type": "string" },
+          "url": { "type": "string" },
+          "monitor_type": { "type": "string", "enum": ["http", "tcp", "dns"], "description": "Monitor type: http for HTTP/HTTPS checks, tcp for TCP port connectivity, dns for DNS record resolution" },
+          "dns_record_type": { "type": "string", "enum": ["A", "AAAA", "CNAME", "MX", "TXT", "NS", "SOA", "PTR", "SRV", "CAA"], "default": "A", "description": "DNS record type to query (dns monitors only)" },
+          "dns_expected": { "type": "string", "nullable": true, "description": "Expected resolved value for DNS monitors. If set, resolution must match (case-insensitive). Null = any resolution is OK." },
+          "method": { "type": "string", "enum": ["GET", "HEAD", "POST"], "description": "HTTP method (only applicable for http monitors)" },
+          "interval_seconds": { "type": "integer", "minimum": 600 },
+          "timeout_ms": { "type": "integer" },
+          "expected_status": { "type": "integer" },
+          "body_contains": { "type": "string", "nullable": true },
+          "headers": { "type": "object", "nullable": true },
+          "is_public": { "type": "boolean" },
+          "is_paused": { "type": "boolean" },
+          "current_status": { "type": "string", "enum": ["unknown", "up", "down", "degraded", "maintenance"] },
+          "last_checked_at": { "type": "string", "nullable": true },
+          "confirmation_threshold": { "type": "integer" },
+          "response_time_threshold_ms": { "type": "integer", "nullable": true, "description": "Mark as degraded when response time exceeds this (ms). Null = disabled." },
+          "follow_redirects": { "type": "boolean", "description": "Whether HTTP redirects are followed (default: true)" },
+          "tags": { "type": "array", "items": { "type": "string" }, "description": "Freeform tags for filtering monitors" },
+          "group_name": { "type": "string", "nullable": true, "description": "Group name for organizing monitors into sections on the status page" },
+          "created_at": { "type": "string" },
+          "updated_at": { "type": "string" }
+        }
+      },
+      "CreateMonitor": {
+        "type": "object",
+        "required": ["name", "url"],
+        "properties": {
+          "name": { "type": "string" },
+          "url": { "type": "string", "description": "HTTP: must start with http:// or https://. TCP: host:port format. DNS: hostname (e.g., 'example.com')" },
+          "monitor_type": { "type": "string", "enum": ["http", "tcp", "dns"], "default": "http", "description": "Monitor type: http for HTTP/HTTPS endpoint checks, tcp for TCP port connectivity, dns for DNS record resolution" },
+          "dns_record_type": { "type": "string", "enum": ["A", "AAAA", "CNAME", "MX", "TXT", "NS", "SOA", "PTR", "SRV", "CAA"], "default": "A", "description": "DNS record type to query (dns monitors only)" },
+          "dns_expected": { "type": "string", "nullable": true, "description": "Expected DNS resolved value (dns monitors only)" },
+          "method": { "type": "string", "enum": ["GET", "HEAD", "POST"], "default": "GET", "description": "HTTP method (ignored for TCP and DNS monitors)" },
+          "interval_seconds": { "type": "integer", "minimum": 600, "default": 600 },
+          "timeout_ms": { "type": "integer", "default": 10000 },
+          "expected_status": { "type": "integer", "default": 200 },
+          "body_contains": { "type": "string" },
+          "headers": { "type": "object" },
+          "is_public": { "type": "boolean", "default": false },
+          "confirmation_threshold": { "type": "integer", "minimum": 1, "maximum": 10, "default": 2 },
+          "response_time_threshold_ms": { "type": "integer", "minimum": 100, "nullable": true, "description": "Alert when response time exceeds this threshold (ms). Null = disabled." },
+          "follow_redirects": { "type": "boolean", "default": true, "description": "Follow HTTP redirects (301, 302, etc.) up to 10 hops. Default: true." },
+          "tags": { "type": "array", "items": { "type": "string" }, "description": "Freeform tags for filtering" },
+          "group_name": { "type": "string", "nullable": true, "description": "Group name for organizing monitors into sections on the status page. Empty string clears." }
+        }
+      },
+      "BulkCreateMonitors": {
+        "type": "object",
+        "required": ["monitors"],
+        "properties": {
+          "monitors": { "type": "array", "items": { "$ref": "#/components/schemas/CreateMonitor" }, "maxItems": 50, "description": "Array of monitors to create (max 50)" }
+        }
+      },
+      "BulkCreateResponse": {
+        "type": "object",
+        "properties": {
+          "created": { "type": "array", "items": { "$ref": "#/components/schemas/CreateMonitorResponse" }, "description": "Successfully created monitors with manage keys" },
+          "errors": { "type": "array", "items": { "$ref": "#/components/schemas/BulkError" }, "description": "Failed monitors with error details" },
+          "total": { "type": "integer", "description": "Total monitors in request" },
+          "succeeded": { "type": "integer", "description": "Number successfully created" },
+          "failed": { "type": "integer", "description": "Number that failed" }
+        }
+      },
+      "BulkError": {
+        "type": "object",
+        "properties": {
+          "index": { "type": "integer", "description": "Index in the input array" },
+          "error": { "type": "string" },
+          "code": { "type": "string" }
+        }
+      },
+      "ExportedMonitor": {
+        "type": "object",
+        "description": "Monitor config in a format compatible with POST /monitors for re-import",
+        "properties": {
+          "name": { "type": "string" },
+          "url": { "type": "string" },
+          "monitor_type": { "type": "string", "enum": ["http", "tcp", "dns"] },
+          "dns_record_type": { "type": "string", "enum": ["A", "AAAA", "CNAME", "MX", "TXT", "NS", "SOA", "PTR", "SRV", "CAA"] },
+          "dns_expected": { "type": "string", "nullable": true },
+          "method": { "type": "string" },
+          "interval_seconds": { "type": "integer" },
+          "timeout_ms": { "type": "integer" },
+          "expected_status": { "type": "integer" },
+          "body_contains": { "type": "string", "nullable": true },
+          "headers": { "type": "object", "nullable": true },
+          "is_public": { "type": "boolean" },
+          "confirmation_threshold": { "type": "integer" },
+          "response_time_threshold_ms": { "type": "integer", "nullable": true },
+          "tags": { "type": "array", "items": { "type": "string" } }
+        }
+      },
+      "UpdateMonitor": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "url": { "type": "string" },
+          "method": { "type": "string" },
+          "interval_seconds": { "type": "integer" },
+          "timeout_ms": { "type": "integer" },
+          "expected_status": { "type": "integer" },
+          "body_contains": { "type": "string" },
+          "headers": { "type": "object" },
+          "is_public": { "type": "boolean" },
+          "confirmation_threshold": { "type": "integer" },
+          "response_time_threshold_ms": { "type": "integer", "minimum": 100, "nullable": true, "description": "Set to threshold value, or null to disable." },
+          "tags": { "type": "array", "items": { "type": "string" } }
+        }
+      },
+      "CreateMonitorResponse": {
+        "type": "object",
+        "properties": {
+          "monitor": { "$ref": "#/components/schemas/Monitor" },
+          "manage_key": { "type": "string", "description": "Save this! Only shown once." },
+          "manage_url": { "type": "string" },
+          "view_url": { "type": "string" },
+          "api_base": { "type": "string" }
+        }
+      },
+      "Heartbeat": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "monitor_id": { "type": "string", "format": "uuid" },
+          "status": { "type": "string", "enum": ["up", "down", "degraded"] },
+          "response_time_ms": { "type": "integer" },
+          "status_code": { "type": "integer", "nullable": true },
+          "error_message": { "type": "string", "nullable": true },
+          "checked_at": { "type": "string" },
+          "seq": { "type": "integer", "description": "Monotonic sequence number for cursor-based pagination" }
+        }
+      },
+      "Incident": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "monitor_id": { "type": "string", "format": "uuid" },
+          "started_at": { "type": "string" },
+          "resolved_at": { "type": "string", "nullable": true },
+          "cause": { "type": "string" },
+          "acknowledgement": { "type": "string", "nullable": true },
+          "acknowledged_by": { "type": "string", "nullable": true },
+          "acknowledged_at": { "type": "string", "nullable": true },
+          "seq": { "type": "integer", "description": "Monotonic sequence number for cursor-based pagination" }
+        }
+      },
+      "AcknowledgeIncident": {
+        "type": "object",
+        "required": ["note"],
+        "properties": {
+          "note": { "type": "string" },
+          "actor": { "type": "string", "default": "anonymous" }
+        }
+      },
+      "UptimeStats": {
+        "type": "object",
+        "properties": {
+          "monitor_id": { "type": "string" },
+          "uptime_24h": { "type": "number" },
+          "uptime_7d": { "type": "number" },
+          "uptime_30d": { "type": "number" },
+          "uptime_90d": { "type": "number" },
+          "total_checks_24h": { "type": "integer" },
+          "total_checks_7d": { "type": "integer" },
+          "total_checks_30d": { "type": "integer" },
+          "total_checks_90d": { "type": "integer" },
+          "avg_response_ms_24h": { "type": "number", "nullable": true }
+        }
+      },
+      "StatusOverview": {
+        "type": "object",
+        "properties": {
+          "monitors": { "type": "array", "items": { "$ref": "#/components/schemas/StatusMonitor" } },
+          "overall": { "type": "string", "enum": ["operational", "degraded", "major_outage", "unknown"] },
+          "branding": { "$ref": "#/components/schemas/Settings", "nullable": true, "description": "Custom branding (omitted when not configured)" }
+        }
+      },
+      "StatusMonitor": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "url": { "type": "string" },
+          "current_status": { "type": "string" },
+          "last_checked_at": { "type": "string", "nullable": true },
+          "uptime_24h": { "type": "number" },
+          "uptime_7d": { "type": "number" },
+          "avg_response_ms_24h": { "type": "number", "nullable": true },
+          "active_incident": { "type": "boolean" },
+          "tags": { "type": "array", "items": { "type": "string" } },
+          "group_name": { "type": "string", "nullable": true, "description": "Group section name" }
+        }
+      },
+      "NotificationChannel": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "monitor_id": { "type": "string", "format": "uuid" },
+          "name": { "type": "string" },
+          "channel_type": { "type": "string", "enum": ["webhook", "email"] },
+          "config": { "type": "object" },
+          "is_enabled": { "type": "boolean" },
+          "created_at": { "type": "string" }
+        }
+      },
+      "CreateNotification": {
+        "type": "object",
+        "required": ["name", "channel_type", "config"],
+        "properties": {
+          "name": { "type": "string" },
+          "channel_type": { "type": "string", "enum": ["webhook", "email"] },
+          "config": { "type": "object", "description": "For webhook: {\"url\": \"...\"}, for email: {\"address\": \"...\"}" }
+        }
+      },
+      "MaintenanceWindow": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "monitor_id": { "type": "string", "format": "uuid" },
+          "title": { "type": "string" },
+          "starts_at": { "type": "string", "format": "date-time" },
+          "ends_at": { "type": "string", "format": "date-time" },
+          "active": { "type": "boolean", "description": "Whether the window is currently active" },
+          "created_at": { "type": "string" }
+        }
+      },
+      "Settings": {
+        "type": "object",
+        "properties": {
+          "title": { "type": "string", "nullable": true, "description": "Custom status page title" },
+          "description": { "type": "string", "nullable": true, "description": "Custom status page description" },
+          "logo_url": { "type": "string", "nullable": true, "description": "Custom logo URL for status page" }
+        }
+      },
+      "UpdateSettings": {
+        "type": "object",
+        "properties": {
+          "title": { "type": "string", "description": "Set title (empty string clears)" },
+          "description": { "type": "string", "description": "Set description (empty string clears)" },
+          "logo_url": { "type": "string", "description": "Set logo URL (empty string clears)" }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": { "type": "string" },
+          "code": { "type": "string" }
+        }
+      }
+    },
+    "responses": {
+      "NotFound": {
+        "description": "Resource not found",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "Forbidden": {
+        "description": "Invalid manage key",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "ValidationError": {
+        "description": "Validation error",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "RateLimitError": {
+        "description": "Rate limit exceeded",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      }
+    }
+  }
+}
