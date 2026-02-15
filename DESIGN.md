@@ -15,8 +15,10 @@ A **monitor** is a check definition: what to probe, how often, and what counts a
 |-------|------|-------------|
 | id | UUID | Unique identifier |
 | name | String | Human-readable label |
-| url | String | Target to check (HTTP: URL, TCP: host:port) |
-| monitor_type | Enum | http (default), tcp |
+| url | String | Target to check (HTTP: URL, TCP: host:port, DNS: hostname) |
+| monitor_type | Enum | http (default), tcp, dns |
+| dns_record_type | String | DNS record type: A (default), AAAA, CNAME, MX, TXT, NS, SOA, PTR, SRV, CAA |
+| dns_expected | Option<String> | Expected resolved value for DNS (null = any resolution is OK) |
 | method | Enum | GET, HEAD, POST (HTTP only) |
 | interval_seconds | u32 | Check frequency (min: 600, default: 600) |
 | timeout_ms | u32 | Request timeout (default: 10000) |
@@ -200,7 +202,8 @@ Heartbeats are the main storage cost. Default retention: 90 days. Older heartbea
 **Out (future):**
 - ~~Email notifications (need SMTP config)~~ ✅ Shipped
 - ~~TCP checks~~ ✅ Shipped (monitor_type: tcp)
-- UDP/DNS checks
+- ~~DNS checks~~ ✅ Shipped (monitor_type: dns, 10 record types, expected value matching)
+- UDP checks
 - Multi-region checking
 - Maintenance windows
 - Custom incident severity

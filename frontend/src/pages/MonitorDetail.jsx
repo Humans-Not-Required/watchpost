@@ -761,6 +761,8 @@ function EditMonitorForm({ monitor, manageKey, onSaved, onCancel }) {
     is_public: monitor.is_public ?? true,
     tagsInput: (monitor.tags || []).join(', '),
     group_name: monitor.group_name || '',
+    dns_record_type: monitor.dns_record_type || 'A',
+    dns_expected: monitor.dns_expected || '',
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -796,6 +798,13 @@ function EditMonitorForm({ monitor, manageKey, onSaved, onCancel }) {
       const newGroup = form.group_name.trim();
       const oldGroup = monitor.group_name || '';
       if (newGroup !== oldGroup) patch.group_name = newGroup || '';
+      // DNS fields
+      if (monitor.monitor_type === 'dns') {
+        if ((form.dns_record_type || 'A') !== (monitor.dns_record_type || 'A')) patch.dns_record_type = form.dns_record_type;
+        const newExpected = form.dns_expected?.trim() || null;
+        const oldExpected = monitor.dns_expected || null;
+        if (newExpected !== oldExpected) patch.dns_expected = newExpected;
+      }
 
       if (Object.keys(patch).length === 0) {
         onCancel();
@@ -829,12 +838,37 @@ function EditMonitorForm({ monitor, manageKey, onSaved, onCancel }) {
       </div>
 
       <div className="form-group">
-        <label className="form-label">{monitor.monitor_type === 'tcp' ? 'Host:Port' : 'URL'}</label>
-        <input className="form-input" value={form.url} onChange={e => set('url', e.target.value)} placeholder={monitor.monitor_type === 'tcp' ? 'host:port' : 'https://example.com'} />
+        <label className="form-label">{monitor.monitor_type === 'tcp' ? 'Host:Port' : monitor.monitor_type === 'dns' ? 'Hostname' : 'URL'}</label>
+        <input className="form-input" value={form.url} onChange={e => set('url', e.target.value)} placeholder={monitor.monitor_type === 'tcp' ? 'host:port' : monitor.monitor_type === 'dns' ? 'example.com' : 'https://example.com'} />
         {monitor.monitor_type === 'tcp' && <div className="form-help">Type: 🔌 TCP — connectivity check</div>}
+        {monitor.monitor_type === 'dns' && <div className="form-help">Type: 🔍 DNS — record resolution check</div>}
       </div>
 
-      {monitor.monitor_type !== 'tcp' && (
+      {monitor.monitor_type === 'dns' && (
+        <div className="form-row">
+          <div className="form-group">
+            <label className="form-label">Record Type</label>
+            <select className="form-input" value={form.dns_record_type || 'A'} onChange={e => set('dns_record_type', e.target.value)}>
+              <option value="A">A (IPv4)</option>
+              <option value="AAAA">AAAA (IPv6)</option>
+              <option value="CNAME">CNAME</option>
+              <option value="MX">MX (mail)</option>
+              <option value="TXT">TXT</option>
+              <option value="NS">NS</option>
+              <option value="SOA">SOA</option>
+              <option value="PTR">PTR</option>
+              <option value="SRV">SRV</option>
+              <option value="CAA">CAA</option>
+            </select>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Expected Value</label>
+            <input className="form-input" value={form.dns_expected || ''} onChange={e => set('dns_expected', e.target.value)} placeholder="Optional — leave empty to just verify resolution" />
+          </div>
+        </div>
+      )}
+
+      {monitor.monitor_type === 'http' && (
         <div className="form-row">
           <div className="form-group">
             <label className="form-label">Method</label>
@@ -874,7 +908,7 @@ function EditMonitorForm({ monitor, manageKey, onSaved, onCancel }) {
         </div>
       </div>
 
-      {monitor.monitor_type !== 'tcp' && (
+      {monitor.monitor_type === 'http' && (
         <div className="form-group">
           <label className="form-label">Body Contains</label>
           <input className="form-input" value={form.body_contains} onChange={e => set('body_contains', e.target.value)} placeholder="Optional text to match in response" />
@@ -1170,7 +1204,7 @@ export default function MonitorDetail({ id, manageKey: urlKey, onBack }) {
           <div>
             <h2 className="card-title" style={{ fontSize: '1.3rem' }}>{monitor.name}</h2>
             <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: 4 }}>
-              {monitor.monitor_type === 'tcp' ? '🔌 TCP' : monitor.method} {monitor.url}
+              {monitor.monitor_type === 'tcp' ? '🔌 TCP' : monitor.monitor_type === 'dns' ? `🔍 DNS ${monitor.dns_record_type || 'A'}` : monitor.method} {monitor.url}
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -1209,6 +1243,23 @@ export default function MonitorDetail({ id, manageKey: urlKey, onBack }) {
               <span className="monitor-stat-label">Type</span>
               <span className="monitor-stat-value">🔌 TCP</span>
             </div>
+          ) : monitor.monitor_type === 'dns' ? (
+            <>
+              <div className="monitor-stat">
+                <span className="monitor-stat-label">Type</span>
+                <span className="monitor-stat-value">🔍 DNS</span>
+              </div>
+              <div className="monitor-stat">
+                <span className="monitor-stat-label">Record</span>
+                <span className="monitor-stat-value">{monitor.dns_record_type || 'A'}</span>
+              </div>
+              {monitor.dns_expected && (
+                <div className="monitor-stat">
+                  <span className="monitor-stat-label">Expected</span>
+                  <span className="monitor-stat-value" style={{ fontSize: '0.8rem', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>{monitor.dns_expected}</span>
+                </div>
+              )}
+            </>
           ) : (
             <div className="monitor-stat">
               <span className="monitor-stat-label">Expected</span>

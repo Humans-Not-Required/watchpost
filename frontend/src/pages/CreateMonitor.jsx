@@ -17,6 +17,8 @@ export default function CreateMonitor({ onCreated, onCancel }) {
     response_time_threshold_ms: '',
     tagsInput: '',
     group_name: '',
+    dns_record_type: 'A',
+    dns_expected: '',
   });
   const [copied, setCopied] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -47,6 +49,13 @@ export default function CreateMonitor({ onCreated, onCancel }) {
       }
       if (form.body_contains.trim() && form.monitor_type === 'http') {
         payload.body_contains = form.body_contains.trim();
+      }
+      // DNS-specific fields
+      if (form.monitor_type === 'dns') {
+        payload.dns_record_type = form.dns_record_type;
+        if (form.dns_expected.trim()) {
+          payload.dns_expected = form.dns_expected.trim();
+        }
       }
       if (form.response_time_threshold_ms !== '') {
         payload.response_time_threshold_ms = parseInt(form.response_time_threshold_ms, 10);
@@ -141,13 +150,27 @@ export default function CreateMonitor({ onCreated, onCancel }) {
             </div>
             <div className="monitor-stat">
               <span className="monitor-stat-label">Type</span>
-              <span className="monitor-stat-value">{result.monitor.monitor_type === 'tcp' ? '🔌 TCP' : '🌐 HTTP'}</span>
+              <span className="monitor-stat-value">{result.monitor.monitor_type === 'tcp' ? '🔌 TCP' : result.monitor.monitor_type === 'dns' ? '🔍 DNS' : '🌐 HTTP'}</span>
             </div>
-            {result.monitor.monitor_type !== 'tcp' && (
+            {result.monitor.monitor_type === 'http' && (
               <div className="monitor-stat">
                 <span className="monitor-stat-label">Method</span>
                 <span className="monitor-stat-value">{result.monitor.method}</span>
               </div>
+            )}
+            {result.monitor.monitor_type === 'dns' && (
+              <>
+                <div className="monitor-stat">
+                  <span className="monitor-stat-label">Record Type</span>
+                  <span className="monitor-stat-value">{result.monitor.dns_record_type}</span>
+                </div>
+                {result.monitor.dns_expected && (
+                  <div className="monitor-stat">
+                    <span className="monitor-stat-label">Expected</span>
+                    <span className="monitor-stat-value" style={{ fontSize: '0.85rem' }}>{result.monitor.dns_expected}</span>
+                  </div>
+                )}
+              </>
             )}
             <div className="monitor-stat">
               <span className="monitor-stat-label">Interval</span>
@@ -211,7 +234,7 @@ export default function CreateMonitor({ onCreated, onCancel }) {
           <div className="form-group">
             <label className="form-label">Monitor Type</label>
             <div style={{ display: 'flex', gap: 0, borderRadius: 'var(--radius)', overflow: 'hidden', border: '1px solid var(--border)' }}>
-              {['http', 'tcp'].map(type_ => (
+              {['http', 'tcp', 'dns'].map(type_ => (
                 <button
                   key={type_}
                   type="button"
@@ -224,23 +247,25 @@ export default function CreateMonitor({ onCreated, onCancel }) {
                     fontSize: '0.9rem', transition: 'all 0.15s ease',
                   }}
                 >
-                  {type_ === 'http' ? '🌐 HTTP' : '🔌 TCP'}
+                  {type_ === 'http' ? '🌐 HTTP' : type_ === 'tcp' ? '🔌 TCP' : '🔍 DNS'}
                 </button>
               ))}
             </div>
             <div className="form-help">
               {form.monitor_type === 'http'
                 ? 'Monitor HTTP/HTTPS endpoints with status codes, body matching, and response times'
-                : 'Monitor TCP port connectivity (databases, Redis, SMTP, custom services)'}
+                : form.monitor_type === 'tcp'
+                ? 'Monitor TCP port connectivity (databases, Redis, SMTP, custom services)'
+                : 'Monitor DNS resolution — verify records resolve correctly (A, AAAA, MX, TXT, CNAME, NS, etc.)'}
             </div>
           </div>
 
           <div className="form-group">
-            <label className="form-label">{form.monitor_type === 'tcp' ? 'Host:Port *' : 'URL to Monitor *'}</label>
+            <label className="form-label">{form.monitor_type === 'tcp' ? 'Host:Port *' : form.monitor_type === 'dns' ? 'Hostname *' : 'URL to Monitor *'}</label>
             <input
               className="form-input"
-              type={form.monitor_type === 'tcp' ? 'text' : 'url'}
-              placeholder={form.monitor_type === 'tcp' ? 'e.g. db.example.com:5432' : 'https://api.example.com/health'}
+              type={form.monitor_type === 'http' ? 'url' : 'text'}
+              placeholder={form.monitor_type === 'tcp' ? 'e.g. db.example.com:5432' : form.monitor_type === 'dns' ? 'e.g. example.com' : 'https://api.example.com/health'}
               value={form.url}
               onChange={(e) => update('url', e.target.value)}
               required
@@ -248,7 +273,46 @@ export default function CreateMonitor({ onCreated, onCancel }) {
             {form.monitor_type === 'tcp' && (
               <div className="form-help">Format: host:port (e.g., redis.example.com:6379, tcp://db.example.com:5432)</div>
             )}
+            {form.monitor_type === 'dns' && (
+              <div className="form-help">Domain name to resolve (e.g., example.com, mail.example.com)</div>
+            )}
           </div>
+
+          {form.monitor_type === 'dns' && (
+            <div className="form-row">
+              <div className="form-group">
+                <label className="form-label">Record Type</label>
+                <select
+                  className="form-input"
+                  value={form.dns_record_type}
+                  onChange={(e) => update('dns_record_type', e.target.value)}
+                >
+                  <option value="A">A (IPv4 address)</option>
+                  <option value="AAAA">AAAA (IPv6 address)</option>
+                  <option value="CNAME">CNAME (canonical name)</option>
+                  <option value="MX">MX (mail exchange)</option>
+                  <option value="TXT">TXT (text record)</option>
+                  <option value="NS">NS (name server)</option>
+                  <option value="SOA">SOA (start of authority)</option>
+                  <option value="PTR">PTR (pointer)</option>
+                  <option value="SRV">SRV (service)</option>
+                  <option value="CAA">CAA (certificate authority)</option>
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Expected Value (optional)</label>
+                <input
+                  className="form-input"
+                  type="text"
+                  placeholder={form.dns_record_type === 'A' ? 'e.g. 93.184.216.34' : form.dns_record_type === 'MX' ? 'e.g. 10 mail.example.com' : 'Expected resolved value'}
+                  value={form.dns_expected}
+                  onChange={(e) => update('dns_expected', e.target.value)}
+                />
+                <div className="form-help">If set, the resolved value must match. Leave empty to just verify resolution succeeds.</div>
+              </div>
+            </div>
+          )}
 
           {form.monitor_type === 'http' && (
             <div className="form-row">

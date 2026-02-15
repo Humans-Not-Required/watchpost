@@ -33,6 +33,9 @@ pub struct Monitor {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_time_threshold_ms: Option<u32>,
     pub follow_redirects: bool,
+    pub dns_record_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dns_expected: Option<String>,
     pub tags: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub group_name: Option<String>,
@@ -62,6 +65,9 @@ pub struct CreateMonitor {
     pub response_time_threshold_ms: Option<u32>,
     #[serde(default = "default_follow_redirects")]
     pub follow_redirects: Option<bool>,
+    #[serde(default = "default_dns_record_type")]
+    pub dns_record_type: Option<String>,
+    pub dns_expected: Option<String>,
     #[serde(default)]
     pub tags: Vec<String>,
     pub group_name: Option<String>,
@@ -69,6 +75,7 @@ pub struct CreateMonitor {
 
 fn default_follow_redirects() -> Option<bool> { Some(true) }
 fn default_monitor_type() -> Option<String> { Some("http".into()) }
+fn default_dns_record_type() -> Option<String> { Some("A".into()) }
 fn default_method() -> String { "GET".into() }
 fn default_interval() -> Option<u32> { Some(600) }
 fn default_timeout() -> Option<u32> { Some(10000) }
@@ -90,6 +97,8 @@ pub struct UpdateMonitor {
     #[serde(default, deserialize_with = "deserialize_optional_nullable")]
     pub response_time_threshold_ms: Option<Option<u32>>,
     pub follow_redirects: Option<bool>,
+    pub dns_record_type: Option<String>,
+    pub dns_expected: Option<String>,
     pub tags: Option<Vec<String>>,
     pub group_name: Option<String>,
 }
@@ -301,6 +310,9 @@ pub struct ExportedMonitor {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_time_threshold_ms: Option<u32>,
     pub follow_redirects: bool,
+    pub dns_record_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dns_expected: Option<String>,
     pub tags: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub group_name: Option<String>,

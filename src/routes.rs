@@ -90,15 +90,26 @@ pub fn create_monitor(
     }
 
     let monitor_type = data.monitor_type.as_deref().unwrap_or("http").to_lowercase();
-    if !["http", "tcp"].contains(&monitor_type.as_str()) {
+    if !["http", "tcp", "dns"].contains(&monitor_type.as_str()) {
         return Err((Status::BadRequest, Json(serde_json::json!({
-            "error": "monitor_type must be 'http' or 'tcp'", "code": "VALIDATION_ERROR"
+            "error": "monitor_type must be 'http', 'tcp', or 'dns'", "code": "VALIDATION_ERROR"
         }))));
     }
 
     if monitor_type == "tcp" {
         // TCP monitors use host:port format
         validate_tcp_address(data.url.trim())?;
+    } else if monitor_type == "dns" {
+        // DNS monitors use a hostname (optional dns:// prefix)
+        validate_dns_hostname(data.url.trim())?;
+        // Validate dns_record_type
+        let rt = data.dns_record_type.as_deref().unwrap_or("A").to_uppercase();
+        if !VALID_DNS_RECORD_TYPES.contains(&rt.as_str()) {
+            return Err((Status::BadRequest, Json(serde_json::json!({
+                "error": format!("dns_record_type must be one of: {}", VALID_DNS_RECORD_TYPES.join(", ")),
+                "code": "VALIDATION_ERROR"
+            }))));
+        }
     } else {
         // HTTP monitors require http:// or https://
         let url_trimmed = data.url.trim().to_lowercase();
@@ -135,11 +146,13 @@ pub fn create_monitor(
     let follow_redirects = data.follow_redirects.unwrap_or(true);
 
     let group_name = data.group_name.as_deref().map(|g| g.trim()).filter(|g| !g.is_empty()).map(|g| g.to_string());
+    let dns_record_type = data.dns_record_type.as_deref().unwrap_or("A").to_uppercase();
+    let dns_expected = data.dns_expected.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty()).map(|s| s.to_string());
 
     let conn = db.conn.lock().unwrap();
     conn.execute(
-        "INSERT INTO monitors (id, name, url, monitor_type, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, manage_key_hash, is_public, confirmation_threshold, tags, response_time_threshold_ms, follow_redirects, group_name)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+        "INSERT INTO monitors (id, name, url, monitor_type, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, manage_key_hash, is_public, confirmation_threshold, tags, response_time_threshold_ms, follow_redirects, group_name, dns_record_type, dns_expected)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
         params![
             id,
             data.name.trim(),
@@ -158,6 +171,8 @@ pub fn create_monitor(
             rt_threshold,
             follow_redirects as i32,
             group_name,
+            dns_record_type,
+            dns_expected,
         ],
     ).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({
         "error": format!("DB error: {}", e), "code": "INTERNAL_ERROR"
@@ -226,13 +241,23 @@ pub fn bulk_create_monitors(
             continue;
         }
         let bulk_monitor_type = monitor_data.monitor_type.as_deref().unwrap_or("http").to_lowercase();
-        if !["http", "tcp"].contains(&bulk_monitor_type.as_str()) {
-            errors.push(BulkError { index: idx, error: "monitor_type must be 'http' or 'tcp'".into(), code: "VALIDATION_ERROR".into() });
+        if !["http", "tcp", "dns"].contains(&bulk_monitor_type.as_str()) {
+            errors.push(BulkError { index: idx, error: "monitor_type must be 'http', 'tcp', or 'dns'".into(), code: "VALIDATION_ERROR".into() });
             continue;
         }
         if bulk_monitor_type == "tcp" {
             if validate_tcp_address(monitor_data.url.trim()).is_err() {
                 errors.push(BulkError { index: idx, error: "TCP address must be in host:port format".into(), code: "VALIDATION_ERROR".into() });
+                continue;
+            }
+        } else if bulk_monitor_type == "dns" {
+            if validate_dns_hostname(monitor_data.url.trim()).is_err() {
+                errors.push(BulkError { index: idx, error: "DNS hostname must be a valid domain (e.g., 'example.com' or 'dns://example.com')".into(), code: "VALIDATION_ERROR".into() });
+                continue;
+            }
+            let rt = monitor_data.dns_record_type.as_deref().unwrap_or("A").to_uppercase();
+            if !VALID_DNS_RECORD_TYPES.contains(&rt.as_str()) {
+                errors.push(BulkError { index: idx, error: format!("dns_record_type must be one of: {}", VALID_DNS_RECORD_TYPES.join(", ")), code: "VALIDATION_ERROR".into() });
                 continue;
             }
         } else {
@@ -266,10 +291,12 @@ pub fn bulk_create_monitors(
         let tags_str = tags_to_string(&monitor_data.tags);
         let follow_redirects = monitor_data.follow_redirects.unwrap_or(true);
         let group_name = monitor_data.group_name.as_deref().map(|g| g.trim()).filter(|g| !g.is_empty()).map(|g| g.to_string());
+        let bulk_dns_record_type = monitor_data.dns_record_type.as_deref().unwrap_or("A").to_uppercase();
+        let bulk_dns_expected = monitor_data.dns_expected.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty()).map(|s| s.to_string());
 
         match conn.execute(
-            "INSERT INTO monitors (id, name, url, monitor_type, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, manage_key_hash, is_public, confirmation_threshold, tags, response_time_threshold_ms, follow_redirects, group_name)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+            "INSERT INTO monitors (id, name, url, monitor_type, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, manage_key_hash, is_public, confirmation_threshold, tags, response_time_threshold_ms, follow_redirects, group_name, dns_record_type, dns_expected)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
             params![
                 id,
                 monitor_data.name.trim(),
@@ -288,6 +315,8 @@ pub fn bulk_create_monitors(
                 rt_threshold,
                 follow_redirects as i32,
                 group_name,
+                bulk_dns_record_type,
+                bulk_dns_expected,
             ],
         ) {
             Ok(_) => {
@@ -349,6 +378,8 @@ pub fn export_monitor(
         confirmation_threshold: monitor.confirmation_threshold,
         response_time_threshold_ms: monitor.response_time_threshold_ms,
         follow_redirects: monitor.follow_redirects,
+        dns_record_type: monitor.dns_record_type,
+        dns_expected: monitor.dns_expected,
         tags: monitor.tags,
         group_name: monitor.group_name,
     }))
@@ -361,7 +392,7 @@ pub fn list_monitors(search: Option<&str>, status: Option<&str>, tag: Option<&st
     let conn = db.conn.lock().unwrap();
 
     let mut sql = String::from(
-        "SELECT id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, is_public, is_paused, current_status, last_checked_at, confirmation_threshold, created_at, updated_at, tags, response_time_threshold_ms, follow_redirects, group_name, monitor_type
+        "SELECT id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, is_public, is_paused, current_status, last_checked_at, confirmation_threshold, created_at, updated_at, tags, response_time_threshold_ms, follow_redirects, group_name, monitor_type, dns_record_type, dns_expected
          FROM monitors WHERE is_public = 1"
     );
     let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
@@ -457,9 +488,9 @@ pub fn update_monitor(
     // Validate monitor_type if provided
     if let Some(ref mt) = data.monitor_type {
         let mt_lower = mt.trim().to_lowercase();
-        if !["http", "tcp"].contains(&mt_lower.as_str()) {
+        if !["http", "tcp", "dns"].contains(&mt_lower.as_str()) {
             return Err((Status::BadRequest, Json(serde_json::json!({
-                "error": "monitor_type must be 'http' or 'tcp'", "code": "VALIDATION_ERROR"
+                "error": "monitor_type must be 'http', 'tcp', or 'dns'", "code": "VALIDATION_ERROR"
             }))));
         }
     }
@@ -476,6 +507,8 @@ pub fn update_monitor(
     if let Some(ref url) = data.url {
         if effective_type == "tcp" {
             validate_tcp_address(url.trim())?;
+        } else if effective_type == "dns" {
+            validate_dns_hostname(url.trim())?;
         } else {
             let url_lower = url.trim().to_lowercase();
             if !url_lower.starts_with("http://") && !url_lower.starts_with("https://") {
@@ -483,6 +516,16 @@ pub fn update_monitor(
                     "error": "URL must start with http:// or https://", "code": "VALIDATION_ERROR"
                 }))));
             }
+        }
+    }
+    // Validate dns_record_type if provided
+    if let Some(ref rt) = data.dns_record_type {
+        let rt_upper = rt.trim().to_uppercase();
+        if !VALID_DNS_RECORD_TYPES.contains(&rt_upper.as_str()) {
+            return Err((Status::BadRequest, Json(serde_json::json!({
+                "error": format!("dns_record_type must be one of: {}", VALID_DNS_RECORD_TYPES.join(", ")),
+                "code": "VALIDATION_ERROR"
+            }))));
         }
     }
     // Validate headers is a JSON object if provided
@@ -542,6 +585,20 @@ pub fn update_monitor(
     if let Some(ref gn) = data.group_name {
         updates.push(format!("group_name = ?{}", values.len() + 1));
         let trimmed = gn.trim();
+        if trimmed.is_empty() {
+            values.push(Box::new(None::<String>));
+        } else {
+            values.push(Box::new(trimmed.to_string()));
+        }
+    }
+
+    if let Some(ref rt) = data.dns_record_type {
+        updates.push(format!("dns_record_type = ?{}", values.len() + 1));
+        values.push(Box::new(rt.trim().to_uppercase()));
+    }
+    if let Some(ref expected) = data.dns_expected {
+        updates.push(format!("dns_expected = ?{}", values.len() + 1));
+        let trimmed = expected.trim();
         if trimmed.is_empty() {
             values.push(Box::new(None::<String>));
         } else {
@@ -1558,13 +1615,24 @@ GET /api/v1/monitors/:id/uptime-history?days=30 — Daily uptime percentages for
 ## Monitor Types
 - http (default) — HTTP/HTTPS endpoint monitoring (GET, HEAD, POST)
 - tcp — TCP port connectivity check (connect to host:port)
+- dns — DNS record resolution check (verify hostname resolves correctly)
 
 Set monitor_type on create: {"monitor_type": "tcp", "url": "db.example.com:5432", "name": "Database"}
+DNS example: {"monitor_type": "dns", "url": "example.com", "dns_record_type": "A", "dns_expected": "93.184.216.34"}
 Default monitor_type is "http" if omitted.
+
+## DNS Monitors
+- url: hostname to resolve (e.g., "example.com" or "dns://example.com")
+- dns_record_type: A (default), AAAA, CNAME, MX, TXT, NS, SOA, PTR, SRV, CAA
+- dns_expected: optional — if set, resolved value must match (case-insensitive, trailing dot ignored)
+- If dns_expected is omitted, check passes as long as resolution succeeds (any value returned)
+- Response time = DNS resolution latency
+- Status: up (resolved, matches expected), down (no records, mismatch, timeout), degraded (slow resolution)
 
 ## Validation
 - HTTP monitors: URL must start with http:// or https://
 - TCP monitors: URL must be host:port format (e.g., "example.com:443" or "tcp://example.com:443")
+- DNS monitors: URL must be a valid hostname (no http:// scheme, spaces not allowed)
 - Headers must be a JSON object (not array or string)
 - interval_seconds: min 600 (10 minutes), default 600
 - timeout_ms: min 1000, max 60000, default 10000
@@ -1573,7 +1641,7 @@ Default monitor_type is "http" if omitted.
 
 ## Monitor Methods (HTTP only)
 GET, HEAD, POST
-(TCP monitors ignore the method field)
+(TCP and DNS monitors ignore the method field)
 
 ## Redirect Handling
 By default, monitors follow HTTP redirects (301, 302, etc.) up to 10 hops.
@@ -2347,7 +2415,9 @@ const OPENAPI_JSON: &str = r##"{
           "id": { "type": "string", "format": "uuid" },
           "name": { "type": "string" },
           "url": { "type": "string" },
-          "monitor_type": { "type": "string", "enum": ["http", "tcp"], "description": "Monitor type: http for HTTP/HTTPS checks, tcp for TCP port connectivity checks" },
+          "monitor_type": { "type": "string", "enum": ["http", "tcp", "dns"], "description": "Monitor type: http for HTTP/HTTPS checks, tcp for TCP port connectivity, dns for DNS record resolution" },
+          "dns_record_type": { "type": "string", "enum": ["A", "AAAA", "CNAME", "MX", "TXT", "NS", "SOA", "PTR", "SRV", "CAA"], "default": "A", "description": "DNS record type to query (dns monitors only)" },
+          "dns_expected": { "type": "string", "nullable": true, "description": "Expected resolved value for DNS monitors. If set, resolution must match (case-insensitive). Null = any resolution is OK." },
           "method": { "type": "string", "enum": ["GET", "HEAD", "POST"], "description": "HTTP method (only applicable for http monitors)" },
           "interval_seconds": { "type": "integer", "minimum": 600 },
           "timeout_ms": { "type": "integer" },
@@ -2372,9 +2442,11 @@ const OPENAPI_JSON: &str = r##"{
         "required": ["name", "url"],
         "properties": {
           "name": { "type": "string" },
-          "url": { "type": "string", "description": "HTTP: must start with http:// or https://. TCP: host:port format (e.g., 'example.com:443' or 'tcp://example.com:443')" },
-          "monitor_type": { "type": "string", "enum": ["http", "tcp"], "default": "http", "description": "Monitor type: http for HTTP/HTTPS endpoint checks, tcp for TCP port connectivity" },
-          "method": { "type": "string", "enum": ["GET", "HEAD", "POST"], "default": "GET", "description": "HTTP method (ignored for TCP monitors)" },
+          "url": { "type": "string", "description": "HTTP: must start with http:// or https://. TCP: host:port format. DNS: hostname (e.g., 'example.com')" },
+          "monitor_type": { "type": "string", "enum": ["http", "tcp", "dns"], "default": "http", "description": "Monitor type: http for HTTP/HTTPS endpoint checks, tcp for TCP port connectivity, dns for DNS record resolution" },
+          "dns_record_type": { "type": "string", "enum": ["A", "AAAA", "CNAME", "MX", "TXT", "NS", "SOA", "PTR", "SRV", "CAA"], "default": "A", "description": "DNS record type to query (dns monitors only)" },
+          "dns_expected": { "type": "string", "nullable": true, "description": "Expected DNS resolved value (dns monitors only)" },
+          "method": { "type": "string", "enum": ["GET", "HEAD", "POST"], "default": "GET", "description": "HTTP method (ignored for TCP and DNS monitors)" },
           "interval_seconds": { "type": "integer", "minimum": 600, "default": 600 },
           "timeout_ms": { "type": "integer", "default": 10000 },
           "expected_status": { "type": "integer", "default": 200 },
@@ -2419,7 +2491,9 @@ const OPENAPI_JSON: &str = r##"{
         "properties": {
           "name": { "type": "string" },
           "url": { "type": "string" },
-          "monitor_type": { "type": "string", "enum": ["http", "tcp"] },
+          "monitor_type": { "type": "string", "enum": ["http", "tcp", "dns"] },
+          "dns_record_type": { "type": "string", "enum": ["A", "AAAA", "CNAME", "MX", "TXT", "NS", "SOA", "PTR", "SRV", "CAA"] },
+          "dns_expected": { "type": "string", "nullable": true },
           "method": { "type": "string" },
           "interval_seconds": { "type": "integer" },
           "timeout_ms": { "type": "integer" },
@@ -2760,7 +2834,7 @@ pub fn monitor_events<'a>(id: &'a str, broadcaster: &'a State<Arc<EventBroadcast
 
 fn get_monitor_from_db(conn: &rusqlite::Connection, id: &str) -> rusqlite::Result<Monitor> {
     conn.query_row(
-        "SELECT id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, is_public, is_paused, current_status, last_checked_at, confirmation_threshold, created_at, updated_at, tags, response_time_threshold_ms, follow_redirects, group_name, monitor_type
+        "SELECT id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, is_public, is_paused, current_status, last_checked_at, confirmation_threshold, created_at, updated_at, tags, response_time_threshold_ms, follow_redirects, group_name, monitor_type, dns_record_type, dns_expected
          FROM monitors WHERE id = ?1",
         params![id],
         |row| Ok(row_to_monitor(row)),
@@ -2804,6 +2878,8 @@ fn row_to_monitor(row: &rusqlite::Row) -> Monitor {
         confirmation_threshold: row.get(13).unwrap(),
         response_time_threshold_ms: row.get::<_, Option<u32>>(17).unwrap_or(None),
         follow_redirects: row.get::<_, i32>(18).unwrap_or(1) != 0,
+        dns_record_type: row.get::<_, String>(21).unwrap_or_else(|_| "A".to_string()),
+        dns_expected: row.get::<_, Option<String>>(22).unwrap_or(None),
         tags: parse_tags(&tags_str),
         group_name: row.get::<_, Option<String>>(19).unwrap_or(None),
         created_at: row.get(14).unwrap(),
@@ -2822,6 +2898,29 @@ pub fn spa_fallback(_path: std::path::PathBuf) -> Option<(ContentType, Vec<u8>)>
     std::fs::read(&index_path)
         .ok()
         .map(|bytes| (ContentType::HTML, bytes))
+}
+
+/// Valid DNS record types for DNS monitors
+const VALID_DNS_RECORD_TYPES: &[&str] = &["A", "AAAA", "CNAME", "MX", "TXT", "NS", "SOA", "PTR", "SRV", "CAA"];
+
+/// Validate DNS hostname format (optional dns:// prefix)
+fn validate_dns_hostname(host: &str) -> Result<(), (Status, Json<serde_json::Value>)> {
+    let host = host.strip_prefix("dns://").unwrap_or(host);
+    if host.is_empty() {
+        return Err((Status::BadRequest, Json(serde_json::json!({
+            "error": "DNS hostname cannot be empty",
+            "code": "VALIDATION_ERROR"
+        }))));
+    }
+    // Basic hostname validation: must contain at least one dot (unless it's localhost or similar)
+    // Allow alphanumeric, dots, hyphens
+    if host.contains(' ') || host.contains("://") {
+        return Err((Status::BadRequest, Json(serde_json::json!({
+            "error": "DNS hostname must be a valid domain (e.g., 'example.com' or 'dns://example.com')",
+            "code": "VALIDATION_ERROR"
+        }))));
+    }
+    Ok(())
 }
 
 /// Validate TCP address format: host:port (port must be 1-65535)

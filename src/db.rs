@@ -94,8 +94,12 @@ impl Db {
         // Add group_name column to monitors (for organizing monitors into groups on status page)
         conn.execute_batch("ALTER TABLE monitors ADD COLUMN group_name TEXT;").ok();
 
-        // Add monitor_type column (http, tcp) — default 'http' for backward compat
+        // Add monitor_type column (http, tcp, dns) — default 'http' for backward compat
         conn.execute_batch("ALTER TABLE monitors ADD COLUMN monitor_type TEXT NOT NULL DEFAULT 'http';").ok();
+
+        // Add DNS check columns (for monitor_type='dns')
+        conn.execute_batch("ALTER TABLE monitors ADD COLUMN dns_record_type TEXT NOT NULL DEFAULT 'A';").ok();
+        conn.execute_batch("ALTER TABLE monitors ADD COLUMN dns_expected TEXT;").ok();
 
         // Settings table (key-value store for service-level config)
         conn.execute_batch("

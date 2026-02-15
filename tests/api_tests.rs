@@ -2836,3 +2836,302 @@ fn test_tcp_url_validation_rejects_http_url() {
     // Let's verify it doesn't crash at minimum.
     assert!(resp.status() == Status::Ok || resp.status() == Status::BadRequest);
 }
+
+// ── DNS Monitor Tests ──
+
+#[test]
+fn test_create_dns_monitor() {
+    let client = test_client();
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "DNS Check", "url": "example.com", "monitor_type": "dns"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["monitor"]["monitor_type"], "dns");
+    assert_eq!(body["monitor"]["url"], "example.com");
+    assert_eq!(body["monitor"]["name"], "DNS Check");
+    assert_eq!(body["monitor"]["dns_record_type"], "A");
+    assert!(body["monitor"]["dns_expected"].is_null());
+    assert!(!body["manage_key"].as_str().unwrap().is_empty());
+}
+
+#[test]
+fn test_create_dns_monitor_with_prefix() {
+    let client = test_client();
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "DNS Prefixed", "url": "dns://example.com", "monitor_type": "dns"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["monitor"]["monitor_type"], "dns");
+    assert_eq!(body["monitor"]["url"], "dns://example.com");
+}
+
+#[test]
+fn test_create_dns_monitor_with_record_type() {
+    let client = test_client();
+
+    // MX record
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "MX Check", "url": "example.com", "monitor_type": "dns", "dns_record_type": "MX"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["monitor"]["dns_record_type"], "MX");
+
+    // AAAA record
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "AAAA Check", "url": "example.com", "monitor_type": "dns", "dns_record_type": "AAAA"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["monitor"]["dns_record_type"], "AAAA");
+
+    // TXT record
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "TXT Check", "url": "example.com", "monitor_type": "dns", "dns_record_type": "TXT"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["monitor"]["dns_record_type"], "TXT");
+}
+
+#[test]
+fn test_create_dns_monitor_with_expected_value() {
+    let client = test_client();
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "DNS Expected", "url": "example.com", "monitor_type": "dns", "dns_record_type": "A", "dns_expected": "93.184.216.34"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["monitor"]["dns_record_type"], "A");
+    assert_eq!(body["monitor"]["dns_expected"], "93.184.216.34");
+}
+
+#[test]
+fn test_create_dns_monitor_invalid_record_type() {
+    let client = test_client();
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Bad RT", "url": "example.com", "monitor_type": "dns", "dns_record_type": "INVALID"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::BadRequest);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert!(body["error"].as_str().unwrap().contains("dns_record_type"));
+}
+
+#[test]
+fn test_create_dns_monitor_invalid_hostname() {
+    let client = test_client();
+
+    // Empty hostname
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Bad DNS", "url": "", "monitor_type": "dns"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::BadRequest);
+
+    // Hostname with spaces
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Bad DNS", "url": "example .com", "monitor_type": "dns"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::BadRequest);
+
+    // Hostname with scheme (http:// not allowed for DNS)
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Bad DNS", "url": "http://example.com", "monitor_type": "dns"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::BadRequest);
+}
+
+#[test]
+fn test_dns_monitor_case_insensitive_record_type() {
+    let client = test_client();
+    // Lowercase should be accepted and stored as uppercase
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Lowercase RT", "url": "example.com", "monitor_type": "dns", "dns_record_type": "mx"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["monitor"]["dns_record_type"], "MX");
+}
+
+#[test]
+fn test_dns_monitor_in_list() {
+    let client = test_client();
+
+    // Create a public DNS monitor
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Public DNS", "url": "example.com", "monitor_type": "dns", "dns_record_type": "A", "dns_expected": "1.2.3.4", "is_public": true}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+
+    // List public monitors — should include DNS monitor with DNS fields
+    let resp = client.get("/api/v1/monitors").dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert_eq!(body.len(), 1);
+    assert_eq!(body[0]["monitor_type"], "dns");
+    assert_eq!(body[0]["dns_record_type"], "A");
+    assert_eq!(body[0]["dns_expected"], "1.2.3.4");
+}
+
+#[test]
+fn test_update_dns_monitor_fields() {
+    let client = test_client();
+
+    // Create DNS monitor
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Updatable DNS", "url": "example.com", "monitor_type": "dns", "dns_record_type": "A"}"#)
+        .dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let id = body["monitor"]["id"].as_str().unwrap();
+    let key = body["manage_key"].as_str().unwrap();
+
+    // Update record type and add expected value
+    let resp = client.patch(format!("/api/v1/monitors/{}", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"dns_record_type": "MX", "dns_expected": "10 mail.example.com"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+
+    // Verify changes
+    let resp = client.get(format!("/api/v1/monitors/{}", id)).dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["dns_record_type"], "MX");
+    assert_eq!(body["dns_expected"], "10 mail.example.com");
+}
+
+#[test]
+fn test_update_dns_monitor_invalid_record_type() {
+    let client = test_client();
+
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "DNS Update Invalid", "url": "example.com", "monitor_type": "dns"}"#)
+        .dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let id = body["monitor"]["id"].as_str().unwrap();
+    let key = body["manage_key"].as_str().unwrap();
+
+    let resp = client.patch(format!("/api/v1/monitors/{}", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"dns_record_type": "BOGUS"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::BadRequest);
+}
+
+#[test]
+fn test_bulk_create_dns_monitors() {
+    let client = test_client();
+    let resp = client.post("/api/v1/monitors/bulk")
+        .header(ContentType::JSON)
+        .body(r#"{"monitors": [
+            {"name": "DNS One", "url": "example.com", "monitor_type": "dns", "dns_record_type": "A"},
+            {"name": "DNS Two", "url": "example.org", "monitor_type": "dns", "dns_record_type": "MX", "dns_expected": "10 mail.example.org"},
+            {"name": "DNS Bad RT", "url": "example.net", "monitor_type": "dns", "dns_record_type": "INVALID"}
+        ]}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["succeeded"], 2);
+    assert_eq!(body["failed"], 1);
+
+    let created = body["created"].as_array().unwrap();
+    assert_eq!(created[0]["monitor"]["monitor_type"], "dns");
+    assert_eq!(created[0]["monitor"]["dns_record_type"], "A");
+    assert_eq!(created[1]["monitor"]["dns_record_type"], "MX");
+    assert_eq!(created[1]["monitor"]["dns_expected"], "10 mail.example.org");
+}
+
+#[test]
+fn test_export_dns_monitor() {
+    let client = test_client();
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Export DNS", "url": "example.com", "monitor_type": "dns", "dns_record_type": "TXT", "dns_expected": "v=spf1 include:example.com ~all"}"#)
+        .dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let id = body["monitor"]["id"].as_str().unwrap();
+    let key = body["manage_key"].as_str().unwrap();
+
+    let resp = client.get(format!("/api/v1/monitors/{}/export", id))
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let exported: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(exported["monitor_type"], "dns");
+    assert_eq!(exported["dns_record_type"], "TXT");
+    assert_eq!(exported["dns_expected"], "v=spf1 include:example.com ~all");
+}
+
+#[test]
+fn test_all_valid_dns_record_types() {
+    let client = test_client();
+    let valid_types = ["A", "AAAA", "CNAME", "MX", "TXT", "NS", "SOA", "PTR", "SRV", "CAA"];
+    for rt in &valid_types {
+        let resp = client.post("/api/v1/monitors")
+            .header(ContentType::JSON)
+            .body(format!(r#"{{"name": "DNS {}", "url": "example.com", "monitor_type": "dns", "dns_record_type": "{}"}}"#, rt, rt))
+            .dispatch();
+        assert_eq!(resp.status(), Status::Ok, "Record type {} should be valid", rt);
+        let body: serde_json::Value = resp.into_json().unwrap();
+        assert_eq!(body["monitor"]["dns_record_type"], *rt);
+    }
+}
+
+#[test]
+fn test_dns_expected_empty_string_treated_as_null() {
+    let client = test_client();
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "DNS Empty Expected", "url": "example.com", "monitor_type": "dns", "dns_expected": ""}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    // Empty string should be treated as null (no expected value)
+    assert!(body["monitor"]["dns_expected"].is_null());
+}
+
+#[test]
+fn test_switch_http_to_dns() {
+    let client = test_client();
+
+    // Create HTTP monitor
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "HTTP to DNS", "url": "https://example.com"}"#)
+        .dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let id = body["monitor"]["id"].as_str().unwrap();
+    let key = body["manage_key"].as_str().unwrap();
+    assert_eq!(body["monitor"]["monitor_type"], "http");
+
+    // Update to DNS
+    let resp = client.patch(format!("/api/v1/monitors/{}", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"monitor_type": "dns", "url": "example.com", "dns_record_type": "A", "dns_expected": "93.184.216.34"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+
+    // Verify type changed
+    let resp = client.get(format!("/api/v1/monitors/{}", id)).dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["monitor_type"], "dns");
+    assert_eq!(body["dns_record_type"], "A");
+    assert_eq!(body["dns_expected"], "93.184.216.34");
+}
