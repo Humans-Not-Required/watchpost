@@ -73,7 +73,7 @@
 6. ~~**Frontend alert rules UI**~~ ✅ Done (2026-02-15) — AlertRulesManager component: create/edit/delete alert rules, alert log table with type badges. New "Alerts" tab on monitor detail (manage key required).
 
 ### Future Improvements (if revisiting)
-- Frontend status page manager (status pages have API but no frontend CRUD beyond basic list)
+- ~~Frontend status page manager~~ ✅ Done (2026-02-15) — Edit page settings, delete with confirmation, add/remove monitors via searchable picker, manage key input with localStorage persistence. Full CRUD now available through frontend.
 - Webhook delivery retry with exponential backoff (currently fire-and-forget, 5s timeout)
 - Monitor dependency chains (alert suppression when upstream is down)
 - Probe agent health tracking (stale locations auto-disabled)
