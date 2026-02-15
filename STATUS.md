@@ -69,7 +69,8 @@
 2. ~~**Multi-region consensus**~~ ✅ Done (2026-02-15) — Configurable consensus_threshold, automatic evaluation after probes and local checks, incident lifecycle integration, consensus API endpoint. 15 new tests (208 total).
 3. ~~**Multi-region frontend**~~ ✅ Done (2026-02-15) — Locations management page (admin CRUD with probe key reveal), Regions tab on MonitorDetail (per-location status cards, consensus summary with threshold/status bar/location breakdown), consensus_threshold field on Create/Edit forms.
 4. ~~**Custom domain support**~~ ✅ Done (2026-02-15) — Status Pages: named monitor collections with branding and custom domains. 28 new tests (236 total).
-5. **Alerting rules / escalation** — Progressive notification policies
+5. ~~**Alerting rules / escalation**~~ ✅ Done (2026-02-15) — Alert rules per monitor (repeat notifications every N minutes, max repeats cap, escalation if unacknowledged). Alert audit log with filters. Checker integration for incident.reminder and incident.escalated events. 18 new tests (254 total).
+6. **Frontend alert rules UI** — Manage alert rules from the dashboard
 
 ### ⚠️ Jordan's Questions
 - ~~**Task ef781225:** Jordan asked "What is this about?"~~ — Stale, no further context. Board manager should close if no update.
