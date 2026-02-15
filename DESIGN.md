@@ -15,8 +15,9 @@ A **monitor** is a check definition: what to probe, how often, and what counts a
 |-------|------|-------------|
 | id | UUID | Unique identifier |
 | name | String | Human-readable label |
-| url | String | Target URL to check |
-| method | Enum | GET, HEAD, POST |
+| url | String | Target to check (HTTP: URL, TCP: host:port) |
+| monitor_type | Enum | http (default), tcp |
+| method | Enum | GET, HEAD, POST (HTTP only) |
 | interval_seconds | u32 | Check frequency (min: 600, default: 600) |
 | timeout_ms | u32 | Request timeout (default: 10000) |
 | expected_status | u16 | Expected HTTP status (default: 200) |
@@ -197,8 +198,9 @@ Heartbeats are the main storage cost. Default retention: 90 days. Older heartbea
 - Docker build
 
 **Out (future):**
-- Email notifications (need SMTP config)
-- TCP/UDP/DNS checks
+- ~~Email notifications (need SMTP config)~~ ✅ Shipped
+- ~~TCP checks~~ ✅ Shipped (monitor_type: tcp)
+- UDP/DNS checks
 - Multi-region checking
 - Maintenance windows
 - Custom incident severity
