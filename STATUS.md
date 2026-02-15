@@ -72,6 +72,13 @@
 5. ~~**Alerting rules / escalation**~~ ✅ Done (2026-02-15) — Alert rules per monitor (repeat notifications every N minutes, max repeats cap, escalation if unacknowledged). Alert audit log with filters. Checker integration for incident.reminder and incident.escalated events. 18 new tests (254 total).
 6. ~~**Frontend alert rules UI**~~ ✅ Done (2026-02-15) — AlertRulesManager component: create/edit/delete alert rules, alert log table with type badges. New "Alerts" tab on monitor detail (manage key required).
 
+### Future Improvements (if revisiting)
+- Frontend status page manager (status pages have API but no frontend CRUD beyond basic list)
+- Webhook delivery retry with exponential backoff (currently fire-and-forget, 5s timeout)
+- Monitor dependency chains (alert suppression when upstream is down)
+- Probe agent health tracking (stale locations auto-disabled)
+- Dark/light theme toggle
+
 ### ⚠️ Jordan's Questions
 - ~~**Task ef781225:** Jordan asked "What is this about?"~~ — Stale, no further context. Board manager should close if no update.
 - ~~**Task b446f607 (Follow 301 redirects):** Completed (commit a7fc268). Monitors follow redirects by default.~~
