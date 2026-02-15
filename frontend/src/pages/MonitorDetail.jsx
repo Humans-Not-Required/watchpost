@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { getMonitor, getHeartbeats, getUptime, getIncidents, getMonitorSla, pauseMonitor, resumeMonitor, deleteMonitor, updateMonitor, acknowledgeIncident, getNotifications, createNotification, deleteNotification, updateNotification, getMaintenanceWindows, createMaintenanceWindow, deleteMaintenanceWindow, getIncidentNotes, createIncidentNote, getIncident, getMonitorUptimeHistory } from '../api'
+import { getMonitor, getHeartbeats, getUptime, getIncidents, getMonitorSla, pauseMonitor, resumeMonitor, deleteMonitor, updateMonitor, acknowledgeIncident, getNotifications, createNotification, deleteNotification, updateNotification, getMaintenanceWindows, createMaintenanceWindow, deleteMaintenanceWindow, getIncidentNotes, createIncidentNote, getIncident, getMonitorUptimeHistory, getMonitorLocations, getMonitorConsensus } from '../api'
 import { IconTrendUp, IconCheckCircle, IconAlertCircle, IconBell, IconMail, IconPause, IconPlay, IconX, IconWrench, IconCalendar, IconKey, IconEdit, IconSave, IconLink, IconLock, IconGlobe, IconClipboard, IconTrash, IconDashboard, IconHeart, IconZap, IconTag, IconFileText, IconClock, IconPlus } from '../Icons'
 
 function formatTime(ts) {
@@ -1187,6 +1187,7 @@ function EditMonitorForm({ monitor, manageKey, onSaved, onCancel }) {
     dns_expected: monitor.dns_expected || '',
     sla_target: monitor.sla_target ?? '',
     sla_period_days: monitor.sla_period_days ?? 30,
+    consensus_threshold: monitor.consensus_threshold ?? '',
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -1236,6 +1237,10 @@ function EditMonitorForm({ monitor, manageKey, onSaved, onCancel }) {
       const newSlaPeriod = form.sla_target === '' ? null : Number(form.sla_period_days);
       const oldSlaPeriod = monitor.sla_period_days ?? null;
       if (newSlaPeriod !== oldSlaPeriod) patch.sla_period_days = newSlaPeriod;
+      // Consensus threshold
+      const newConsensus = form.consensus_threshold === '' ? null : Number(form.consensus_threshold);
+      const oldConsensus = monitor.consensus_threshold ?? null;
+      if (newConsensus !== oldConsensus) patch.consensus_threshold = newConsensus;
 
       if (Object.keys(patch).length === 0) {
         onCancel();
@@ -1350,6 +1355,12 @@ function EditMonitorForm({ monitor, manageKey, onSaved, onCancel }) {
           <input className="form-input" type="number" min="1" max="365" value={form.sla_period_days} onChange={e => set('sla_period_days', e.target.value)} disabled={form.sla_target === ''} />
           <div className="form-help">Rolling window for SLA calculation</div>
         </div>
+      </div>
+
+      <div className="form-group">
+        <label className="form-label">Consensus Threshold</label>
+        <input className="form-input" type="number" min="1" max="100" placeholder="Disabled" value={form.consensus_threshold} onChange={e => set('consensus_threshold', e.target.value)} />
+        <div className="form-help">Number of locations that must report down before creating an incident. Empty = disabled (local checker only).</div>
       </div>
 
       {monitor.monitor_type === 'http' && (
@@ -1565,6 +1576,188 @@ function SlaCard({ sla }) {
             transition: 'width 0.3s ease',
           }} />
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Multi-Region Status Panel ──
+
+function MultiRegionPanel({ monitorId }) {
+  const [locationStatuses, setLocationStatuses] = useState([]);
+  const [consensus, setConsensus] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let mounted = true;
+    const load = async () => {
+      try {
+        const [locs, cons] = await Promise.all([
+          getMonitorLocations(monitorId),
+          getMonitorConsensus(monitorId).catch(() => null),
+        ]);
+        if (mounted) {
+          setLocationStatuses(locs);
+          setConsensus(cons);
+          setLoading(false);
+        }
+      } catch {
+        if (mounted) setLoading(false);
+      }
+    };
+    load();
+    const interval = setInterval(load, 30000);
+    return () => { mounted = false; clearInterval(interval); };
+  }, [monitorId]);
+
+  if (loading) {
+    return <div style={{ color: 'var(--text-muted)', padding: '16px 0' }}>Loading region data...</div>;
+  }
+
+  if (locationStatuses.length === 0 && !consensus) {
+    return (
+      <div style={{ padding: '24px 0', textAlign: 'center' }}>
+        <IconGlobe size={36} style={{ color: 'var(--text-muted)', marginBottom: 8 }} />
+        <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>No remote check locations reporting</div>
+        <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: 4 }}>
+          Register locations and deploy probe agents to enable multi-region monitoring
+        </div>
+      </div>
+    );
+  }
+
+  const statusColor = (status) => {
+    switch (status) {
+      case 'up': return 'var(--success)';
+      case 'down': return 'var(--danger)';
+      case 'degraded': return 'var(--warning, #ffa502)';
+      default: return 'var(--text-muted)';
+    }
+  };
+
+  return (
+    <div>
+      {/* Consensus summary */}
+      {consensus && (
+        <div className="card" style={{ marginBottom: 16, borderColor: statusColor(consensus.effective_status) + '44' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <IconGlobe size={16} />
+              <span style={{ fontWeight: 600, fontSize: '0.95rem' }}>Consensus Status</span>
+            </div>
+            <span style={{
+              padding: '3px 12px',
+              borderRadius: 12,
+              fontSize: '0.8rem',
+              fontWeight: 600,
+              background: statusColor(consensus.effective_status) + '22',
+              color: statusColor(consensus.effective_status),
+              textTransform: 'uppercase',
+            }}>
+              {consensus.effective_status}
+            </span>
+          </div>
+
+          {/* Threshold indicator */}
+          <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', marginBottom: 16 }}>
+            <div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Threshold</div>
+              <div style={{ fontSize: '1.1rem', fontWeight: 600 }}>{consensus.consensus_threshold} locations</div>
+            </div>
+            <div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Reporting</div>
+              <div style={{ fontSize: '1.1rem', fontWeight: 600 }}>{consensus.total_locations}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Up</div>
+              <div style={{ fontSize: '1.1rem', fontWeight: 600, color: 'var(--success)' }}>{consensus.up_count}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Down</div>
+              <div style={{ fontSize: '1.1rem', fontWeight: 600, color: consensus.down_count > 0 ? 'var(--danger)' : 'var(--text-primary)' }}>{consensus.down_count}</div>
+            </div>
+            {consensus.degraded_count > 0 && (
+              <div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Degraded</div>
+                <div style={{ fontSize: '1.1rem', fontWeight: 600, color: 'var(--warning, #ffa502)' }}>{consensus.degraded_count}</div>
+              </div>
+            )}
+            {consensus.unknown_count > 0 && (
+              <div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Unknown</div>
+                <div style={{ fontSize: '1.1rem', fontWeight: 600, color: 'var(--text-muted)' }}>{consensus.unknown_count}</div>
+              </div>
+            )}
+          </div>
+
+          {/* Visual consensus bar */}
+          <div style={{ marginBottom: 8 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 4 }}>
+              <span>Location Status</span>
+              <span>{consensus.down_count >= consensus.consensus_threshold ? `≥${consensus.consensus_threshold} down → incident` : `${consensus.down_count}/${consensus.consensus_threshold} threshold`}</span>
+            </div>
+            <div style={{ display: 'flex', gap: 3, height: 8, borderRadius: 4, overflow: 'hidden' }}>
+              {consensus.locations.map((loc, i) => (
+                <div
+                  key={i}
+                  style={{
+                    flex: 1,
+                    background: statusColor(loc.last_status),
+                    borderRadius: i === 0 ? '4px 0 0 4px' : i === consensus.locations.length - 1 ? '0 4px 4px 0' : 0,
+                  }}
+                  title={`${loc.location_name}: ${loc.last_status} (${loc.last_response_time_ms}ms)`}
+                />
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Per-location status cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 8 }}>
+        {(consensus ? consensus.locations : locationStatuses).map((loc) => {
+          const locId = loc.location_id || loc.location_name;
+          return (
+            <div key={locId} className="card" style={{ padding: 14, marginBottom: 0 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <IconGlobe size={13} style={{ color: 'var(--text-muted)' }} />
+                  <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>{loc.location_name}</span>
+                </div>
+                <span style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  padding: '2px 8px',
+                  borderRadius: 10,
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  background: statusColor(loc.last_status) + '22',
+                  color: statusColor(loc.last_status),
+                }}>
+                  <span style={{
+                    width: 6,
+                    height: 6,
+                    borderRadius: '50%',
+                    background: statusColor(loc.last_status),
+                  }} />
+                  {loc.last_status}
+                </span>
+              </div>
+              {loc.region && (
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 6 }}>
+                  {loc.region}
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: 16, fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                <span>{loc.last_response_time_ms}ms</span>
+                <span title={formatTime(loc.last_checked_at)}>
+                  <IconClock size={11} style={{ marginRight: 3 }} />{relativeTime(loc.last_checked_at)}
+                </span>
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -1820,6 +2013,12 @@ export default function MonitorDetail({ id, manageKey: urlKey, onBack }) {
               <span className="monitor-stat-value">{monitor.sla_target}% / {monitor.sla_period_days || 30}d</span>
             </div>
           )}
+          {monitor.consensus_threshold != null && (
+            <div className="monitor-stat">
+              <span className="monitor-stat-label">Consensus</span>
+              <span className="monitor-stat-value">{monitor.consensus_threshold} locs</span>
+            </div>
+          )}
           <div className="monitor-stat">
             <span className="monitor-stat-label">Last Check</span>
             <span className="monitor-stat-value">{relativeTime(monitor.last_checked_at)}</span>
@@ -1922,13 +2121,13 @@ export default function MonitorDetail({ id, manageKey: urlKey, onBack }) {
 
       {/* Tabs */}
       <div style={{ display: 'flex', gap: 4, margin: '24px 0 16px', borderBottom: '1px solid var(--border)', paddingBottom: 8, flexWrap: 'wrap' }}>
-        {['overview', 'heartbeats', 'incidents', 'maintenance', 'badges', ...(manageKey ? ['notifications'] : [])].map((t) => (
+        {['overview', 'regions', 'heartbeats', 'incidents', 'maintenance', 'badges', ...(manageKey ? ['notifications'] : [])].map((t) => (
           <button
             key={t}
             className={`nav-btn ${tab === t ? 'active' : ''}`}
             onClick={() => setTab(t)}
           >
-            {t === 'overview' ? <><IconDashboard size={13} /> Overview</> : t === 'heartbeats' ? <><IconHeart size={13} /> Heartbeats</> : t === 'incidents' ? <><IconZap size={13} /> Incidents ({incidents.length})</> : t === 'maintenance' ? <><IconWrench size={13} /> Maintenance</> : t === 'badges' ? <><IconTag size={13} /> Badges</> : <><IconBell size={13} /> Notifications</>}
+            {t === 'overview' ? <><IconDashboard size={13} /> Overview</> : t === 'regions' ? <><IconGlobe size={13} /> Regions</> : t === 'heartbeats' ? <><IconHeart size={13} /> Heartbeats</> : t === 'incidents' ? <><IconZap size={13} /> Incidents ({incidents.length})</> : t === 'maintenance' ? <><IconWrench size={13} /> Maintenance</> : t === 'badges' ? <><IconTag size={13} /> Badges</> : <><IconBell size={13} /> Notifications</>}
           </button>
         ))}
       </div>
@@ -1946,6 +2145,8 @@ export default function MonitorDetail({ id, manageKey: urlKey, onBack }) {
           )}
         </div>
       )}
+
+      {tab === 'regions' && <MultiRegionPanel monitorId={id} />}
 
       {tab === 'heartbeats' && <HeartbeatTable heartbeats={heartbeats} />}
 

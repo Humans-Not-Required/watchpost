@@ -194,3 +194,39 @@ export async function updateSettings(data, adminKey) {
     headers: { Authorization: `Bearer ${adminKey}` },
   });
 }
+
+// ── Multi-Region Locations ──
+
+export async function getLocations() {
+  return request('/locations');
+}
+
+export async function createLocation(data, adminKey) {
+  return request('/locations', {
+    method: 'POST',
+    body: JSON.stringify(data),
+    headers: { Authorization: `Bearer ${adminKey}` },
+  });
+}
+
+export async function deleteLocation(id, adminKey) {
+  return request(`/locations/${id}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${adminKey}` },
+  });
+}
+
+export async function getMonitorLocations(monitorId) {
+  return request(`/monitors/${monitorId}/locations`);
+}
+
+export async function getMonitorConsensus(monitorId) {
+  const url = `${BASE}/monitors/${monitorId}/consensus`;
+  const res = await fetch(url);
+  if (res.status === 400 || res.status === 404) return null; // not configured
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(body.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+}

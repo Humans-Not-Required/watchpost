@@ -21,6 +21,7 @@ export default function CreateMonitor({ onCreated, onCancel }) {
     group_name: '',
     dns_record_type: 'A',
     dns_expected: '',
+    consensus_threshold: '',
   });
   const [copied, setCopied] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -72,6 +73,9 @@ export default function CreateMonitor({ onCreated, onCancel }) {
       }
       if (form.group_name.trim()) {
         payload.group_name = form.group_name.trim();
+      }
+      if (form.consensus_threshold !== '') {
+        payload.consensus_threshold = parseInt(form.consensus_threshold, 10);
       }
 
       const data = await createMonitor(payload);
@@ -442,6 +446,20 @@ export default function CreateMonitor({ onCreated, onCancel }) {
               />
               <div className="form-help">Rolling evaluation window (default: 30 days)</div>
             </div>
+          </div>
+
+          <div className="form-group">
+            <label className="form-label">Consensus Threshold (optional)</label>
+            <input
+              className="form-input"
+              type="number"
+              min="1"
+              max="100"
+              placeholder="Disabled"
+              value={form.consensus_threshold}
+              onChange={(e) => update('consensus_threshold', e.target.value)}
+            />
+            <div className="form-help">Number of remote locations that must report down before creating an incident. Requires check locations to be configured. Empty = disabled.</div>
           </div>
 
           <div className="form-row">

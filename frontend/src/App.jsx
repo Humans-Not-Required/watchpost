@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { IconDashboard, IconPackage } from './Icons'
+import { IconDashboard, IconPackage, IconGlobe } from './Icons'
 import Dashboard from './pages/Dashboard'
 import StatusPage from './pages/StatusPage'
 import MonitorDetail from './pages/MonitorDetail'
 import CreateMonitor from './pages/CreateMonitor'
 import BulkImport from './pages/BulkImport'
+import Locations from './pages/Locations'
 
 function parseRoute() {
   const hash = window.location.hash.slice(1) || '/';
@@ -22,6 +23,7 @@ function parseRoute() {
   if (path === '/new') return { page: 'create', key };
   if (path === '/import') return { page: 'import', key };
   if (path === '/status') return { page: 'status', key };
+  if (path === '/locations') return { page: 'locations', key };
   return { page: 'dashboard', key };
 }
 
@@ -100,6 +102,12 @@ export default function App() {
             >
               <IconPackage size={14} /> Bulk Import
             </button>
+            <button
+              className={`nav-btn ${route.page === 'locations' ? 'active' : ''}`}
+              onClick={() => navigate('/locations')}
+            >
+              <IconGlobe size={14} /> Locations
+            </button>
           </nav>
         </div>
       </header>
@@ -130,6 +138,7 @@ export default function App() {
             onCancel={() => navigate('/')}
           />
         )}
+        {route.page === 'locations' && <Locations />}
       </main>
       <footer style={{ textAlign: 'center', padding: '12px 16px', fontSize: '0.7rem', color: '#475569' }}>
         Made for AI, by AI.{' '}
