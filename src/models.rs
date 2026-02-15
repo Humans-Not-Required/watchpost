@@ -15,6 +15,7 @@ pub struct Monitor {
     pub id: String,
     pub name: String,
     pub url: String,
+    pub monitor_type: String,
     pub method: String,
     pub interval_seconds: u32,
     pub timeout_ms: u32,
@@ -43,6 +44,8 @@ pub struct Monitor {
 pub struct CreateMonitor {
     pub name: String,
     pub url: String,
+    #[serde(default = "default_monitor_type")]
+    pub monitor_type: Option<String>,
     #[serde(default = "default_method")]
     pub method: String,
     #[serde(default = "default_interval")]
@@ -65,6 +68,7 @@ pub struct CreateMonitor {
 }
 
 fn default_follow_redirects() -> Option<bool> { Some(true) }
+fn default_monitor_type() -> Option<String> { Some("http".into()) }
 fn default_method() -> String { "GET".into() }
 fn default_interval() -> Option<u32> { Some(600) }
 fn default_timeout() -> Option<u32> { Some(10000) }
@@ -74,6 +78,7 @@ fn default_status() -> Option<u16> { Some(200) }
 pub struct UpdateMonitor {
     pub name: Option<String>,
     pub url: Option<String>,
+    pub monitor_type: Option<String>,
     pub method: Option<String>,
     pub interval_seconds: Option<u32>,
     pub timeout_ms: Option<u32>,
@@ -282,6 +287,7 @@ pub struct SlowMonitor {
 pub struct ExportedMonitor {
     pub name: String,
     pub url: String,
+    pub monitor_type: String,
     pub method: String,
     pub interval_seconds: u32,
     pub timeout_ms: u32,

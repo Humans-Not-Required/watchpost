@@ -88,11 +88,25 @@ pub fn create_monitor(
             "error": "URL is required", "code": "VALIDATION_ERROR"
         }))));
     }
-    let url_trimmed = data.url.trim().to_lowercase();
-    if !url_trimmed.starts_with("http://") && !url_trimmed.starts_with("https://") {
+
+    let monitor_type = data.monitor_type.as_deref().unwrap_or("http").to_lowercase();
+    if !["http", "tcp"].contains(&monitor_type.as_str()) {
         return Err((Status::BadRequest, Json(serde_json::json!({
-            "error": "URL must start with http:// or https://", "code": "VALIDATION_ERROR"
+            "error": "monitor_type must be 'http' or 'tcp'", "code": "VALIDATION_ERROR"
         }))));
+    }
+
+    if monitor_type == "tcp" {
+        // TCP monitors use host:port format
+        validate_tcp_address(data.url.trim())?;
+    } else {
+        // HTTP monitors require http:// or https://
+        let url_trimmed = data.url.trim().to_lowercase();
+        if !url_trimmed.starts_with("http://") && !url_trimmed.starts_with("https://") {
+            return Err((Status::BadRequest, Json(serde_json::json!({
+                "error": "URL must start with http:// or https://", "code": "VALIDATION_ERROR"
+            }))));
+        }
     }
     if let Some(ref headers) = data.headers {
         if !headers.is_object() {
@@ -102,7 +116,7 @@ pub fn create_monitor(
         }
     }
     let method = data.method.to_uppercase();
-    if !["GET", "HEAD", "POST"].contains(&method.as_str()) {
+    if monitor_type == "http" && !["GET", "HEAD", "POST"].contains(&method.as_str()) {
         return Err((Status::BadRequest, Json(serde_json::json!({
             "error": "Method must be GET, HEAD, or POST", "code": "VALIDATION_ERROR"
         }))));
@@ -124,12 +138,13 @@ pub fn create_monitor(
 
     let conn = db.conn.lock().unwrap();
     conn.execute(
-        "INSERT INTO monitors (id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, manage_key_hash, is_public, confirmation_threshold, tags, response_time_threshold_ms, follow_redirects, group_name)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+        "INSERT INTO monitors (id, name, url, monitor_type, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, manage_key_hash, is_public, confirmation_threshold, tags, response_time_threshold_ms, follow_redirects, group_name)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
         params![
             id,
             data.name.trim(),
             data.url.trim(),
+            monitor_type,
             method,
             interval,
             timeout,
@@ -210,10 +225,22 @@ pub fn bulk_create_monitors(
             errors.push(BulkError { index: idx, error: "URL is required".into(), code: "VALIDATION_ERROR".into() });
             continue;
         }
-        let url_trimmed = monitor_data.url.trim().to_lowercase();
-        if !url_trimmed.starts_with("http://") && !url_trimmed.starts_with("https://") {
-            errors.push(BulkError { index: idx, error: "URL must start with http:// or https://".into(), code: "VALIDATION_ERROR".into() });
+        let bulk_monitor_type = monitor_data.monitor_type.as_deref().unwrap_or("http").to_lowercase();
+        if !["http", "tcp"].contains(&bulk_monitor_type.as_str()) {
+            errors.push(BulkError { index: idx, error: "monitor_type must be 'http' or 'tcp'".into(), code: "VALIDATION_ERROR".into() });
             continue;
+        }
+        if bulk_monitor_type == "tcp" {
+            if validate_tcp_address(monitor_data.url.trim()).is_err() {
+                errors.push(BulkError { index: idx, error: "TCP address must be in host:port format".into(), code: "VALIDATION_ERROR".into() });
+                continue;
+            }
+        } else {
+            let url_trimmed = monitor_data.url.trim().to_lowercase();
+            if !url_trimmed.starts_with("http://") && !url_trimmed.starts_with("https://") {
+                errors.push(BulkError { index: idx, error: "URL must start with http:// or https://".into(), code: "VALIDATION_ERROR".into() });
+                continue;
+            }
         }
         if let Some(ref headers) = monitor_data.headers {
             if !headers.is_object() {
@@ -222,7 +249,7 @@ pub fn bulk_create_monitors(
             }
         }
         let method = monitor_data.method.to_uppercase();
-        if !["GET", "HEAD", "POST"].contains(&method.as_str()) {
+        if bulk_monitor_type == "http" && !["GET", "HEAD", "POST"].contains(&method.as_str()) {
             errors.push(BulkError { index: idx, error: "Method must be GET, HEAD, or POST".into(), code: "VALIDATION_ERROR".into() });
             continue;
         }
@@ -241,12 +268,13 @@ pub fn bulk_create_monitors(
         let group_name = monitor_data.group_name.as_deref().map(|g| g.trim()).filter(|g| !g.is_empty()).map(|g| g.to_string());
 
         match conn.execute(
-            "INSERT INTO monitors (id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, manage_key_hash, is_public, confirmation_threshold, tags, response_time_threshold_ms, follow_redirects, group_name)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+            "INSERT INTO monitors (id, name, url, monitor_type, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, manage_key_hash, is_public, confirmation_threshold, tags, response_time_threshold_ms, follow_redirects, group_name)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
             params![
                 id,
                 monitor_data.name.trim(),
                 monitor_data.url.trim(),
+                bulk_monitor_type,
                 method,
                 interval,
                 timeout,
@@ -310,6 +338,7 @@ pub fn export_monitor(
     Ok(Json(ExportedMonitor {
         name: monitor.name,
         url: monitor.url,
+        monitor_type: monitor.monitor_type,
         method: monitor.method,
         interval_seconds: monitor.interval_seconds,
         timeout_ms: monitor.timeout_ms,
@@ -332,7 +361,7 @@ pub fn list_monitors(search: Option<&str>, status: Option<&str>, tag: Option<&st
     let conn = db.conn.lock().unwrap();
 
     let mut sql = String::from(
-        "SELECT id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, is_public, is_paused, current_status, last_checked_at, confirmation_threshold, created_at, updated_at, tags, response_time_threshold_ms, follow_redirects, group_name
+        "SELECT id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, is_public, is_paused, current_status, last_checked_at, confirmation_threshold, created_at, updated_at, tags, response_time_threshold_ms, follow_redirects, group_name, monitor_type
          FROM monitors WHERE is_public = 1"
     );
     let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
@@ -425,13 +454,35 @@ pub fn update_monitor(
         };
     }
 
+    // Validate monitor_type if provided
+    if let Some(ref mt) = data.monitor_type {
+        let mt_lower = mt.trim().to_lowercase();
+        if !["http", "tcp"].contains(&mt_lower.as_str()) {
+            return Err((Status::BadRequest, Json(serde_json::json!({
+                "error": "monitor_type must be 'http' or 'tcp'", "code": "VALIDATION_ERROR"
+            }))));
+        }
+    }
+
+    // Get current monitor type to determine URL validation
+    let current_type: String = conn.query_row(
+        "SELECT COALESCE(monitor_type, 'http') FROM monitors WHERE id = ?1",
+        params![id],
+        |row| row.get(0),
+    ).unwrap_or_else(|_| "http".to_string());
+    let effective_type = data.monitor_type.as_deref().unwrap_or(&current_type).to_lowercase();
+
     // Validate URL scheme if provided
     if let Some(ref url) = data.url {
-        let url_lower = url.trim().to_lowercase();
-        if !url_lower.starts_with("http://") && !url_lower.starts_with("https://") {
-            return Err((Status::BadRequest, Json(serde_json::json!({
-                "error": "URL must start with http:// or https://", "code": "VALIDATION_ERROR"
-            }))));
+        if effective_type == "tcp" {
+            validate_tcp_address(url.trim())?;
+        } else {
+            let url_lower = url.trim().to_lowercase();
+            if !url_lower.starts_with("http://") && !url_lower.starts_with("https://") {
+                return Err((Status::BadRequest, Json(serde_json::json!({
+                    "error": "URL must start with http:// or https://", "code": "VALIDATION_ERROR"
+                }))));
+            }
         }
     }
     // Validate headers is a JSON object if provided
@@ -450,6 +501,11 @@ pub fn update_monitor(
 
     add_update!(name, "name");
     add_update!(url, "url");
+    if let Some(ref mt) = data.monitor_type {
+        updates.push(format!("monitor_type = ?{}", values.len() + 1));
+        values.push(Box::new(mt.trim().to_lowercase()));
+        data.monitor_type = None; // consumed
+    }
     add_update!(method, "method");
     add_update!(interval_seconds, "interval_seconds");
     add_update!(timeout_ms, "timeout_ms");
@@ -1499,16 +1555,25 @@ GET /api/v1/monitors/:id/uptime-history?days=30 — Daily uptime percentages for
 - Read: no auth (use monitor UUID)
 - Write: manage_key via Bearer header, X-API-Key, or ?key= param
 
+## Monitor Types
+- http (default) — HTTP/HTTPS endpoint monitoring (GET, HEAD, POST)
+- tcp — TCP port connectivity check (connect to host:port)
+
+Set monitor_type on create: {"monitor_type": "tcp", "url": "db.example.com:5432", "name": "Database"}
+Default monitor_type is "http" if omitted.
+
 ## Validation
-- URL must start with http:// or https://
+- HTTP monitors: URL must start with http:// or https://
+- TCP monitors: URL must be host:port format (e.g., "example.com:443" or "tcp://example.com:443")
 - Headers must be a JSON object (not array or string)
 - interval_seconds: min 600 (10 minutes), default 600
 - timeout_ms: min 1000, max 60000, default 10000
 - confirmation_threshold: min 1, max 10, default 2
 - response_time_threshold_ms: min 100 (if set)
 
-## Monitor Methods
+## Monitor Methods (HTTP only)
 GET, HEAD, POST
+(TCP monitors ignore the method field)
 
 ## Redirect Handling
 By default, monitors follow HTTP redirects (301, 302, etc.) up to 10 hops.
@@ -2282,7 +2347,8 @@ const OPENAPI_JSON: &str = r##"{
           "id": { "type": "string", "format": "uuid" },
           "name": { "type": "string" },
           "url": { "type": "string" },
-          "method": { "type": "string", "enum": ["GET", "HEAD", "POST"] },
+          "monitor_type": { "type": "string", "enum": ["http", "tcp"], "description": "Monitor type: http for HTTP/HTTPS checks, tcp for TCP port connectivity checks" },
+          "method": { "type": "string", "enum": ["GET", "HEAD", "POST"], "description": "HTTP method (only applicable for http monitors)" },
           "interval_seconds": { "type": "integer", "minimum": 600 },
           "timeout_ms": { "type": "integer" },
           "expected_status": { "type": "integer" },
@@ -2306,8 +2372,9 @@ const OPENAPI_JSON: &str = r##"{
         "required": ["name", "url"],
         "properties": {
           "name": { "type": "string" },
-          "url": { "type": "string", "description": "Must start with http:// or https://" },
-          "method": { "type": "string", "enum": ["GET", "HEAD", "POST"], "default": "GET" },
+          "url": { "type": "string", "description": "HTTP: must start with http:// or https://. TCP: host:port format (e.g., 'example.com:443' or 'tcp://example.com:443')" },
+          "monitor_type": { "type": "string", "enum": ["http", "tcp"], "default": "http", "description": "Monitor type: http for HTTP/HTTPS endpoint checks, tcp for TCP port connectivity" },
+          "method": { "type": "string", "enum": ["GET", "HEAD", "POST"], "default": "GET", "description": "HTTP method (ignored for TCP monitors)" },
           "interval_seconds": { "type": "integer", "minimum": 600, "default": 600 },
           "timeout_ms": { "type": "integer", "default": 10000 },
           "expected_status": { "type": "integer", "default": 200 },
@@ -2352,6 +2419,7 @@ const OPENAPI_JSON: &str = r##"{
         "properties": {
           "name": { "type": "string" },
           "url": { "type": "string" },
+          "monitor_type": { "type": "string", "enum": ["http", "tcp"] },
           "method": { "type": "string" },
           "interval_seconds": { "type": "integer" },
           "timeout_ms": { "type": "integer" },
@@ -2692,7 +2760,7 @@ pub fn monitor_events<'a>(id: &'a str, broadcaster: &'a State<Arc<EventBroadcast
 
 fn get_monitor_from_db(conn: &rusqlite::Connection, id: &str) -> rusqlite::Result<Monitor> {
     conn.query_row(
-        "SELECT id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, is_public, is_paused, current_status, last_checked_at, confirmation_threshold, created_at, updated_at, tags, response_time_threshold_ms, follow_redirects, group_name
+        "SELECT id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, is_public, is_paused, current_status, last_checked_at, confirmation_threshold, created_at, updated_at, tags, response_time_threshold_ms, follow_redirects, group_name, monitor_type
          FROM monitors WHERE id = ?1",
         params![id],
         |row| Ok(row_to_monitor(row)),
@@ -2722,6 +2790,7 @@ fn row_to_monitor(row: &rusqlite::Row) -> Monitor {
         id: row.get(0).unwrap(),
         name: row.get(1).unwrap(),
         url: row.get(2).unwrap(),
+        monitor_type: row.get::<_, String>(20).unwrap_or_else(|_| "http".to_string()),
         method: row.get(3).unwrap(),
         interval_seconds: row.get(4).unwrap(),
         timeout_ms: row.get(5).unwrap(),
@@ -2753,6 +2822,28 @@ pub fn spa_fallback(_path: std::path::PathBuf) -> Option<(ContentType, Vec<u8>)>
     std::fs::read(&index_path)
         .ok()
         .map(|bytes| (ContentType::HTML, bytes))
+}
+
+/// Validate TCP address format: host:port (port must be 1-65535)
+fn validate_tcp_address(addr: &str) -> Result<(), (Status, Json<serde_json::Value>)> {
+    // Strip optional tcp:// prefix
+    let addr = addr.strip_prefix("tcp://").unwrap_or(addr);
+    let parts: Vec<&str> = addr.rsplitn(2, ':').collect();
+    if parts.len() != 2 || parts[1].is_empty() {
+        return Err((Status::BadRequest, Json(serde_json::json!({
+            "error": "TCP address must be in host:port format (e.g., 'example.com:443' or 'tcp://example.com:443')",
+            "code": "VALIDATION_ERROR"
+        }))));
+    }
+    match parts[0].parse::<u16>() {
+        Ok(0) => Err((Status::BadRequest, Json(serde_json::json!({
+            "error": "Port must be between 1 and 65535", "code": "VALIDATION_ERROR"
+        })))),
+        Ok(_) => Ok(()),
+        Err(_) => Err((Status::BadRequest, Json(serde_json::json!({
+            "error": "Invalid port number in TCP address", "code": "VALIDATION_ERROR"
+        })))),
+    }
 }
 
 fn verify_manage_key(conn: &rusqlite::Connection, monitor_id: &str, token: &str) -> Result<(), (Status, Json<serde_json::Value>)> {

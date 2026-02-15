@@ -63,7 +63,7 @@ pub async fn run_checker(db: Arc<Db>, broadcaster: Arc<EventBroadcaster>, shutdo
         let monitor = {
             let conn = db.conn.lock().unwrap();
             conn.query_row(
-                "SELECT id, name, url, method, timeout_ms, expected_status, body_contains, headers, confirmation_threshold, consecutive_failures, current_status, interval_seconds, response_time_threshold_ms, follow_redirects
+                "SELECT id, name, url, method, timeout_ms, expected_status, body_contains, headers, confirmation_threshold, consecutive_failures, current_status, interval_seconds, response_time_threshold_ms, follow_redirects, COALESCE(monitor_type, 'http')
                  FROM monitors
                  WHERE is_paused = 0
                    AND (last_checked_at IS NULL OR datetime(last_checked_at, '+' || interval_seconds || ' seconds') <= datetime('now'))
@@ -87,6 +87,7 @@ pub async fn run_checker(db: Arc<Db>, broadcaster: Arc<EventBroadcaster>, shutdo
                         interval_seconds: row.get(11)?,
                         response_time_threshold_ms: row.get(12)?,
                         follow_redirects: row.get::<_, i32>(13).unwrap_or(1) != 0,
+                        monitor_type: row.get(14)?,
                     })
                 },
             ).ok()
@@ -94,8 +95,12 @@ pub async fn run_checker(db: Arc<Db>, broadcaster: Arc<EventBroadcaster>, shutdo
 
         match monitor {
             Some(m) => {
-                let client = if m.follow_redirects { &client_follow } else { &client_no_follow };
-                run_check(client, &db, &broadcaster, &m).await;
+                if m.monitor_type == "tcp" {
+                    run_tcp_check(&db, &broadcaster, &m).await;
+                } else {
+                    let client = if m.follow_redirects { &client_follow } else { &client_no_follow };
+                    run_check(client, &db, &broadcaster, &m).await;
+                }
             }
             None => {
                 // No monitors due — sleep a bit before checking again
@@ -130,6 +135,7 @@ struct MonitorCheck {
     interval_seconds: u32,
     response_time_threshold_ms: Option<u32>,
     follow_redirects: bool,
+    monitor_type: String,
 }
 
 async fn run_check(client: &reqwest::Client, db: &Db, broadcaster: &EventBroadcaster, monitor: &MonitorCheck) {
@@ -392,6 +398,187 @@ async fn run_check(client: &reqwest::Client, db: &Db, broadcaster: &EventBroadca
             "status": status,
             "response_time_ms": elapsed_ms,
             "status_code": status_code,
+        }),
+    });
+}
+
+/// Run a TCP connectivity check (connect to host:port, measure latency)
+async fn run_tcp_check(db: &Db, broadcaster: &EventBroadcaster, monitor: &MonitorCheck) {
+    use tokio::net::TcpStream;
+
+    let start = std::time::Instant::now();
+
+    // Parse host:port, stripping optional tcp:// prefix
+    let addr_str = monitor.url.strip_prefix("tcp://").unwrap_or(&monitor.url);
+
+    let result = tokio::time::timeout(
+        Duration::from_millis(monitor.timeout_ms as u64),
+        TcpStream::connect(addr_str),
+    ).await;
+
+    let elapsed_ms = start.elapsed().as_millis() as u32;
+
+    let rt_threshold = monitor.response_time_threshold_ms;
+
+    let (status, error_message) = match result {
+        Ok(Ok(_stream)) => {
+            // Connection successful — check response time threshold
+            if let Some(threshold) = rt_threshold {
+                if elapsed_ms > threshold {
+                    ("degraded".to_string(), Some(format!("TCP connect time {}ms exceeds {}ms threshold", elapsed_ms, threshold)))
+                } else {
+                    ("up".to_string(), None)
+                }
+            } else {
+                ("up".to_string(), None)
+            }
+        }
+        Ok(Err(e)) => {
+            let msg = if e.kind() == std::io::ErrorKind::ConnectionRefused {
+                "Connection refused".to_string()
+            } else {
+                format!("TCP connect failed: {}", e)
+            };
+            ("down".to_string(), Some(msg))
+        }
+        Err(_) => {
+            ("down".to_string(), Some("TCP connect timed out".to_string()))
+        }
+    };
+
+    // Check maintenance window status BEFORE acquiring DB lock
+    let in_maintenance = is_in_maintenance(db, &monitor.id);
+
+    // Reuse the same incident lifecycle logic as HTTP checks
+    let webhook_event: Option<WebhookPayload>;
+
+    {
+        let conn = db.conn.lock().unwrap();
+        let hb_id = uuid::Uuid::new_v4().to_string();
+        let hb_seq: i64 = conn.query_row("SELECT COALESCE(MAX(seq), 0) + 1 FROM heartbeats", [], |r| r.get(0)).unwrap_or(1);
+        let _ = conn.execute(
+            "INSERT INTO heartbeats (id, monitor_id, status, response_time_ms, status_code, error_message, seq) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![hb_id, monitor.id, status, elapsed_ms, Option::<u16>::None, error_message, hb_seq],
+        );
+
+        let (new_consecutive, mut effective_status) = if status == "down" {
+            let new_count = monitor.consecutive_failures + 1;
+            if new_count >= monitor.confirmation_threshold {
+                (new_count, "down".to_string())
+            } else {
+                (new_count, monitor.current_status.clone())
+            }
+        } else {
+            (0, status.clone())
+        };
+
+        if in_maintenance && effective_status == "down" {
+            effective_status = "maintenance".to_string();
+        }
+
+        let _ = conn.execute(
+            "UPDATE monitors SET current_status = ?1, last_checked_at = datetime('now'), consecutive_failures = ?2, updated_at = datetime('now') WHERE id = ?3",
+            params![effective_status, new_consecutive, monitor.id],
+        );
+
+        let prev_status = &monitor.current_status;
+        let now_str = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+
+        if prev_status != "down" && prev_status != "maintenance" && effective_status == "down" {
+            let inc_id = uuid::Uuid::new_v4().to_string();
+            let cause = error_message.clone().unwrap_or_else(|| "Monitor is down".to_string());
+            let inc_seq: i64 = conn.query_row("SELECT COALESCE(MAX(seq), 0) + 1 FROM incidents", [], |r| r.get(0)).unwrap_or(1);
+            let _ = conn.execute(
+                "INSERT INTO incidents (id, monitor_id, cause, seq) VALUES (?1, ?2, ?3, ?4)",
+                params![inc_id, monitor.id, cause, inc_seq],
+            );
+            webhook_event = Some(WebhookPayload {
+                event: "incident.created".to_string(),
+                monitor: WebhookMonitor { id: monitor.id.clone(), name: monitor.name.clone(), url: monitor.url.clone(), current_status: "down".to_string() },
+                incident: Some(WebhookIncident { id: inc_id, cause, started_at: now_str.clone(), resolved_at: None }),
+                timestamp: now_str,
+            });
+        } else if effective_status == "maintenance" && prev_status != "maintenance" {
+            webhook_event = Some(WebhookPayload {
+                event: "maintenance.started".to_string(),
+                monitor: WebhookMonitor { id: monitor.id.clone(), name: monitor.name.clone(), url: monitor.url.clone(), current_status: "maintenance".to_string() },
+                incident: None,
+                timestamp: now_str,
+            });
+        } else if prev_status != "degraded" && effective_status == "degraded" {
+            webhook_event = Some(WebhookPayload {
+                event: "monitor.degraded".to_string(),
+                monitor: WebhookMonitor { id: monitor.id.clone(), name: monitor.name.clone(), url: monitor.url.clone(), current_status: "degraded".to_string() },
+                incident: None,
+                timestamp: now_str,
+            });
+        } else if prev_status == "degraded" && effective_status == "up" {
+            webhook_event = Some(WebhookPayload {
+                event: "monitor.recovered".to_string(),
+                monitor: WebhookMonitor { id: monitor.id.clone(), name: monitor.name.clone(), url: monitor.url.clone(), current_status: "up".to_string() },
+                incident: None,
+                timestamp: now_str,
+            });
+        } else if prev_status == "maintenance" && effective_status == "up" {
+            webhook_event = Some(WebhookPayload {
+                event: "maintenance.ended".to_string(),
+                monitor: WebhookMonitor { id: monitor.id.clone(), name: monitor.name.clone(), url: monitor.url.clone(), current_status: "up".to_string() },
+                incident: None,
+                timestamp: now_str,
+            });
+        } else if prev_status == "down" && effective_status != "down" && effective_status != "maintenance" {
+            let _ = conn.execute(
+                "UPDATE incidents SET resolved_at = datetime('now') WHERE monitor_id = ?1 AND resolved_at IS NULL",
+                params![monitor.id],
+            );
+            let incident_info: Option<(String, String, String)> = conn.query_row(
+                "SELECT id, cause, started_at FROM incidents WHERE monitor_id = ?1 ORDER BY started_at DESC LIMIT 1",
+                params![monitor.id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            ).ok();
+            webhook_event = Some(WebhookPayload {
+                event: "incident.resolved".to_string(),
+                monitor: WebhookMonitor { id: monitor.id.clone(), name: monitor.name.clone(), url: monitor.url.clone(), current_status: effective_status.clone() },
+                incident: incident_info.map(|(id, cause, started_at)| WebhookIncident { id, cause, started_at, resolved_at: Some(now_str.clone()) }),
+                timestamp: now_str,
+            });
+        } else {
+            webhook_event = None;
+        }
+    }
+
+    // Fire webhooks and SSE events outside the DB lock
+    if let Some(ref payload) = webhook_event {
+        broadcaster.send(SseEvent {
+            event_type: payload.event.clone(),
+            monitor_id: monitor.id.clone(),
+            data: serde_json::to_value(payload).unwrap_or_default(),
+        });
+
+        // TCP checks don't have an HTTP client, create one for webhooks if needed
+        let urls = notifications::get_webhook_urls(db, &monitor.id);
+        if !urls.is_empty() {
+            let wh_client = reqwest::Client::builder()
+                .timeout(Duration::from_secs(10))
+                .build()
+                .unwrap();
+            notifications::fire_webhooks(&wh_client, &urls, payload).await;
+        }
+
+        let emails = notifications::get_email_addresses(db, &monitor.id);
+        if !emails.is_empty() {
+            notifications::fire_emails(&emails, payload).await;
+        }
+    }
+
+    // Always emit check.completed SSE event (no status_code for TCP)
+    broadcaster.send(SseEvent {
+        event_type: "check.completed".to_string(),
+        monitor_id: monitor.id.clone(),
+        data: serde_json::json!({
+            "monitor_type": "tcp",
+            "status": status,
+            "response_time_ms": elapsed_ms,
         }),
     });
 }

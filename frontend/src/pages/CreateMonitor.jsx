@@ -6,6 +6,7 @@ export default function CreateMonitor({ onCreated, onCancel }) {
   const [form, setForm] = useState({
     name: '',
     url: '',
+    monitor_type: 'http',
     method: 'GET',
     interval_seconds: 600,
     timeout_ms: 10000,
@@ -33,14 +34,18 @@ export default function CreateMonitor({ onCreated, onCancel }) {
       const payload = {
         name: form.name.trim(),
         url: form.url.trim(),
-        method: form.method,
+        monitor_type: form.monitor_type,
         interval_seconds: parseInt(form.interval_seconds, 10),
         timeout_ms: parseInt(form.timeout_ms, 10),
-        expected_status: parseInt(form.expected_status, 10),
         is_public: form.is_public,
         confirmation_threshold: parseInt(form.confirmation_threshold, 10),
       };
-      if (form.body_contains.trim()) {
+      // HTTP-specific fields
+      if (form.monitor_type === 'http') {
+        payload.method = form.method;
+        payload.expected_status = parseInt(form.expected_status, 10);
+      }
+      if (form.body_contains.trim() && form.monitor_type === 'http') {
         payload.body_contains = form.body_contains.trim();
       }
       if (form.response_time_threshold_ms !== '') {
@@ -135,9 +140,15 @@ export default function CreateMonitor({ onCreated, onCancel }) {
               </span>
             </div>
             <div className="monitor-stat">
-              <span className="monitor-stat-label">Method</span>
-              <span className="monitor-stat-value">{result.monitor.method}</span>
+              <span className="monitor-stat-label">Type</span>
+              <span className="monitor-stat-value">{result.monitor.monitor_type === 'tcp' ? '🔌 TCP' : '🌐 HTTP'}</span>
             </div>
+            {result.monitor.monitor_type !== 'tcp' && (
+              <div className="monitor-stat">
+                <span className="monitor-stat-label">Method</span>
+                <span className="monitor-stat-value">{result.monitor.method}</span>
+              </div>
+            )}
             <div className="monitor-stat">
               <span className="monitor-stat-label">Interval</span>
               <span className="monitor-stat-value">{result.monitor.interval_seconds}s</span>
@@ -198,41 +209,73 @@ export default function CreateMonitor({ onCreated, onCancel }) {
           </div>
 
           <div className="form-group">
-            <label className="form-label">URL to Monitor *</label>
+            <label className="form-label">Monitor Type</label>
+            <div style={{ display: 'flex', gap: 0, borderRadius: 'var(--radius)', overflow: 'hidden', border: '1px solid var(--border)' }}>
+              {['http', 'tcp'].map(type_ => (
+                <button
+                  key={type_}
+                  type="button"
+                  onClick={() => update('monitor_type', type_)}
+                  style={{
+                    flex: 1, padding: '8px 16px', border: 'none', cursor: 'pointer',
+                    background: form.monitor_type === type_ ? 'var(--accent)' : 'var(--bg-secondary)',
+                    color: form.monitor_type === type_ ? '#fff' : 'var(--text-secondary)',
+                    fontWeight: form.monitor_type === type_ ? 600 : 400,
+                    fontSize: '0.9rem', transition: 'all 0.15s ease',
+                  }}
+                >
+                  {type_ === 'http' ? '🌐 HTTP' : '🔌 TCP'}
+                </button>
+              ))}
+            </div>
+            <div className="form-help">
+              {form.monitor_type === 'http'
+                ? 'Monitor HTTP/HTTPS endpoints with status codes, body matching, and response times'
+                : 'Monitor TCP port connectivity (databases, Redis, SMTP, custom services)'}
+            </div>
+          </div>
+
+          <div className="form-group">
+            <label className="form-label">{form.monitor_type === 'tcp' ? 'Host:Port *' : 'URL to Monitor *'}</label>
             <input
               className="form-input"
-              type="url"
-              placeholder="https://api.example.com/health"
+              type={form.monitor_type === 'tcp' ? 'text' : 'url'}
+              placeholder={form.monitor_type === 'tcp' ? 'e.g. db.example.com:5432' : 'https://api.example.com/health'}
               value={form.url}
               onChange={(e) => update('url', e.target.value)}
               required
             />
+            {form.monitor_type === 'tcp' && (
+              <div className="form-help">Format: host:port (e.g., redis.example.com:6379, tcp://db.example.com:5432)</div>
+            )}
           </div>
 
-          <div className="form-row">
-            <div className="form-group">
-              <label className="form-label">HTTP Method</label>
-              <select
-                className="form-input"
-                value={form.method}
-                onChange={(e) => update('method', e.target.value)}
-              >
-                <option value="GET">GET</option>
-                <option value="HEAD">HEAD</option>
-                <option value="POST">POST</option>
-              </select>
-            </div>
+          {form.monitor_type === 'http' && (
+            <div className="form-row">
+              <div className="form-group">
+                <label className="form-label">HTTP Method</label>
+                <select
+                  className="form-input"
+                  value={form.method}
+                  onChange={(e) => update('method', e.target.value)}
+                >
+                  <option value="GET">GET</option>
+                  <option value="HEAD">HEAD</option>
+                  <option value="POST">POST</option>
+                </select>
+              </div>
 
-            <div className="form-group">
-              <label className="form-label">Expected Status Code</label>
-              <input
-                className="form-input"
-                type="number"
-                value={form.expected_status}
-                onChange={(e) => update('expected_status', e.target.value)}
-              />
+              <div className="form-group">
+                <label className="form-label">Expected Status Code</label>
+                <input
+                  className="form-input"
+                  type="number"
+                  value={form.expected_status}
+                  onChange={(e) => update('expected_status', e.target.value)}
+                />
+              </div>
             </div>
-          </div>
+          )}
 
           <div className="form-row">
             <div className="form-group">
@@ -326,17 +369,19 @@ export default function CreateMonitor({ onCreated, onCancel }) {
             </div>
           </div>
 
-          <div className="form-group">
-            <label className="form-label">Body Contains (optional)</label>
-            <input
-              className="form-input"
-              type="text"
-              placeholder='e.g. "status":"ok"'
-              value={form.body_contains}
-              onChange={(e) => update('body_contains', e.target.value)}
-            />
-            <div className="form-help">Response body must contain this string to be considered up</div>
-          </div>
+          {form.monitor_type === 'http' && (
+            <div className="form-group">
+              <label className="form-label">Body Contains (optional)</label>
+              <input
+                className="form-input"
+                type="text"
+                placeholder='e.g. "status":"ok"'
+                value={form.body_contains}
+                onChange={(e) => update('body_contains', e.target.value)}
+              />
+              <div className="form-help">Response body must contain this string to be considered up</div>
+            </div>
+          )}
         </div>
 
         {error && (

@@ -829,22 +829,25 @@ function EditMonitorForm({ monitor, manageKey, onSaved, onCancel }) {
       </div>
 
       <div className="form-group">
-        <label className="form-label">URL</label>
-        <input className="form-input" value={form.url} onChange={e => set('url', e.target.value)} placeholder="https://example.com" />
+        <label className="form-label">{monitor.monitor_type === 'tcp' ? 'Host:Port' : 'URL'}</label>
+        <input className="form-input" value={form.url} onChange={e => set('url', e.target.value)} placeholder={monitor.monitor_type === 'tcp' ? 'host:port' : 'https://example.com'} />
+        {monitor.monitor_type === 'tcp' && <div className="form-help">Type: 🔌 TCP — connectivity check</div>}
       </div>
 
-      <div className="form-row">
-        <div className="form-group">
-          <label className="form-label">Method</label>
-          <select className="form-input" value={form.method} onChange={e => set('method', e.target.value)}>
-            {HTTP_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
-          </select>
+      {monitor.monitor_type !== 'tcp' && (
+        <div className="form-row">
+          <div className="form-group">
+            <label className="form-label">Method</label>
+            <select className="form-input" value={form.method} onChange={e => set('method', e.target.value)}>
+              {HTTP_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
+            </select>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Expected Status</label>
+            <input className="form-input" type="number" value={form.expected_status} onChange={e => set('expected_status', Number(e.target.value))} />
+          </div>
         </div>
-        <div className="form-group">
-          <label className="form-label">Expected Status</label>
-          <input className="form-input" type="number" value={form.expected_status} onChange={e => set('expected_status', Number(e.target.value))} />
-        </div>
-      </div>
+      )}
 
       <div className="form-row">
         <div className="form-group">
@@ -871,10 +874,12 @@ function EditMonitorForm({ monitor, manageKey, onSaved, onCancel }) {
         </div>
       </div>
 
-      <div className="form-group">
-        <label className="form-label">Body Contains</label>
-        <input className="form-input" value={form.body_contains} onChange={e => set('body_contains', e.target.value)} placeholder="Optional text to match in response" />
-      </div>
+      {monitor.monitor_type !== 'tcp' && (
+        <div className="form-group">
+          <label className="form-label">Body Contains</label>
+          <input className="form-input" value={form.body_contains} onChange={e => set('body_contains', e.target.value)} placeholder="Optional text to match in response" />
+        </div>
+      )}
 
       <div className="form-row">
         <div className="form-group">
@@ -1165,7 +1170,7 @@ export default function MonitorDetail({ id, manageKey: urlKey, onBack }) {
           <div>
             <h2 className="card-title" style={{ fontSize: '1.3rem' }}>{monitor.name}</h2>
             <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: 4 }}>
-              {monitor.method} {monitor.url}
+              {monitor.monitor_type === 'tcp' ? '🔌 TCP' : monitor.method} {monitor.url}
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -1199,10 +1204,17 @@ export default function MonitorDetail({ id, manageKey: urlKey, onBack }) {
             <span className="monitor-stat-label">Timeout</span>
             <span className="monitor-stat-value">{monitor.timeout_ms}ms</span>
           </div>
-          <div className="monitor-stat">
-            <span className="monitor-stat-label">Expected</span>
-            <span className="monitor-stat-value">HTTP {monitor.expected_status}</span>
-          </div>
+          {monitor.monitor_type === 'tcp' ? (
+            <div className="monitor-stat">
+              <span className="monitor-stat-label">Type</span>
+              <span className="monitor-stat-value">🔌 TCP</span>
+            </div>
+          ) : (
+            <div className="monitor-stat">
+              <span className="monitor-stat-label">Expected</span>
+              <span className="monitor-stat-value">HTTP {monitor.expected_status}</span>
+            </div>
+          )}
           <div className="monitor-stat">
             <span className="monitor-stat-label">Confirm</span>
             <span className="monitor-stat-value">{monitor.confirmation_threshold}x</span>
