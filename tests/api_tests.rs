@@ -38,6 +38,7 @@ fn test_client_with_db() -> (Client, String) {
             watchpost::routes::create_incident_note,
             watchpost::routes::list_incident_notes,
             watchpost::routes::dashboard,
+            watchpost::routes::admin_verify,
             watchpost::routes::uptime_history,
             watchpost::routes::monitor_uptime_history,
             watchpost::routes::status_page,
@@ -1547,6 +1548,96 @@ fn test_dashboard_with_paused_monitor() {
     let body: serde_json::Value = resp.into_json().unwrap();
     assert_eq!(body["total_monitors"], 1);
     assert_eq!(body["paused_monitors"], 1);
+}
+
+// ── Dashboard Privacy Tests ──
+
+#[test]
+fn test_dashboard_no_auth_hides_incidents_and_slowest() {
+    let (client, admin_key) = test_client_with_admin_key();
+
+    // Create a monitor and verify it exists
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Secret Monitor", "url": "https://secret.internal.com"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+
+    // Dashboard without auth: should return stats but no individual monitor data
+    let resp = client.get("/api/v1/dashboard").dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["total_monitors"], 1);
+    // recent_incidents and slowest_monitors should be empty (private data hidden)
+    assert!(body["recent_incidents"].as_array().unwrap().is_empty());
+    assert!(body["slowest_monitors"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn test_dashboard_with_admin_key_shows_full_data() {
+    let (client, admin_key) = test_client_with_admin_key();
+
+    // Create a monitor
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Test Monitor", "url": "https://example.com"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+
+    // Dashboard with valid admin key: should get full data
+    let resp = client.get(format!("/api/v1/dashboard?key={}", admin_key)).dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["total_monitors"], 1);
+    // With admin key, these fields are populated (may be empty if no checks yet, but the key grants access)
+    assert!(body["recent_incidents"].is_array());
+    assert!(body["slowest_monitors"].is_array());
+}
+
+#[test]
+fn test_dashboard_with_invalid_key_hides_data() {
+    let (client, _admin_key) = test_client_with_admin_key();
+
+    // Create a monitor
+    client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Monitor", "url": "https://example.com"}"#)
+        .dispatch();
+
+    // Dashboard with wrong key: should hide individual data
+    let resp = client.get("/api/v1/dashboard?key=wp_wrong_key").dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["total_monitors"], 1);
+    assert!(body["recent_incidents"].as_array().unwrap().is_empty());
+    assert!(body["slowest_monitors"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn test_admin_verify_valid() {
+    let (client, admin_key) = test_client_with_admin_key();
+    let resp = client.get(format!("/api/v1/admin/verify?key={}", admin_key)).dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["valid"], true);
+}
+
+#[test]
+fn test_admin_verify_invalid() {
+    let (client, _) = test_client_with_admin_key();
+    let resp = client.get("/api/v1/admin/verify?key=wp_bad_key").dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["valid"], false);
+}
+
+#[test]
+fn test_admin_verify_no_key() {
+    let client = test_client();
+    let resp = client.get("/api/v1/admin/verify").dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["valid"], false);
 }
 
 // ── Uptime History Tests ──

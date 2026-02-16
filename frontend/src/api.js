@@ -330,6 +330,18 @@ export async function getDependents(monitorId) {
   return request(`/monitors/${monitorId}/dependents`);
 }
 
+export async function verifyAdmin(key) {
+  return request('/admin/verify', {
+    headers: { Authorization: `Bearer ${key}` },
+  });
+}
+
+export async function getDashboardAuth(key) {
+  return request('/dashboard', {
+    headers: key ? { Authorization: `Bearer ${key}` } : {},
+  });
+}
+
 export async function getMonitorConsensus(monitorId) {
   const url = `${BASE}/monitors/${monitorId}/consensus`;
   const res = await fetch(url);

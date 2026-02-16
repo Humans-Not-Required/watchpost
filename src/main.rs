@@ -67,6 +67,7 @@ fn rocket() -> _ {
             routes::create_incident_note,
             routes::list_incident_notes,
             routes::dashboard,
+            routes::admin_verify,
             routes::uptime_history,
             routes::monitor_uptime_history,
             routes::status_page,

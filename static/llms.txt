@@ -8,7 +8,8 @@ GET /api/v1/monitors/:id/heartbeats — Check history
 GET /api/v1/monitors/:id/uptime — Uptime stats (24h/7d/30d/90d)
 GET /api/v1/monitors/:id/incidents — Incident history
 GET /api/v1/status — Public status page
-GET /api/v1/dashboard — Aggregate dashboard (total monitors, uptime averages, active incidents, recent incidents, slowest monitors)
+GET /api/v1/dashboard — Aggregate dashboard stats (totals, uptime averages). With admin key: includes recent incidents, slowest monitors. Without auth: aggregate stats only (no individual monitor data).
+GET /api/v1/admin/verify — Verify admin key validity. Returns {"valid": true/false}. Accepts key via Bearer header, X-API-Key header, or ?key= query param.
 GET /api/v1/uptime-history?days=30 — Daily uptime percentages over time (aggregate across all monitors, max 90 days)
 GET /api/v1/monitors/:id/uptime-history?days=30 — Daily uptime percentages for a specific monitor
 

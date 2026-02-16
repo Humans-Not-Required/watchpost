@@ -26,6 +26,7 @@ pub use monitors::{create_monitor, bulk_create_monitors, export_monitor, list_mo
 pub use heartbeats::{get_heartbeats, get_uptime};
 pub use incidents::{get_incidents, get_incident, acknowledge_incident, create_incident_note, list_incident_notes};
 pub use dashboard_route::dashboard;
+pub use dashboard_route::admin_verify;
 pub use uptime::{uptime_history, monitor_uptime_history};
 pub use status::status_page;
 pub use notifications::{create_notification, list_notifications, delete_notification, update_notification};

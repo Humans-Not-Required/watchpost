@@ -31,6 +31,35 @@ impl<'r> FromRequest<'r> for ManageToken {
     }
 }
 
+/// Like ManageToken but doesn't fail if no auth is provided — returns None.
+pub struct OptionalManageToken(pub Option<String>);
+
+#[rocket::async_trait]
+impl<'r> FromRequest<'r> for OptionalManageToken {
+    type Error = ();
+
+    async fn from_request(request: &'r Request<'_>) -> Outcome<Self, Self::Error> {
+        // 1. Authorization: Bearer <token>
+        if let Some(auth) = request.headers().get_one("Authorization") {
+            if let Some(token) = auth.strip_prefix("Bearer ") {
+                return Outcome::Success(OptionalManageToken(Some(token.to_string())));
+            }
+        }
+
+        // 2. X-API-Key: <token>
+        if let Some(key) = request.headers().get_one("X-API-Key") {
+            return Outcome::Success(OptionalManageToken(Some(key.to_string())));
+        }
+
+        // 3. ?key=<token>
+        if let Some(Ok(key)) = request.query_value::<String>("key") {
+            return Outcome::Success(OptionalManageToken(Some(key)));
+        }
+
+        Outcome::Success(OptionalManageToken(None))
+    }
+}
+
 pub fn hash_key(key: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(key.as_bytes());

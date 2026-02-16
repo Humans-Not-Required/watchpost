@@ -885,7 +885,7 @@
         "tags": [
           "system"
         ],
-        "description": "Returns aggregate statistics across all monitors: counts by status, uptime averages, active incidents, recent incidents with monitor names, and slowest monitors.",
+        "description": "Returns aggregate statistics across all monitors. Without admin key: counts, uptime averages, total checks (no individual monitor data). With admin key (Bearer/X-API-Key/?key=): also includes recent_incidents and slowest_monitors with individual monitor names and IDs.",
         "responses": {
           "200": {
             "description": "Dashboard data",
@@ -2889,6 +2889,44 @@
           },
           "404": {
             "description": "Monitor not found"
+          }
+        }
+      }
+    },
+    "/admin/verify": {
+      "get": {
+        "summary": "Verify admin key",
+        "operationId": "admin_verify",
+        "tags": [
+          "system"
+        ],
+        "description": "Check if the provided key is a valid admin key. Returns {valid: true} or {valid: false}. Key can be provided via Bearer header, X-API-Key header, or ?key= query param.",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Admin key (alternative to Authorization header)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Verification result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "valid": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }

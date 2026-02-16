@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
-import { getDashboard, getUptimeHistory } from '../api'
-import { IconDashboard, IconSignal, IconArrowUp, IconZap, IconAlertOctagon, IconTrendUp, IconFlame, IconClock, IconCheckCircle, IconAlertCircle, IconStatusDot } from '../Icons'
+import { getDashboard, getDashboardAuth, getUptimeHistory, verifyAdmin } from '../api'
+import { IconDashboard, IconSignal, IconArrowUp, IconZap, IconAlertOctagon, IconTrendUp, IconFlame, IconClock, IconCheckCircle, IconAlertCircle, IconStatusDot, IconLock } from '../Icons'
 
 const STATUS_COLORS = {
   up: '#00d4aa',
@@ -273,19 +273,91 @@ function timeAgo(iso) {
   return `${days}d ago`;
 }
 
-export default function Dashboard({ onNavigate }) {
+export default function Dashboard({ onNavigate, adminKey, isAdmin, onAdminLogin }) {
   const [data, setData] = useState(null);
   const [history, setHistory] = useState(null);
   const [historyDays, setHistoryDays] = useState(30);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [loginKey, setLoginKey] = useState('');
+  const [loginError, setLoginError] = useState('');
 
   const loadData = () => {
-    getDashboard()
+    const fetcher = adminKey ? getDashboardAuth(adminKey) : getDashboard();
+    fetcher
       .then(d => { setData(d); setError(null); })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));
   };
+
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    if (!loginKey.trim()) return;
+    try {
+      const res = await verifyAdmin(loginKey.trim());
+      if (res.valid) {
+        onAdminLogin(loginKey.trim());
+        setLoginError('');
+      } else {
+        setLoginError('Invalid admin key');
+      }
+    } catch {
+      setLoginError('Failed to verify key');
+    }
+  };
+
+  // Show admin login prompt if not admin
+  if (!isAdmin) {
+    return (
+      <div>
+        <h2 style={{ marginBottom: 8 }}><IconDashboard size={20} style={{ marginRight: 8 }} />Dashboard</h2>
+        <div style={{ maxWidth: 440, margin: '40px auto', textAlign: 'center' }}>
+          <IconLock size={48} style={{ color: 'var(--text-muted)', marginBottom: 16 }} />
+          <h3 style={{ color: 'var(--text-primary)', marginBottom: 8 }}>Admin Access Required</h3>
+          <p style={{ color: 'var(--text-muted)', marginBottom: 24, fontSize: '0.9rem' }}>
+            The dashboard shows detailed monitor data and is restricted to administrators.
+            Enter your admin key to unlock full access.
+          </p>
+          <form onSubmit={handleLogin}>
+            <input
+              type="password"
+              value={loginKey}
+              onChange={(e) => { setLoginKey(e.target.value); setLoginError(''); }}
+              placeholder="Admin key"
+              style={{
+                width: '100%',
+                padding: '10px 14px',
+                fontSize: '1rem',
+                background: 'var(--card-bg)',
+                border: '1px solid var(--border)',
+                borderRadius: 8,
+                color: 'var(--text-primary)',
+                marginBottom: 12,
+                boxSizing: 'border-box',
+              }}
+            />
+            {loginError && <p style={{ color: '#ff4757', fontSize: '0.85rem', marginBottom: 12 }}>{loginError}</p>}
+            <button
+              type="submit"
+              style={{
+                width: '100%',
+                padding: '10px',
+                background: 'var(--accent)',
+                color: '#fff',
+                border: 'none',
+                borderRadius: 8,
+                fontSize: '0.95rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              Unlock Dashboard
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
 
   const loadHistory = () => {
     getUptimeHistory(historyDays)

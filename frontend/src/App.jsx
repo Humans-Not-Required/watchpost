@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
-import { IconDashboard, IconPackage, IconGlobe, IconSun, IconMoon } from './Icons'
+import { useState, useEffect, useRef } from 'react'
+import { verifyAdmin } from './api'
+import { IconDashboard, IconPackage, IconGlobe, IconSun, IconMoon, IconLock } from './Icons'
 import Dashboard from './pages/Dashboard'
 import StatusPage from './pages/StatusPage'
 import MonitorDetail from './pages/MonitorDetail'
@@ -23,12 +24,13 @@ function parseRoute() {
   }
   if (path === '/new') return { page: 'create', key };
   if (path === '/import') return { page: 'import', key };
-  if (path === '/status') return { page: 'status', key };
+  if (path === '/dashboard') return { page: 'dashboard', key };
   if (path === '/locations') return { page: 'locations', key };
   if (path === '/pages/new') return { page: 'status-pages', subpage: 'create', key };
   if (path.startsWith('/pages/')) return { page: 'status-pages', subpage: 'view', slug: path.slice(7), key };
   if (path === '/pages') return { page: 'status-pages', subpage: 'list', key };
-  return { page: 'dashboard', key };
+  // Default: status page (public-safe landing)
+  return { page: 'status', key };
 }
 
 function navigate(path) {
@@ -45,7 +47,37 @@ export default function App() {
   const [route, setRoute] = useState(parseRoute);
   const [menuOpen, setMenuOpen] = useState(false);
   const [theme, setTheme] = useState(getInitialTheme);
+  const [adminKey, setAdminKey] = useState(() => localStorage.getItem('watchpost-admin-key') || '');
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [adminChecked, setAdminChecked] = useState(false);
   const menuRef = useRef(null);
+
+  // Verify admin key on mount and when it changes
+  useEffect(() => {
+    if (!adminKey) {
+      setIsAdmin(false);
+      setAdminChecked(true);
+      return;
+    }
+    let mounted = true;
+    verifyAdmin(adminKey).then(res => {
+      if (mounted) {
+        setIsAdmin(res.valid === true);
+        setAdminChecked(true);
+        if (res.valid) {
+          localStorage.setItem('watchpost-admin-key', adminKey);
+        } else {
+          localStorage.removeItem('watchpost-admin-key');
+        }
+      }
+    }).catch(() => {
+      if (mounted) {
+        setIsAdmin(false);
+        setAdminChecked(true);
+      }
+    });
+    return () => { mounted = false; };
+  }, [adminKey]);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -75,6 +107,17 @@ export default function App() {
     return () => document.removeEventListener('click', onClick);
   }, [menuOpen]);
 
+  const handleAdminLogin = (key) => {
+    setAdminKey(key);
+  };
+
+  const handleAdminLogout = () => {
+    setAdminKey('');
+    setIsAdmin(false);
+    localStorage.removeItem('watchpost-admin-key');
+    navigate('/');
+  };
+
   return (
     <div>
       <header className="header">
@@ -97,41 +140,62 @@ export default function App() {
           </button>
           <nav ref={menuRef} className={`header-nav ${menuOpen ? 'open' : ''}`}>
             <button
-              className={`nav-btn ${route.page === 'dashboard' ? 'active' : ''}`}
-              onClick={() => navigate('/')}
-            >
-              <IconDashboard size={14} /> Dashboard
-            </button>
-            <button
               className={`nav-btn ${route.page === 'status' ? 'active' : ''}`}
-              onClick={() => navigate('/status')}
+              onClick={() => navigate('/')}
             >
               Status
             </button>
-            <button
-              className={`nav-btn ${route.page === 'create' ? 'active' : ''}`}
-              onClick={() => navigate('/new')}
-            >
-              + New Monitor
-            </button>
-            <button
-              className={`nav-btn ${route.page === 'import' ? 'active' : ''}`}
-              onClick={() => navigate('/import')}
-            >
-              <IconPackage size={14} /> Bulk Import
-            </button>
-            <button
-              className={`nav-btn ${route.page === 'locations' ? 'active' : ''}`}
-              onClick={() => navigate('/locations')}
-            >
-              <IconGlobe size={14} /> Locations
-            </button>
-            <button
-              className={`nav-btn ${route.page === 'status-pages' ? 'active' : ''}`}
-              onClick={() => navigate('/pages')}
-            >
-              Pages
-            </button>
+            {isAdmin && (
+              <>
+                <button
+                  className={`nav-btn ${route.page === 'dashboard' ? 'active' : ''}`}
+                  onClick={() => navigate('/dashboard')}
+                >
+                  <IconDashboard size={14} /> Dashboard
+                </button>
+                <button
+                  className={`nav-btn ${route.page === 'create' ? 'active' : ''}`}
+                  onClick={() => navigate('/new')}
+                >
+                  + New Monitor
+                </button>
+                <button
+                  className={`nav-btn ${route.page === 'import' ? 'active' : ''}`}
+                  onClick={() => navigate('/import')}
+                >
+                  <IconPackage size={14} /> Bulk Import
+                </button>
+                <button
+                  className={`nav-btn ${route.page === 'locations' ? 'active' : ''}`}
+                  onClick={() => navigate('/locations')}
+                >
+                  <IconGlobe size={14} /> Locations
+                </button>
+                <button
+                  className={`nav-btn ${route.page === 'status-pages' ? 'active' : ''}`}
+                  onClick={() => navigate('/pages')}
+                >
+                  Pages
+                </button>
+              </>
+            )}
+            {!isAdmin && adminChecked && (
+              <button
+                className={`nav-btn ${route.page === 'dashboard' ? 'active' : ''}`}
+                onClick={() => navigate('/dashboard')}
+              >
+                <IconLock size={14} /> Admin
+              </button>
+            )}
+            {isAdmin && (
+              <button
+                className="nav-btn"
+                onClick={handleAdminLogout}
+                title="Sign out of admin"
+              >
+                Sign Out
+              </button>
+            )}
           </nav>
           <button
             className="theme-toggle"
@@ -146,7 +210,12 @@ export default function App() {
 
       <main className="container" style={{ paddingBottom: 40 }}>
         {route.page === 'dashboard' && (
-          <Dashboard onNavigate={(path) => navigate(path)} />
+          <Dashboard
+            onNavigate={(path) => navigate(path)}
+            adminKey={adminKey}
+            isAdmin={isAdmin}
+            onAdminLogin={handleAdminLogin}
+          />
         )}
         {route.page === 'status' && (
           <StatusPage onSelect={(id) => navigate(`/monitor/${id}`)} />
@@ -159,26 +228,106 @@ export default function App() {
           />
         )}
         {route.page === 'create' && (
-          <CreateMonitor
-            onCreated={(id) => navigate(`/monitor/${id}`)}
-            onCancel={() => navigate('/')}
-          />
+          isAdmin ? (
+            <CreateMonitor
+              onCreated={(id) => navigate(`/monitor/${id}`)}
+              onCancel={() => navigate('/')}
+            />
+          ) : (
+            <AdminRequired onLogin={handleAdminLogin} />
+          )
         )}
         {route.page === 'import' && (
-          <BulkImport
-            onDone={() => navigate('/')}
-            onCancel={() => navigate('/')}
-          />
+          isAdmin ? (
+            <BulkImport
+              onDone={() => navigate('/')}
+              onCancel={() => navigate('/')}
+            />
+          ) : (
+            <AdminRequired onLogin={handleAdminLogin} />
+          )
         )}
-        {route.page === 'locations' && <Locations />}
+        {route.page === 'locations' && (
+          isAdmin ? <Locations /> : <AdminRequired onLogin={handleAdminLogin} />
+        )}
         {route.page === 'status-pages' && (
-          <StatusPages route={route} onNavigate={(path) => navigate(path)} />
+          isAdmin ? (
+            <StatusPages route={route} onNavigate={(path) => navigate(path)} />
+          ) : (
+            <AdminRequired onLogin={handleAdminLogin} />
+          )
         )}
       </main>
-      <footer style={{ textAlign: 'center', padding: '12px 16px', fontSize: '0.7rem', color: '#475569' }}>
+      <footer style={{ textAlign: 'center', padding: '12px 16px', fontSize: '0.7rem', color: 'var(--text-muted)' }}>
         Made for AI, by AI.{' '}
-        <a href="https://github.com/Humans-Not-Required" target="_blank" rel="noopener noreferrer" style={{ color: '#6366f1', textDecoration: 'none' }}>Humans not required</a>.
+        <a href="https://github.com/Humans-Not-Required" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)', textDecoration: 'none' }}>Humans not required</a>.
       </footer>
+    </div>
+  );
+}
+
+function AdminRequired({ onLogin }) {
+  const [key, setKey] = useState('');
+  const [error, setError] = useState('');
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!key.trim()) return;
+    try {
+      const res = await verifyAdmin(key.trim());
+      if (res.valid) {
+        onLogin(key.trim());
+      } else {
+        setError('Invalid admin key');
+      }
+    } catch {
+      setError('Failed to verify key');
+    }
+  };
+
+  return (
+    <div style={{ maxWidth: 400, margin: '80px auto', textAlign: 'center' }}>
+      <IconLock size={48} style={{ color: 'var(--text-muted)', marginBottom: 16 }} />
+      <h2 style={{ color: 'var(--text-primary)', marginBottom: 8 }}>Admin Access Required</h2>
+      <p style={{ color: 'var(--text-muted)', marginBottom: 24 }}>
+        Enter your admin key to access this page.
+      </p>
+      <form onSubmit={handleSubmit}>
+        <input
+          type="password"
+          value={key}
+          onChange={(e) => { setKey(e.target.value); setError(''); }}
+          placeholder="Admin key"
+          style={{
+            width: '100%',
+            padding: '10px 14px',
+            fontSize: '1rem',
+            background: 'var(--card-bg)',
+            border: '1px solid var(--border)',
+            borderRadius: 8,
+            color: 'var(--text-primary)',
+            marginBottom: 12,
+            boxSizing: 'border-box',
+          }}
+        />
+        {error && <p style={{ color: '#ff4757', fontSize: '0.85rem', marginBottom: 12 }}>{error}</p>}
+        <button
+          type="submit"
+          style={{
+            width: '100%',
+            padding: '10px',
+            background: 'var(--accent)',
+            color: '#fff',
+            border: 'none',
+            borderRadius: 8,
+            fontSize: '0.95rem',
+            fontWeight: 600,
+            cursor: 'pointer',
+          }}
+        >
+          Unlock
+        </button>
+      </form>
     </div>
   );
 }
