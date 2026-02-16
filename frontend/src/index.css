@@ -18,6 +18,53 @@
   --degraded: #ffaa33;
   --radius: 8px;
   --radius-lg: 12px;
+  /* Theme-dependent colors for inline styles & SVGs */
+  --accent-text: #000;
+  --subtle-bg: rgba(255, 255, 255, 0.02);
+  --chart-grid: rgba(255, 255, 255, 0.07);
+  --chart-text: rgba(255, 255, 255, 0.45);
+  --chart-text-strong: rgba(255, 255, 255, 0.6);
+  --chart-text-dim: rgba(255, 255, 255, 0.4);
+  --chart-fill: rgba(255, 255, 255, 0.03);
+  --chart-tooltip-bg: rgba(30, 30, 40, 0.95);
+  --chart-tooltip-border: rgba(255, 255, 255, 0.15);
+  --chart-tooltip-text: rgba(255, 255, 255, 0.5);
+  --chart-avg-stroke: rgba(255, 255, 255, 0.2);
+  --chart-bar-stroke: rgba(0, 0, 0, 0.3);
+  --logo-fill: #1a1a2e;
+}
+
+[data-theme="light"] {
+  --bg-primary: #f4f5f7;
+  --bg-secondary: #ffffff;
+  --bg-card: #ffffff;
+  --bg-hover: #eeeef5;
+  --border: #d8d8e8;
+  --text-primary: #1a1a2e;
+  --text-secondary: #555577;
+  --text-muted: #8888aa;
+  --accent: #00b894;
+  --accent-hover: #00a080;
+  --danger: #e53e5e;
+  --danger-bg: rgba(229, 62, 94, 0.08);
+  --warning: #e59500;
+  --warning-bg: rgba(229, 149, 0, 0.08);
+  --success: #00b894;
+  --success-bg: rgba(0, 184, 148, 0.08);
+  --degraded: #e59500;
+  --accent-text: #fff;
+  --subtle-bg: rgba(0, 0, 0, 0.03);
+  --chart-grid: rgba(0, 0, 0, 0.08);
+  --chart-text: rgba(0, 0, 0, 0.5);
+  --chart-text-strong: rgba(0, 0, 0, 0.65);
+  --chart-text-dim: rgba(0, 0, 0, 0.4);
+  --chart-fill: rgba(0, 0, 0, 0.02);
+  --chart-tooltip-bg: rgba(255, 255, 255, 0.95);
+  --chart-tooltip-border: rgba(0, 0, 0, 0.12);
+  --chart-tooltip-text: rgba(0, 0, 0, 0.5);
+  --chart-avg-stroke: rgba(0, 0, 0, 0.15);
+  --chart-bar-stroke: rgba(0, 0, 0, 0.1);
+  --logo-fill: #e8e8f0;
 }
 
 * {
@@ -137,8 +184,25 @@ input, select, textarea {
 }
 .nav-btn.active {
   background: var(--accent);
-  color: #000;
+  color: var(--accent-text);
   font-weight: 600;
+}
+
+/* Theme Toggle */
+.theme-toggle {
+  padding: 6px;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+  margin-left: 4px;
+}
+.theme-toggle:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 /* Branding Header */
@@ -378,7 +442,7 @@ input, select, textarea {
 }
 .btn-primary {
   background: var(--accent);
-  color: #000;
+  color: var(--accent-text);
 }
 .btn-primary:hover {
   background: var(--accent-hover);
@@ -516,7 +580,7 @@ input, select, textarea {
   100% { background-position: 400px 0; }
 }
 .skeleton {
-  background: linear-gradient(90deg, var(--card-bg) 25%, rgba(255,255,255,0.06) 50%, var(--card-bg) 75%);
+  background: linear-gradient(90deg, var(--bg-card) 25%, var(--subtle-bg) 50%, var(--bg-card) 75%);
   background-size: 800px 100%;
   animation: shimmer 1.5s ease-in-out infinite;
   border-radius: 6px;
@@ -539,7 +603,7 @@ input, select, textarea {
   width: 60px;
 }
 .skeleton-card {
-  background: var(--card-bg);
+  background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 20px;
@@ -571,7 +635,7 @@ input, select, textarea {
   margin-top: 16px;
 }
 .skeleton-uptime-cell {
-  background: var(--card-bg);
+  background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 16px;
@@ -597,7 +661,7 @@ input, select, textarea {
   padding: 10px 14px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--card-bg);
+  background: var(--bg-card);
   color: var(--text);
   font-size: 0.9rem;
   outline: none;
@@ -623,7 +687,7 @@ input, select, textarea {
   padding: 5px 12px;
   border: 1px solid var(--border);
   border-radius: 20px;
-  background: var(--card-bg);
+  background: var(--bg-card);
   color: var(--text-muted);
   font-size: 0.8rem;
   cursor: pointer;

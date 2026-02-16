@@ -294,7 +294,7 @@ function MonitorUptimeHistoryChart({ monitorId }) {
                 borderRadius: 4,
                 border: '1px solid var(--border)',
                 background: days === d ? 'var(--accent)' : 'var(--bg-secondary)',
-                color: days === d ? '#000' : 'var(--text-primary)',
+                color: days === d ? 'var(--accent-text)' : 'var(--text-primary)',
                 cursor: 'pointer',
                 fontWeight: days === d ? 600 : 400,
               }}
@@ -321,7 +321,7 @@ function MonitorUptimeHistoryChart({ monitorId }) {
           if (d.uptime_pct !== null) return null;
           const bw = Math.max(plotW / filled.length, 3);
           return <rect key={`nd-${i}`} x={toX(i) - bw / 2} y={PAD.top} width={bw} height={plotH}
-            fill="rgba(255,255,255,0.03)" />;
+            fill="var(--chart-fill)" />;
         })}
 
         {/* Area + Line */}
@@ -509,7 +509,7 @@ function IncidentNotes({ incidentId, manageKey, onNotesChanged }) {
                 zIndex: 1,
               }} />
               <div style={{
-                background: 'rgba(255,255,255,0.02)',
+                background: 'var(--subtle-bg)',
                 borderRadius: 6,
                 padding: '8px 12px',
                 border: '1px solid var(--border)',
@@ -548,7 +548,7 @@ function IncidentNotes({ incidentId, manageKey, onNotesChanged }) {
             </button>
           ) : (
             <div style={{
-              background: 'rgba(255,255,255,0.02)',
+              background: 'var(--subtle-bg)',
               borderRadius: 6,
               padding: 12,
               border: '1px solid var(--accent)',
@@ -1309,7 +1309,7 @@ function AlertRulesManager({ monitorId, manageKey }) {
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
             <div style={{
-              background: 'rgba(255,255,255,0.02)',
+              background: 'var(--subtle-bg)',
               borderRadius: 8,
               padding: '12px 16px',
               border: '1px solid var(--border)',
@@ -1322,7 +1322,7 @@ function AlertRulesManager({ monitorId, manageKey }) {
               </div>
             </div>
             <div style={{
-              background: 'rgba(255,255,255,0.02)',
+              background: 'var(--subtle-bg)',
               borderRadius: 8,
               padding: '12px 16px',
               border: '1px solid var(--border)',
@@ -1335,7 +1335,7 @@ function AlertRulesManager({ monitorId, manageKey }) {
               </div>
             </div>
             <div style={{
-              background: 'rgba(255,255,255,0.02)',
+              background: 'var(--subtle-bg)',
               borderRadius: 8,
               padding: '12px 16px',
               border: '1px solid var(--border)',
@@ -2338,7 +2338,7 @@ export default function MonitorDetail({ id, manageKey: urlKey, onBack }) {
         {(monitor.group_name || (monitor.tags || []).length > 0) && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12, alignItems: 'center' }}>
             {monitor.group_name && (
-              <span className="tag-badge" style={{ background: 'var(--accent)', color: '#000', fontWeight: 600 }}>
+              <span className="tag-badge" style={{ background: 'var(--accent)', color: 'var(--accent-text)', fontWeight: 600 }}>
                 {monitor.group_name}
               </span>
             )}
@@ -2588,7 +2588,7 @@ function DependencyManager({ monitorId, monitorName, manageKey }) {
     }
   }, [showAdd, allMonitors]);
 
-  const statusColors = { up: '#00d4aa', down: '#ef4444', degraded: '#fbbf24', maintenance: '#8b5cf6', unknown: '#64748b' };
+  const statusColors = { up: '#00d4aa', down: '#ef4444', degraded: 'var(--warning)', maintenance: '#8b5cf6', unknown: '#64748b' };
 
   // Filter out: self, already-added dependencies
   const depIds = new Set(dependencies.map(d => d.depends_on_id));
@@ -2653,8 +2653,8 @@ function DependencyManager({ monitorId, monitorName, manageKey }) {
     return (
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '10px 14px', background: '#0f172a', borderRadius: 6,
-        border: `1px solid ${status === 'down' ? '#ef444440' : '#1e293b'}`,
+        padding: '10px 14px', background: 'var(--bg-primary)', borderRadius: 6,
+        border: `1px solid ${status === 'down' ? '#ef444440' : 'var(--border)'}`,
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <div style={{ width: 8, height: 8, borderRadius: '50%', background: color, flexShrink: 0 }} />
@@ -2672,7 +2672,7 @@ function DependencyManager({ monitorId, monitorName, manageKey }) {
             {status}
           </span>
           {status === 'down' && !isDependent && (
-            <span style={{ fontSize: '0.7rem', color: '#fbbf24' }}>⚡ alerts suppressed</span>
+            <span style={{ fontSize: '0.7rem', color: 'var(--warning)' }}>⚡ alerts suppressed</span>
           )}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -2680,7 +2680,7 @@ function DependencyManager({ monitorId, monitorName, manageKey }) {
           {canRemove && (
             <button
               className="btn"
-              style={{ fontSize: '0.65rem', padding: '2px 6px', color: '#f87171' }}
+              style={{ fontSize: '0.65rem', padding: '2px 6px', color: 'var(--danger)' }}
               onClick={() => handleRemove(dep.id)}
               disabled={removing === dep.id}
               title="Remove dependency"
@@ -2717,7 +2717,7 @@ function DependencyManager({ monitorId, monitorName, manageKey }) {
           When an upstream dependency is down, alerts for this monitor are suppressed.
         </p>
 
-        {error && <div style={{ color: '#f87171', fontSize: '0.8rem', marginBottom: 8 }}>{error}</div>}
+        {error && <div style={{ color: 'var(--danger)', fontSize: '0.8rem', marginBottom: 8 }}>{error}</div>}
 
         {dependencies.length === 0 ? (
           <div style={{ color: '#64748b', fontSize: '0.85rem', padding: '8px 0' }}>
@@ -2734,7 +2734,7 @@ function DependencyManager({ monitorId, monitorName, manageKey }) {
 
         {/* Add dependency picker */}
         {showAdd && manageKey && (
-          <div style={{ borderTop: '1px solid #2a2a4a', paddingTop: 12, marginTop: 4 }}>
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12, marginTop: 4 }}>
             <input
               type="text"
               value={search}
@@ -2755,8 +2755,8 @@ function DependencyManager({ monitorId, monitorName, manageKey }) {
                   return (
                     <div key={m.id} style={{
                       display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                      padding: '6px 10px', background: '#12122a', borderRadius: 4,
-                      border: '1px solid #1e293b', cursor: 'pointer',
+                      padding: '6px 10px', background: 'var(--bg-secondary)', borderRadius: 4,
+                      border: '1px solid var(--border)', cursor: 'pointer',
                     }}
                       onClick={() => !adding && handleAdd(m.id)}
                     >
@@ -2806,8 +2806,8 @@ function DependencyManager({ monitorId, monitorName, manageKey }) {
               return (
                 <div key={dep.id} style={{
                   display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                  padding: '10px 14px', background: '#0f172a', borderRadius: 6,
-                  border: '1px solid #1e293b',
+                  padding: '10px 14px', background: 'var(--bg-primary)', borderRadius: 6,
+                  border: '1px solid var(--border)',
                 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                     <div style={{ width: 8, height: 8, borderRadius: '50%', background: color, flexShrink: 0 }} />

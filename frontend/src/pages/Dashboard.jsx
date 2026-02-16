@@ -112,9 +112,9 @@ function UptimeHistoryChart({ data, days }) {
       {yTicks.map(v => (
         <g key={v}>
           <line x1={PAD_L} y1={toY(v)} x2={W - PAD_R} y2={toY(v)}
-            stroke="rgba(255,255,255,0.07)" strokeWidth="1" />
+            stroke="var(--chart-grid)" strokeWidth="1" />
           <text x={PAD_L - 6} y={toY(v) + 4} textAnchor="end"
-            fill="rgba(255,255,255,0.45)" fontSize="10">
+            fill="var(--chart-text)" fontSize="10">
             {v % 1 === 0 ? `${v}%` : `${v.toFixed(1)}%`}
           </text>
         </g>
@@ -126,7 +126,7 @@ function UptimeHistoryChart({ data, days }) {
         const bw = Math.max(chartW / filled.length, 2);
         return (
           <rect key={`nodata-${i}`} x={toX(i) - bw/2} y={PAD_T} width={bw} height={chartH}
-            fill="rgba(255,255,255,0.03)" />
+            fill="var(--chart-fill)" />
         );
       })}
 
@@ -159,7 +159,7 @@ function UptimeHistoryChart({ data, days }) {
           <g key={i}>
             <circle cx={toX(i)} cy={toY(d.uptime_pct)} r="3"
               fill={d.uptime_pct >= 99.9 ? '#00d4aa' : d.uptime_pct >= 99 ? '#ffa502' : '#ff4757'}
-              stroke="rgba(0,0,0,0.3)" strokeWidth="1" />
+              stroke="var(--chart-bar-stroke)" strokeWidth="1" />
             <rect x={toX(i) - 10} y={PAD_T} width="20" height={chartH}
               fill="transparent"
               onMouseEnter={() => setTooltip({ i, d, x: toX(i), y: toY(d.uptime_pct) })}
@@ -174,7 +174,7 @@ function UptimeHistoryChart({ data, days }) {
         const label = d.date.slice(5); // MM-DD
         return (
           <text key={i} x={toX(i)} y={H - 6} textAnchor="middle"
-            fill="rgba(255,255,255,0.45)" fontSize="10">
+            fill="var(--chart-text)" fontSize="10">
             {label}
           </text>
         );
@@ -184,17 +184,17 @@ function UptimeHistoryChart({ data, days }) {
       {tooltip && (
         <g>
           <line x1={tooltip.x} y1={PAD_T} x2={tooltip.x} y2={PAD_T + chartH}
-            stroke="rgba(255,255,255,0.2)" strokeWidth="1" strokeDasharray="3,3" />
+            stroke="var(--chart-avg-stroke)" strokeWidth="1" strokeDasharray="3,3" />
           <rect x={Math.min(tooltip.x - 60, W - PAD_R - 120)} y={Math.max(tooltip.y - 42, PAD_T)} width="120" height="36"
-            rx="4" fill="rgba(30,30,40,0.95)" stroke="rgba(255,255,255,0.15)" />
+            rx="4" fill="var(--chart-tooltip-bg)" stroke="var(--chart-tooltip-border)" />
           {tooltip.noData ? (
             <>
               <text x={Math.min(tooltip.x, W - PAD_R - 60)} y={Math.max(tooltip.y - 22, PAD_T + 20)} textAnchor="middle"
-                fill="rgba(255,255,255,0.5)" fontSize="11">
+                fill="var(--chart-tooltip-text)" fontSize="11">
                 No data
               </text>
               <text x={Math.min(tooltip.x, W - PAD_R - 60)} y={Math.max(tooltip.y - 9, PAD_T + 33)} textAnchor="middle"
-                fill="rgba(255,255,255,0.4)" fontSize="10">
+                fill="var(--chart-text-dim)" fontSize="10">
                 {tooltip.d.date}
               </text>
             </>
@@ -205,7 +205,7 @@ function UptimeHistoryChart({ data, days }) {
                 {tooltip.d.uptime_pct.toFixed(2)}% uptime
               </text>
               <text x={Math.min(tooltip.x, W - PAD_R - 60)} y={Math.max(tooltip.y - 13, PAD_T + 29)} textAnchor="middle"
-                fill="rgba(255,255,255,0.6)" fontSize="10">
+                fill="var(--chart-text-strong)" fontSize="10">
                 {tooltip.d.date} · {tooltip.d.total_checks} checks
               </text>
             </>

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { getStatusPages, getStatusPageDetail, createStatusPageApi, updateStatusPage, deleteStatusPage, addPageMonitors, removePageMonitor, getMonitors } from '../api';
 import { IconGlobe, IconWrench, IconTrash, IconEdit, IconKey, IconPlus, IconX } from '../Icons';
 
-const inputStyle = { width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #334155', borderRadius: 6, color: '#e2e8f0', fontSize: '0.9rem', boxSizing: 'border-box' };
+const inputStyle = { width: '100%', padding: '8px 12px', background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text-primary)', fontSize: '0.9rem', boxSizing: 'border-box' };
 const labelStyle = { display: 'block', fontSize: '0.8rem', color: '#94a3b8', marginBottom: 4 };
 const fieldStyle = { marginBottom: 12 };
 
@@ -114,9 +114,9 @@ function CreateStatusPage({ onCreated, onCancel }) {
         <h3 style={{ color: '#00d4aa', marginTop: 0 }}>✅ Status Page Created</h3>
         <p><strong>Title:</strong> {result.status_page.title}</p>
         <p><strong>Slug:</strong> /{result.status_page.slug}</p>
-        <div style={{ background: '#1a1a2e', padding: '12px 16px', borderRadius: 8, marginTop: 12, marginBottom: 12 }}>
+        <div style={{ background: 'var(--bg-card)', padding: '12px 16px', borderRadius: 8, marginTop: 12, marginBottom: 12 }}>
           <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginBottom: 4 }}>Manage Key (save this — shown once)</div>
-          <code style={{ fontSize: '0.85rem', color: '#fbbf24', wordBreak: 'break-all' }}>{result.manage_key}</code>
+          <code style={{ fontSize: '0.85rem', color: 'var(--warning)', wordBreak: 'break-all' }}>{result.manage_key}</code>
           <button
             className="btn"
             style={{ marginLeft: 8, fontSize: '0.7rem', padding: '2px 8px' }}
@@ -146,7 +146,7 @@ function CreateStatusPage({ onCreated, onCancel }) {
           showSlug={true}
         />
 
-        {error && <div style={{ color: '#f87171', fontSize: '0.85rem', marginBottom: 12 }}>{error}</div>}
+        {error && <div style={{ color: 'var(--danger)', fontSize: '0.85rem', marginBottom: 12 }}>{error}</div>}
 
         <div style={{ display: 'flex', gap: 8 }}>
           <button type="submit" className="btn btn-primary" disabled={submitting}>
@@ -332,7 +332,7 @@ function EditStatusPage({ page, slug, manageKey, onUpdated, onCancel }) {
           showSlug={false}
         />
 
-        {error && <div style={{ color: '#f87171', fontSize: '0.85rem', marginBottom: 12 }}>{error}</div>}
+        {error && <div style={{ color: 'var(--danger)', fontSize: '0.85rem', marginBottom: 12 }}>{error}</div>}
 
         <div style={{ display: 'flex', gap: 8 }}>
           <button type="submit" className="btn btn-primary" disabled={submitting}>
@@ -412,7 +412,7 @@ function MonitorManager({ slug, pageMonitors, manageKey, onUpdated }) {
         </button>
       </div>
 
-      {error && <div style={{ color: '#f87171', fontSize: '0.8rem', marginBottom: 8 }}>{error}</div>}
+      {error && <div style={{ color: 'var(--danger)', fontSize: '0.8rem', marginBottom: 8 }}>{error}</div>}
 
       {/* Current monitors with remove buttons */}
       {pageMonitors.length === 0 ? (
@@ -420,10 +420,10 @@ function MonitorManager({ slug, pageMonitors, manageKey, onUpdated }) {
       ) : (
         <div style={{ display: 'grid', gap: 6, marginBottom: showAdd ? 16 : 0 }}>
           {pageMonitors.map(m => {
-            const statusColors = { up: '#00d4aa', down: '#ef4444', degraded: '#fbbf24', maintenance: '#8b5cf6', unknown: '#64748b' };
+            const statusColors = { up: '#00d4aa', down: '#ef4444', degraded: 'var(--warning)', maintenance: '#8b5cf6', unknown: '#64748b' };
             const color = statusColors[m.current_status] || '#64748b';
             return (
-              <div key={m.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: '#0f172a', borderRadius: 6, border: '1px solid #1e293b' }}>
+              <div key={m.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: 'var(--bg-primary)', borderRadius: 6, border: '1px solid var(--border)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <div style={{ width: 8, height: 8, borderRadius: '50%', background: color, flexShrink: 0 }} />
                   <span style={{ fontSize: '0.85rem' }}>{m.name}</span>
@@ -431,7 +431,7 @@ function MonitorManager({ slug, pageMonitors, manageKey, onUpdated }) {
                 </div>
                 <button
                   className="btn"
-                  style={{ fontSize: '0.65rem', padding: '2px 6px', color: '#f87171' }}
+                  style={{ fontSize: '0.65rem', padding: '2px 6px', color: 'var(--danger)' }}
                   onClick={() => handleRemove(m.id)}
                   disabled={removing === m.id}
                   title="Remove from page"
@@ -447,7 +447,7 @@ function MonitorManager({ slug, pageMonitors, manageKey, onUpdated }) {
       {/* Add monitors panel */}
       {showAdd && (
         <div>
-          <div style={{ borderTop: '1px solid #2a2a4a', paddingTop: 12, marginTop: 4 }}>
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12, marginTop: 4 }}>
             <input
               type="text"
               value={search}
@@ -464,10 +464,10 @@ function MonitorManager({ slug, pageMonitors, manageKey, onUpdated }) {
             ) : (
               <div style={{ maxHeight: 240, overflowY: 'auto', display: 'grid', gap: 4 }}>
                 {filtered.slice(0, 50).map(m => {
-                  const statusColors = { up: '#00d4aa', down: '#ef4444', degraded: '#fbbf24', maintenance: '#8b5cf6', unknown: '#64748b' };
+                  const statusColors = { up: '#00d4aa', down: '#ef4444', degraded: 'var(--warning)', maintenance: '#8b5cf6', unknown: '#64748b' };
                   const color = statusColors[m.current_status] || '#64748b';
                   return (
-                    <div key={m.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 10px', background: '#12122a', borderRadius: 4, border: '1px solid #1e293b' }}>
+                    <div key={m.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 10px', background: 'var(--bg-secondary)', borderRadius: 4, border: '1px solid var(--border)' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <div style={{ width: 8, height: 8, borderRadius: '50%', background: color, flexShrink: 0 }} />
                         <span style={{ fontSize: '0.8rem' }}>{m.name}</span>
@@ -535,12 +535,12 @@ function StatusPageView({ slug, onBack, onMonitorSelect, onDeleted }) {
   };
 
   if (loading) return <div style={{ textAlign: 'center', padding: 40, color: '#94a3b8' }}>Loading...</div>;
-  if (error) return <div style={{ textAlign: 'center', padding: 40, color: '#f87171' }}>{error}</div>;
+  if (error) return <div style={{ textAlign: 'center', padding: 40, color: 'var(--danger)' }}>{error}</div>;
   if (!page) return null;
 
   const statusColor = {
     operational: '#00d4aa',
-    degraded: '#fbbf24',
+    degraded: 'var(--warning)',
     major_outage: '#ef4444',
     unknown: '#64748b',
   }[page.overall] || '#64748b';
@@ -606,7 +606,7 @@ function StatusPageView({ slug, onBack, onMonitorSelect, onDeleted }) {
                 <span style={{ fontSize: '0.85rem', color: '#94a3b8' }}>
                   /{page.slug}
                   {page.custom_domain && <span> · {page.custom_domain}</span>}
-                  {page.is_public === false && <span style={{ color: '#fbbf24', marginLeft: 8 }}>Private</span>}
+                  {page.is_public === false && <span style={{ color: 'var(--warning)', marginLeft: 8 }}>Private</span>}
                 </span>
                 <button className="btn" style={{ fontSize: '0.75rem', padding: '4px 10px' }} onClick={() => setEditing(true)}>
                   <IconEdit size={14} style={{ marginRight: 4, verticalAlign: 'middle' }} /> Edit
@@ -630,7 +630,7 @@ function StatusPageView({ slug, onBack, onMonitorSelect, onDeleted }) {
                 <span style={{ fontSize: '0.85rem', color: '#94a3b8' }}>Danger zone</span>
                 <button
                   className="btn"
-                  style={{ fontSize: '0.75rem', padding: '4px 10px', color: '#f87171', borderColor: '#7f1d1d' }}
+                  style={{ fontSize: '0.75rem', padding: '4px 10px', color: 'var(--danger)', borderColor: 'var(--danger-bg)' }}
                   onClick={() => setConfirmDelete(true)}
                 >
                   <IconTrash size={14} style={{ marginRight: 4, verticalAlign: 'middle' }} /> Delete Page
@@ -638,14 +638,14 @@ function StatusPageView({ slug, onBack, onMonitorSelect, onDeleted }) {
               </div>
             ) : (
               <div>
-                <p style={{ fontSize: '0.85rem', color: '#f87171', marginTop: 0 }}>
+                <p style={{ fontSize: '0.85rem', color: 'var(--danger)', marginTop: 0 }}>
                   Delete <strong>"{page.title}"</strong>? This removes the status page and its monitor assignments. Monitors themselves are not deleted.
                 </p>
-                {deleteError && <div style={{ color: '#f87171', fontSize: '0.8rem', marginBottom: 8 }}>{deleteError}</div>}
+                {deleteError && <div style={{ color: 'var(--danger)', fontSize: '0.8rem', marginBottom: 8 }}>{deleteError}</div>}
                 <div style={{ display: 'flex', gap: 8 }}>
                   <button
                     className="btn"
-                    style={{ fontSize: '0.75rem', padding: '4px 12px', background: '#7f1d1d', color: '#fca5a5', borderColor: '#991b1b' }}
+                    style={{ fontSize: '0.75rem', padding: '4px 12px', background: 'var(--danger-bg)', color: 'var(--danger)', borderColor: 'var(--danger)' }}
                     onClick={handleDelete}
                     disabled={deleting}
                   >
@@ -704,7 +704,7 @@ function StatusPageView({ slug, onBack, onMonitorSelect, onDeleted }) {
 
 function MonitorCard({ monitor, onClick }) {
   const m = monitor;
-  const statusColors = { up: '#00d4aa', down: '#ef4444', degraded: '#fbbf24', maintenance: '#8b5cf6', unknown: '#64748b' };
+  const statusColors = { up: '#00d4aa', down: '#ef4444', degraded: 'var(--warning)', maintenance: '#8b5cf6', unknown: '#64748b' };
   const color = statusColors[m.current_status] || '#64748b';
 
   return (
@@ -717,7 +717,7 @@ function MonitorCard({ monitor, onClick }) {
             {m.tags && m.tags.length > 0 && (
               <span style={{ marginLeft: 8 }}>
                 {m.tags.map(t => (
-                  <span key={t} style={{ fontSize: '0.65rem', background: '#334155', padding: '1px 6px', borderRadius: 4, marginRight: 4 }}>{t}</span>
+                  <span key={t} style={{ fontSize: '0.65rem', background: 'var(--border)', padding: '1px 6px', borderRadius: 4, marginRight: 4 }}>{t}</span>
                 ))}
               </span>
             )}

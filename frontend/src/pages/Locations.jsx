@@ -356,7 +356,7 @@ export default function Locations() {
       )}
 
       {/* Help section */}
-      <div className="card" style={{ marginTop: 24, background: 'rgba(255,255,255,0.02)' }}>
+      <div className="card" style={{ marginTop: 24, background: 'var(--subtle-bg)' }}>
         <h4 style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: 10 }}>How Multi-Region Monitoring Works</h4>
         <ol style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', lineHeight: 1.7, paddingLeft: 20, margin: 0 }}>
           <li>Register check locations here (each gets a unique probe key)</li>
