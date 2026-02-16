@@ -85,6 +85,10 @@ fn test_client_with_db() -> (Client, String) {
             watchpost::routes::remove_dependency,
             watchpost::routes::list_dependents,
         ])
+        .mount("/", rocket::routes![
+            watchpost::routes::skills_index,
+            watchpost::routes::skills_skill_md,
+        ])
         .register("/", rocket::catchers![
             watchpost::catchers::bad_request,
             watchpost::catchers::unauthorized,
@@ -6594,4 +6598,92 @@ fn test_disable_stale_locations_does_not_affect_never_seen() {
     // Run with any threshold — should not disable locations that never reported
     let disabled = watchpost::checker::disable_stale_locations(db, 30);
     assert_eq!(disabled, 0);
+}
+
+// ── Well-Known Skills Discovery ──
+
+#[test]
+fn test_skills_index_json() {
+    let client = test_client();
+    let resp = client.get("/.well-known/skills/index.json").dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let skills = body["skills"].as_array().unwrap();
+    assert_eq!(skills.len(), 1);
+    assert_eq!(skills[0]["name"], "watchpost");
+    assert!(skills[0]["description"].as_str().unwrap().len() > 20);
+    let files = skills[0]["files"].as_array().unwrap();
+    assert!(files.contains(&serde_json::json!("SKILL.md")));
+}
+
+#[test]
+fn test_skills_skill_md() {
+    let client = test_client();
+    let resp = client.get("/.well-known/skills/watchpost/SKILL.md").dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body = resp.into_string().unwrap();
+    // YAML frontmatter
+    assert!(body.starts_with("---"));
+    assert!(body.contains("name: watchpost"));
+    assert!(body.contains("description:"));
+    // Content sections
+    assert!(body.contains("# Watchpost Integration"));
+    assert!(body.contains("## Quick Start"));
+    assert!(body.contains("## Auth Model"));
+    assert!(body.contains("## Monitor Types"));
+    assert!(body.contains("## Core Patterns"));
+    assert!(body.contains("## SSE Event Types"));
+    assert!(body.contains("## Gotchas"));
+}
+
+#[test]
+fn test_skills_index_name_matches_skill_md() {
+    let client = test_client();
+
+    // Fetch index
+    let resp = client.get("/.well-known/skills/index.json").dispatch();
+    let index: serde_json::Value = resp.into_json().unwrap();
+    let skill_name = index["skills"][0]["name"].as_str().unwrap();
+
+    // Fetch SKILL.md using the name from the index
+    let skill_url = format!("/.well-known/skills/{}/SKILL.md", skill_name);
+    let resp = client.get(&skill_url).dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body = resp.into_string().unwrap();
+    // Verify the YAML frontmatter name matches
+    let name_line = format!("name: {}", skill_name);
+    assert!(body.contains(&name_line));
+}
+
+#[test]
+fn test_skills_description_within_spec_limits() {
+    let client = test_client();
+    let resp = client.get("/.well-known/skills/index.json").dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let desc = body["skills"][0]["description"].as_str().unwrap();
+    // Cloudflare RFC recommends descriptions under 500 chars
+    assert!(desc.len() <= 500, "Description too long: {} chars", desc.len());
+    assert!(desc.len() >= 20, "Description too short: {} chars", desc.len());
+}
+
+#[test]
+fn test_skills_skill_md_documents_endpoints() {
+    let client = test_client();
+    let resp = client.get("/.well-known/skills/watchpost/SKILL.md").dispatch();
+    let body = resp.into_string().unwrap();
+    // Verify key endpoints are documented
+    assert!(body.contains("POST /api/v1/monitors"));
+    assert!(body.contains("GET /api/v1/monitors"));
+    assert!(body.contains("/api/v1/events"));
+    assert!(body.contains("/api/v1/health"));
+    assert!(body.contains("manage_key"));
+}
+
+#[test]
+fn test_skills_llms_txt_mentions_skills() {
+    let client = test_client();
+    let resp = client.get("/api/v1/llms.txt").dispatch();
+    let body = resp.into_string().unwrap();
+    assert!(body.contains("/.well-known/skills/index.json"));
+    assert!(body.contains("/.well-known/skills/watchpost/SKILL.md"));
 }

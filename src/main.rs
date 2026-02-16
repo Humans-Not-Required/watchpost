@@ -130,6 +130,12 @@ fn rocket() -> _ {
             })
         }));
 
+    // Well-known skills discovery (mounted at root, outside /api/v1)
+    build = build.mount("/", routes![
+        routes::skills_index,
+        routes::skills_skill_md,
+    ]);
+
     // Serve frontend static files if the directory exists
     if static_dir.is_dir() {
         println!("📦 Serving frontend from: {}", static_dir.display());
