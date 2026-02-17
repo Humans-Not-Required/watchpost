@@ -1688,7 +1688,7 @@ fn test_dashboard_with_paused_monitor() {
 
 #[test]
 fn test_dashboard_no_auth_hides_incidents_and_slowest() {
-    let (client, admin_key) = test_client_with_admin_key();
+    let (client, _admin_key) = test_client_with_admin_key();
 
     // Create a monitor and verify it exists
     let resp = client.post("/api/v1/monitors")
@@ -4762,7 +4762,7 @@ fn test_consensus_both_down_triggers_incident() {
         .dispatch();
     let mon: serde_json::Value = resp.into_json().unwrap();
     let monitor_id = mon["monitor"]["id"].as_str().unwrap();
-    let manage_key = mon["manage_key"].as_str().unwrap();
+    let _manage_key = mon["manage_key"].as_str().unwrap();
 
     // First, set status to "up" by submitting UP probes
     let resp = client.post("/api/v1/locations")
@@ -4982,7 +4982,7 @@ fn test_consensus_degraded_status() {
 
 #[test]
 fn test_consensus_in_list_and_export() {
-    let (client, admin_key) = test_client_with_admin_key();
+    let (client, _admin_key) = test_client_with_admin_key();
 
     // Create monitor with consensus_threshold
     let resp = client.post("/api/v1/monitors")
@@ -5300,7 +5300,7 @@ fn test_delete_status_page_wrong_key() {
 #[test]
 fn test_add_monitors_to_status_page() {
     let client = test_client();
-    let (page_id, page_key) = create_test_status_page(&client, "with-monitors");
+    let (_page_id, page_key) = create_test_status_page(&client, "with-monitors");
     let (mon_id1, _) = create_test_monitor(&client);
     let (mon_id2, _) = create_test_monitor(&client);
 
