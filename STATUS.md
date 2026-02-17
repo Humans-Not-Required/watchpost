@@ -6,6 +6,7 @@
 
 ### What's Done
 
+- **Security hardening** (commit 7b734e7) — Comprehensive security pass across 22 source files. (1) Added `Db::conn()` method with mutex poison recovery — if any request panics while holding the DB lock, subsequent requests recover gracefully instead of propagating the panic. Replaced 72+ `db.conn.lock().unwrap()` calls across all route files, checker, consensus, and notification modules. (2) Fixed error information leakage: replaced 50+ instances of `e.to_string()` in error responses with generic "Internal server error" messages — prevents leaking SQL table names, column details, or query structures to API clients. (3) Converted `prepare().unwrap()` and `query_map().unwrap()` calls to graceful error handling in locations.rs, dependencies.rs, and the circular dependency checker. (4) Fixed RateLimiter mutex with poison recovery. Zero clippy warnings, all 315 tests passing.
 - Repo initialized with Rust + Rocket + SQLite (rusqlite bundled)
 - **DESIGN.md** created (auth model, API surface, checker design)
 - DB schema + migrations:
