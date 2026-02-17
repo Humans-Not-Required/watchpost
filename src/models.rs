@@ -1,5 +1,64 @@
 use serde::{Deserialize, Serialize};
 
+/// Deserialize tags that can be either a JSON array of strings or a comma-separated string.
+/// Examples: `["a","b"]` → `["a","b"]`, `"a,b"` → `["a","b"]`, absent → `[]`
+fn deserialize_flexible_tags<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de;
+
+    struct TagsVisitor;
+    impl<'de> de::Visitor<'de> for TagsVisitor {
+        type Value = Vec<String>;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("a string or array of strings")
+        }
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<Vec<String>, E> {
+            Ok(v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
+        }
+        fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<Vec<String>, A::Error> {
+            let mut tags = Vec::new();
+            while let Some(tag) = seq.next_element::<String>()? {
+                tags.push(tag);
+            }
+            Ok(tags)
+        }
+        fn visit_none<E: de::Error>(self) -> Result<Vec<String>, E> { Ok(Vec::new()) }
+        fn visit_unit<E: de::Error>(self) -> Result<Vec<String>, E> { Ok(Vec::new()) }
+    }
+    deserializer.deserialize_any(TagsVisitor)
+}
+
+/// Optional version of flexible tags: absent → None, string → Some(vec), array → Some(vec)
+fn deserialize_optional_flexible_tags<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de;
+
+    struct OptTagsVisitor;
+    impl<'de> de::Visitor<'de> for OptTagsVisitor {
+        type Value = Option<Vec<String>>;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("null, a string, or array of strings")
+        }
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<Option<Vec<String>>, E> {
+            Ok(Some(v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()))
+        }
+        fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<Option<Vec<String>>, A::Error> {
+            let mut tags = Vec::new();
+            while let Some(tag) = seq.next_element::<String>()? {
+                tags.push(tag);
+            }
+            Ok(Some(tags))
+        }
+        fn visit_none<E: de::Error>(self) -> Result<Option<Vec<String>>, E> { Ok(None) }
+        fn visit_unit<E: de::Error>(self) -> Result<Option<Vec<String>>, E> { Ok(None) }
+    }
+    deserializer.deserialize_any(OptTagsVisitor)
+}
+
 /// Deserialize a double-option field: absent → None, null → Some(None), value → Some(Some(v))
 fn deserialize_optional_nullable<'de, T, D>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
 where
@@ -76,7 +135,7 @@ pub struct CreateMonitor {
     pub dns_expected: Option<String>,
     pub sla_target: Option<f64>,
     pub sla_period_days: Option<u32>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_flexible_tags")]
     pub tags: Vec<String>,
     pub group_name: Option<String>,
     pub consensus_threshold: Option<u32>,
@@ -112,6 +171,7 @@ pub struct UpdateMonitor {
     pub sla_target: Option<Option<f64>>,
     #[serde(default, deserialize_with = "deserialize_optional_nullable")]
     pub sla_period_days: Option<Option<u32>>,
+    #[serde(default, deserialize_with = "deserialize_optional_flexible_tags")]
     pub tags: Option<Vec<String>>,
     pub group_name: Option<String>,
     #[serde(default, deserialize_with = "deserialize_optional_nullable")]

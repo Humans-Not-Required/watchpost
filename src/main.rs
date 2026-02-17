@@ -126,7 +126,15 @@ fn rocket() -> _ {
         .attach(rocket::fairing::AdHoc::on_liftoff("Checker", move |rocket| {
             Box::pin(async move {
                 let shutdown = rocket.shutdown();
-                tokio::spawn(checker::run_checker(checker_db, checker_broadcaster, shutdown));
+                println!("🚀 Spawning checker task...");
+                let handle = tokio::spawn(checker::run_checker(checker_db, checker_broadcaster, shutdown));
+                // Monitor the checker task for unexpected exits
+                tokio::spawn(async move {
+                    match handle.await {
+                        Ok(()) => eprintln!("⚠️  Checker task exited normally (unexpected)"),
+                        Err(e) => eprintln!("❌ Checker task failed: {e}"),
+                    }
+                });
             })
         }));
 

@@ -84,34 +84,67 @@ struct CheckResult {
 
 /// Background check scheduler. Runs in a tokio task.
 pub async fn run_checker(db: Arc<Db>, broadcaster: Arc<EventBroadcaster>, shutdown: rocket::Shutdown) {
+    println!("🔍 Checker: starting initialization...");
+
     // Webhook client for consensus evaluation (shared, built once)
-    let consensus_client = reqwest::Client::builder()
+    let consensus_client = match reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .build()
-        .expect("Failed to build consensus webhook client");
-    // Wait 30s for server to warm up
+    {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("❌ Checker: failed to build consensus client: {e}");
+            return;
+        }
+    };
+
+    // Wait 10s for server to warm up (reduced from 30s for faster first check)
+    println!("🔍 Checker: waiting 10s for server warmup...");
     tokio::select! {
-        _ = time::sleep(Duration::from_secs(30)) => {},
-        _ = shutdown.clone() => return,
+        _ = time::sleep(Duration::from_secs(10)) => {},
+        _ = shutdown.clone() => {
+            println!("🔍 Checker: shutdown during warmup");
+            return;
+        },
     }
 
-    let client_follow = reqwest::Client::builder()
+    let client_follow = match reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::limited(10))
         .timeout(Duration::from_secs(60))
         .build()
-        .expect("Failed to build HTTP client (follow redirects)");
+    {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("❌ Checker: failed to build HTTP client (follow redirects): {e}");
+            return;
+        }
+    };
 
-    let client_no_follow = reqwest::Client::builder()
+    let client_no_follow = match reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(60))
         .build()
-        .expect("Failed to build HTTP client (no redirects)");
+    {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("❌ Checker: failed to build HTTP client (no redirects): {e}");
+            return;
+        }
+    };
 
     // Shared webhook client for TCP/DNS checks (which don't have their own HTTP client)
-    let webhook_client = reqwest::Client::builder()
+    let webhook_client = match reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .build()
-        .expect("Failed to build webhook client");
+    {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("❌ Checker: failed to build webhook client: {e}");
+            return;
+        }
+    };
+
+    println!("✅ Checker: initialized, entering check loop");
 
     // Track last retention run so we only prune once per hour
     let mut last_retention = std::time::Instant::now() - Duration::from_secs(3600);
@@ -178,6 +211,7 @@ pub async fn run_checker(db: Arc<Db>, broadcaster: Arc<EventBroadcaster>, shutdo
 
         match monitor {
             Some(m) => {
+                println!("🔍 Checking: {} ({})", m.name, m.url);
                 // Execute the appropriate check type
                 let result = match m.monitor_type.as_str() {
                     "tcp" => execute_tcp_check(&m).await,

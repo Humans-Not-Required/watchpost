@@ -978,6 +978,67 @@ fn test_filter_monitors_by_tag() {
 }
 
 #[test]
+fn test_create_monitor_tags_as_comma_string() {
+    // Tags sent as a comma-separated string should be split into an array
+    let client = test_client();
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "CSV Tags", "url": "https://example.com/api", "is_public": true, "tags": "prod,api,critical"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let tags = body["monitor"]["tags"].as_array().unwrap();
+    assert_eq!(tags.len(), 3);
+    assert!(tags.contains(&serde_json::json!("prod")));
+    assert!(tags.contains(&serde_json::json!("api")));
+    assert!(tags.contains(&serde_json::json!("critical")));
+}
+
+#[test]
+fn test_create_monitor_tags_as_comma_string_with_spaces() {
+    let client = test_client();
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Spaced Tags", "url": "https://example.com", "is_public": true, "tags": "hnr, P0, backend"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let tags = body["monitor"]["tags"].as_array().unwrap();
+    assert_eq!(tags.len(), 3);
+    // Tags are lowercased in storage
+    assert!(tags.contains(&serde_json::json!("hnr")));
+    assert!(tags.contains(&serde_json::json!("p0")));
+    assert!(tags.contains(&serde_json::json!("backend")));
+}
+
+#[test]
+fn test_update_monitor_tags_as_comma_string() {
+    let client = test_client();
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Update CSV", "url": "https://example.com", "is_public": true}"#)
+        .dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let id = body["monitor"]["id"].as_str().unwrap();
+    let key = body["manage_key"].as_str().unwrap();
+
+    // Update with comma-separated string tags
+    let resp = client.patch(format!("/api/v1/monitors/{}", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"tags": "v2,backend"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+
+    let resp = client.get(format!("/api/v1/monitors/{}", id)).dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let tags = body["tags"].as_array().unwrap();
+    assert_eq!(tags.len(), 2);
+    assert!(tags.contains(&serde_json::json!("v2")));
+    assert!(tags.contains(&serde_json::json!("backend")));
+}
+
+#[test]
 fn test_status_page_tag_filter() {
     let client = test_client();
 
