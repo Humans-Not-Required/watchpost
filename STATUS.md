@@ -85,7 +85,7 @@
 - ~~**Task ef781225:** Jordan asked "What is this about?"~~ — Stale, no further context. Board manager should close if no update.
 - ~~**Task b446f607 (Follow 301 redirects):** Completed (commit a7fc268). Monitors follow redirects by default.~~
 
-- Test suite: **323 tests passing** (307 HTTP + 16 unit) — parallel-safe, includes 15 DNS monitor tests, 11 TCP monitor tests, 8 settings/branding tests, 9 monitor group tests, 7 badge tests, 9 dashboard + admin verify tests, 7 maintenance window tests, 4 response time alert tests, 9 tag tests (incl. flexible format), 3 search/filter tests, 3 heartbeat retention tests, 5 notification tests (CRUD + chat format), 5 follow_redirects tests, 13 validation/coverage tests, 7 email notification tests, 13 incident notes tests, 23 multi-region location tests, 15 consensus tests, 28 status pages tests, 18 alert rule tests, 11 webhook delivery tests, 18 dependency tests, 6 probe health tests, 8 chat message format unit tests
+- Test suite: **323 Rust tests passing** (307 HTTP + 16 unit) + **77 Python SDK integration tests** — parallel-safe, includes 15 DNS monitor tests, 11 TCP monitor tests, 8 settings/branding tests, 9 monitor group tests, 7 badge tests, 9 dashboard + admin verify tests, 7 maintenance window tests, 4 response time alert tests, 9 tag tests (incl. flexible format), 3 search/filter tests, 3 heartbeat retention tests, 5 notification tests (CRUD + chat format), 5 follow_redirects tests, 13 validation/coverage tests, 7 email notification tests, 13 incident notes tests, 23 multi-region location tests, 15 consensus tests, 28 status pages tests, 18 alert rule tests, 11 webhook delivery tests, 18 dependency tests, 6 probe health tests, 8 chat message format unit tests
 
 ### ✅ Completed (most recent)
 
@@ -138,6 +138,8 @@
 - **Heartbeat retention** (commit ab480d4) — Auto-prune heartbeats older than 90 days (configurable via HEARTBEAT_RETENTION_DAYS env var). Runs hourly in checker loop. 3 new tests.
 - **DNS for <staging-domain>** — Cloudflare wildcard resolves, HTTPS working
 - **Manage key integration** (commit 6ac08cf) — Pause/Resume, Delete (with confirmation), Incident Acknowledgement from UI when `?key=` present
+
+- **Python SDK** — Complete zero-dependency Python client library (`sdk/python/watchpost.py`) wrapping all 60+ API endpoints. Features: typed error hierarchy (NotFoundError, AuthError, ValidationError, ConflictError, RateLimitError), response normalization (flattened create responses), SSE streaming, convenience helpers (is_up, all_up, wait_for_up, get_downtime_summary, quick_monitor). 77 integration tests (`test_sdk.py`). README with examples for every feature category.
 
 ### ⚠️ Gotchas
 
