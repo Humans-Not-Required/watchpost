@@ -784,6 +784,75 @@ fn test_notification_toggle_wrong_key() {
 }
 
 #[test]
+fn test_notification_chat_payload_format() {
+    let client = test_client();
+    let (id, key) = create_test_monitor(&client);
+
+    // Create a webhook with chat payload format
+    let resp = client.post(format!("/api/v1/monitors/{}/notifications", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"name": "Chat Alerts", "channel_type": "webhook", "config": {"url": "https://chat.example.com/hook/token123", "payload_format": "chat"}}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["name"], "Chat Alerts");
+    assert_eq!(body["channel_type"], "webhook");
+    // Config should preserve payload_format
+    assert_eq!(body["config"]["url"], "https://chat.example.com/hook/token123");
+    assert_eq!(body["config"]["payload_format"], "chat");
+}
+
+#[test]
+fn test_notification_default_json_format() {
+    let client = test_client();
+    let (id, key) = create_test_monitor(&client);
+
+    // Create a webhook without payload_format (should default to json behavior)
+    let resp = client.post(format!("/api/v1/monitors/{}/notifications", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"name": "JSON Hook", "channel_type": "webhook", "config": {"url": "https://example.com/hook"}}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["config"]["url"], "https://example.com/hook");
+    // payload_format should be absent (null) — defaults to json at delivery time
+    assert!(body["config"]["payload_format"].is_null());
+}
+
+#[test]
+fn test_notification_chat_format_listed() {
+    let client = test_client();
+    let (id, key) = create_test_monitor(&client);
+
+    // Create two webhooks: one chat, one default
+    client.post(format!("/api/v1/monitors/{}/notifications", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"name": "Chat", "channel_type": "webhook", "config": {"url": "https://chat.example.com/hook", "payload_format": "chat"}}"#)
+        .dispatch();
+    client.post(format!("/api/v1/monitors/{}/notifications", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"name": "JSON", "channel_type": "webhook", "config": {"url": "https://json.example.com/hook"}}"#)
+        .dispatch();
+
+    // List should show both with correct configs
+    let resp = client.get(format!("/api/v1/monitors/{}/notifications", id))
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert_eq!(body.len(), 2);
+
+    let chat_hook = body.iter().find(|n| n["name"] == "Chat").unwrap();
+    assert_eq!(chat_hook["config"]["payload_format"], "chat");
+    let json_hook = body.iter().find(|n| n["name"] == "JSON").unwrap();
+    assert!(json_hook["config"]["payload_format"].is_null());
+}
+
+#[test]
 fn test_search_monitors_by_name() {
     let client = test_client();
 

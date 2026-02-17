@@ -703,9 +703,9 @@ async fn process_check_result(
         });
 
         // Webhooks
-        let urls = notifications::get_webhook_urls(db, &monitor.id);
-        if !urls.is_empty() {
-            notifications::fire_webhooks(db, http_client, &monitor.id, &urls, payload).await;
+        let channels = notifications::get_webhook_channels(db, &monitor.id);
+        if !channels.is_empty() {
+            notifications::fire_webhooks(db, http_client, &monitor.id, &channels, payload).await;
         }
 
         // Emails
@@ -980,9 +980,9 @@ async fn process_repeat_notifications(
                 });
 
                 // Webhooks
-                let urls = notifications::get_webhook_urls(db, &monitor.id);
-                if !urls.is_empty() {
-                    notifications::fire_webhooks(db, http_client, &monitor.id, &urls, &payload).await;
+                let channels = notifications::get_webhook_channels(db, &monitor.id);
+                if !channels.is_empty() {
+                    notifications::fire_webhooks(db, http_client, &monitor.id, &channels, &payload).await;
                 }
 
                 // Emails
@@ -1039,9 +1039,9 @@ async fn process_repeat_notifications(
                 });
 
                 // Fire to ALL channels (escalation = notify everything)
-                let urls = notifications::get_webhook_urls(db, &monitor.id);
-                if !urls.is_empty() {
-                    notifications::fire_webhooks(db, http_client, &monitor.id, &urls, &payload).await;
+                let channels = notifications::get_webhook_channels(db, &monitor.id);
+                if !channels.is_empty() {
+                    notifications::fire_webhooks(db, http_client, &monitor.id, &channels, &payload).await;
                 }
                 let emails = notifications::get_email_addresses(db, &monitor.id);
                 if !emails.is_empty() {

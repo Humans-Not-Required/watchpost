@@ -71,6 +71,13 @@ On incident, POSTs JSON with event, monitor info, and incident details to the UR
 Delivery includes automatic retry: up to 3 attempts with exponential backoff (2s, 4s delays between retries).
 Every delivery attempt is logged for audit via GET /api/v1/monitors/:id/webhook-deliveries.
 
+#### Chat Payload Format
+Set "payload_format": "chat" in config to send simple text messages instead of structured JSON:
+  config: {"url": "https://chat.example.com/api/v1/hook/token", "payload_format": "chat"}
+Delivers: {"content": "🔴 **Blog** — DOWN\nCause: Connection refused", "sender": "Watchpost"}
+Compatible with Local Agent Chat incoming webhooks, Slack, and other chat systems that accept {"content": "..."} payloads.
+Default (no payload_format or "json") sends the full structured WebhookPayload as before.
+
 ### Webhook Delivery Log
 GET /api/v1/monitors/:id/webhook-deliveries — list delivery attempts (manage key required)
   ?limit=N (1-200, default 50), ?after=<seq> cursor, ?event=incident.created, ?status=failed

@@ -224,9 +224,9 @@ pub async fn evaluate_and_apply(
             data: serde_json::to_value(payload).unwrap_or_default(),
         });
 
-        let urls = notifications::get_webhook_urls(db, monitor_id);
-        if !urls.is_empty() {
-            notifications::fire_webhooks(db, http_client, monitor_id, &urls, payload).await;
+        let channels = notifications::get_webhook_channels(db, monitor_id);
+        if !channels.is_empty() {
+            notifications::fire_webhooks(db, http_client, monitor_id, &channels, payload).await;
         }
 
         let emails = notifications::get_email_addresses(db, monitor_id);

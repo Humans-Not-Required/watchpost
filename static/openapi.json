@@ -3817,7 +3817,7 @@
           },
           "config": {
             "type": "object",
-            "description": "For webhook: {\"url\": \"...\"}, for email: {\"address\": \"...\"}"
+            "description": "For webhook: {\"url\": \"...\", \"payload_format\": \"json|chat\"}. For email: {\"address\": \"...\"}. Chat format sends {\"content\":\"...\",\"sender\":\"Watchpost\"} for chat system compatibility."
           }
         }
       },

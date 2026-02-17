@@ -28,8 +28,25 @@ pub struct WebhookIncident {
     pub resolved_at: Option<String>,
 }
 
-/// Fetch enabled webhook URLs for a monitor.
-pub fn get_webhook_urls(db: &Db, monitor_id: &str) -> Vec<String> {
+/// Payload format for webhook notifications.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PayloadFormat {
+    /// Full structured JSON (default).
+    Json,
+    /// Simple chat message: `{"content": "...", "sender": "Watchpost"}`.
+    /// Compatible with Local Agent Chat incoming webhooks, Slack, etc.
+    Chat,
+}
+
+/// A resolved webhook channel with URL and payload format.
+#[derive(Debug, Clone)]
+pub struct WebhookChannel {
+    pub url: String,
+    pub payload_format: PayloadFormat,
+}
+
+/// Fetch enabled webhook channels for a monitor.
+pub fn get_webhook_channels(db: &Db, monitor_id: &str) -> Vec<WebhookChannel> {
     let conn = db.conn.lock().unwrap();
     let mut stmt = match conn.prepare(
         "SELECT config FROM notification_channels WHERE monitor_id = ?1 AND channel_type = 'webhook' AND is_enabled = 1"
@@ -48,11 +65,58 @@ pub fn get_webhook_urls(db: &Db, monitor_id: &str) -> Vec<String> {
 
     rows.into_iter()
         .filter_map(|config_str| {
-            serde_json::from_str::<serde_json::Value>(&config_str)
-                .ok()
-                .and_then(|v| v["url"].as_str().map(|s| s.to_string()))
+            let v: serde_json::Value = serde_json::from_str(&config_str).ok()?;
+            let url = v["url"].as_str()?.to_string();
+            let payload_format = match v["payload_format"].as_str() {
+                Some("chat") => PayloadFormat::Chat,
+                _ => PayloadFormat::Json,
+            };
+            Some(WebhookChannel { url, payload_format })
         })
         .collect()
+}
+
+/// Format a webhook payload as a human-readable chat message.
+fn format_chat_message(payload: &WebhookPayload) -> String {
+    let emoji = match payload.event.as_str() {
+        "incident.created" => "🔴",
+        "incident.resolved" => "🟢",
+        "monitor.degraded" => "🟡",
+        "monitor.recovered" => "🟢",
+        "maintenance.started" => "🔧",
+        "maintenance.ended" => "✅",
+        "incident.reminder" => "🔔",
+        "incident.escalated" => "🚨",
+        _ => "ℹ️",
+    };
+
+    let event_label = match payload.event.as_str() {
+        "incident.created" => "DOWN",
+        "incident.resolved" => "Recovered",
+        "monitor.degraded" => "Degraded",
+        "monitor.recovered" => "Recovered",
+        "maintenance.started" => "Maintenance started",
+        "maintenance.ended" => "Maintenance ended",
+        "incident.reminder" => "Still down",
+        "incident.escalated" => "ESCALATED",
+        _ => &payload.event,
+    };
+
+    let mut msg = format!(
+        "{} **{}** — {}",
+        emoji, payload.monitor.name, event_label
+    );
+
+    if let Some(ref incident) = payload.incident {
+        if !incident.cause.is_empty() {
+            msg.push_str(&format!("\nCause: {}", incident.cause));
+        }
+        if let Some(ref resolved_at) = incident.resolved_at {
+            msg.push_str(&format!("\nResolved: {}", resolved_at));
+        }
+    }
+
+    msg
 }
 
 /// Maximum retry attempts for webhook delivery.
@@ -63,17 +127,34 @@ const RETRY_BACKOFFS_MS: [u64; 2] = [2000, 4000];
 
 /// Fire webhook notifications with retry and delivery logging.
 ///
-/// Each URL gets up to MAX_WEBHOOK_ATTEMPTS delivery attempts with exponential
+/// Each channel gets up to MAX_WEBHOOK_ATTEMPTS delivery attempts with exponential
 /// backoff. Every attempt is logged to the webhook_deliveries table for audit.
+/// Channels with `payload_format: Chat` receive a simple `{"content":"...","sender":"Watchpost"}`
+/// payload instead of the full structured JSON.
 pub async fn fire_webhooks(
     db: &Db,
     client: &reqwest::Client,
     monitor_id: &str,
-    urls: &[String],
+    channels: &[WebhookChannel],
     payload: &WebhookPayload,
 ) {
-    for url in urls {
+    for channel in channels {
+        let url = &channel.url;
         let delivery_group = uuid::Uuid::new_v4().to_string();
+
+        // Build the appropriate payload body based on format
+        let body: serde_json::Value = match channel.payload_format {
+            PayloadFormat::Chat => {
+                let content = format_chat_message(payload);
+                serde_json::json!({
+                    "content": content,
+                    "sender": "Watchpost"
+                })
+            }
+            PayloadFormat::Json => {
+                serde_json::to_value(payload).unwrap_or_default()
+            }
+        };
 
         for attempt in 1..=MAX_WEBHOOK_ATTEMPTS {
             // Wait before retry (not on first attempt)
@@ -85,7 +166,7 @@ pub async fn fire_webhooks(
             let start = std::time::Instant::now();
             let result = client
                 .post(url)
-                .json(payload)
+                .json(&body)
                 .timeout(std::time::Duration::from_secs(10))
                 .send()
                 .await;
@@ -494,4 +575,115 @@ fn build_transport(config: &SmtpConfig) -> Result<AsyncSmtpTransport<Tokio1Execu
     };
 
     Ok(builder.build())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_payload(event: &str, monitor_name: &str, cause: &str) -> WebhookPayload {
+        WebhookPayload {
+            event: event.to_string(),
+            monitor: WebhookMonitor {
+                id: "mon_123".to_string(),
+                name: monitor_name.to_string(),
+                url: "https://example.com".to_string(),
+                current_status: if event.contains("resolved") || event.contains("recovered") {
+                    "up".to_string()
+                } else {
+                    "down".to_string()
+                },
+            },
+            incident: if cause.is_empty() {
+                None
+            } else {
+                Some(WebhookIncident {
+                    id: "inc_456".to_string(),
+                    cause: cause.to_string(),
+                    started_at: "2026-02-17T03:00:00Z".to_string(),
+                    resolved_at: if event.contains("resolved") {
+                        Some("2026-02-17T03:05:00Z".to_string())
+                    } else {
+                        None
+                    },
+                })
+            },
+            timestamp: "2026-02-17T03:00:00Z".to_string(),
+        }
+    }
+
+    #[test]
+    fn test_chat_message_incident_created() {
+        let payload = make_payload("incident.created", "Blog", "Connection refused");
+        let msg = format_chat_message(&payload);
+        assert!(msg.contains("🔴"));
+        assert!(msg.contains("**Blog**"));
+        assert!(msg.contains("DOWN"));
+        assert!(msg.contains("Connection refused"));
+    }
+
+    #[test]
+    fn test_chat_message_incident_resolved() {
+        let payload = make_payload("incident.resolved", "Blog", "Connection refused");
+        let msg = format_chat_message(&payload);
+        assert!(msg.contains("🟢"));
+        assert!(msg.contains("**Blog**"));
+        assert!(msg.contains("Recovered"));
+        assert!(msg.contains("Resolved: 2026-02-17T03:05:00Z"));
+    }
+
+    #[test]
+    fn test_chat_message_degraded() {
+        let payload = make_payload("monitor.degraded", "API", "Slow response: 5200ms");
+        let msg = format_chat_message(&payload);
+        assert!(msg.contains("🟡"));
+        assert!(msg.contains("Degraded"));
+        assert!(msg.contains("Slow response"));
+    }
+
+    #[test]
+    fn test_chat_message_maintenance() {
+        let payload = make_payload("maintenance.started", "DB Server", "");
+        let msg = format_chat_message(&payload);
+        assert!(msg.contains("🔧"));
+        assert!(msg.contains("Maintenance started"));
+    }
+
+    #[test]
+    fn test_chat_message_escalated() {
+        let payload = make_payload("incident.escalated", "Payment API", "Connection timeout");
+        let msg = format_chat_message(&payload);
+        assert!(msg.contains("🚨"));
+        assert!(msg.contains("ESCALATED"));
+    }
+
+    #[test]
+    fn test_chat_message_no_incident() {
+        let payload = make_payload("monitor.recovered", "CDN", "");
+        let msg = format_chat_message(&payload);
+        assert!(msg.contains("🟢"));
+        assert!(msg.contains("**CDN**"));
+        assert!(!msg.contains("Cause:"));
+    }
+
+    #[test]
+    fn test_payload_format_from_config() {
+        // Test that PayloadFormat parsing works for webhook channel config
+        let config: serde_json::Value = serde_json::json!({"url": "https://example.com", "payload_format": "chat"});
+        let fmt = match config["payload_format"].as_str() {
+            Some("chat") => PayloadFormat::Chat,
+            _ => PayloadFormat::Json,
+        };
+        assert_eq!(fmt, PayloadFormat::Chat);
+    }
+
+    #[test]
+    fn test_payload_format_default_json() {
+        let config: serde_json::Value = serde_json::json!({"url": "https://example.com"});
+        let fmt = match config["payload_format"].as_str() {
+            Some("chat") => PayloadFormat::Chat,
+            _ => PayloadFormat::Json,
+        };
+        assert_eq!(fmt, PayloadFormat::Json);
+    }
 }
