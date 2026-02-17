@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 #[get("/status?<search>&<status>&<tag>&<group>")]
 pub fn status_page(search: Option<&str>, status: Option<&str>, tag: Option<&str>, group: Option<&str>, db: &State<Arc<Db>>) -> Result<Json<StatusOverview>, (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
 
     let mut sql = String::from("SELECT id, name, url, current_status, last_checked_at, tags, group_name FROM monitors WHERE is_public = 1");
     let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
@@ -52,7 +52,7 @@ pub fn status_page(search: Option<&str>, status: Option<&str>, tag: Option<&str>
     sql.push_str(" ORDER BY group_name NULLS LAST, name");
 
     let mut stmt = conn.prepare(&sql)
-        .map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
+        .map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"}))))?;
     let params_vec: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|v| v.as_ref()).collect();
 
     let monitors: Vec<StatusMonitor> = stmt.query_map(params_vec.as_slice(), |row| {
@@ -61,7 +61,7 @@ pub fn status_page(search: Option<&str>, status: Option<&str>, tag: Option<&str>
         let tags_str: String = row.get::<_, String>(5).unwrap_or_default();
         let group_name: Option<String> = row.get::<_, Option<String>>(6).unwrap_or(None);
         Ok((id, row.get(1)?, row.get(2)?, status, row.get::<_, Option<String>>(4)?, tags_str, group_name))
-    }).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?
+    }).map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"}))))?
     .filter_map(|r| r.ok())
     .map(|(id, name, url, status, last_checked, tags_str, group_name)| {
         let total_24h: u32 = conn.query_row(

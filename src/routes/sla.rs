@@ -11,9 +11,9 @@ pub fn monitor_sla(
     id: &str,
     db: &State<Arc<Db>>,
 ) -> Result<Json<SlaStatus>, (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
-    let err_map = |e: rusqlite::Error| {
-        (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()})))
+    let conn = db.conn();
+    let err_map = |_: rusqlite::Error| {
+        (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"})))
     };
 
     let monitor = get_monitor_from_db(&conn, id)

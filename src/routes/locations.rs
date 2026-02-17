@@ -57,7 +57,7 @@ pub fn create_location(
     token: ManageToken,
     db: &State<Arc<Db>>,
 ) -> Result<Json<CreateCheckLocationResponse>, (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
     verify_admin_key(&conn, &token.0)?;
 
     let name = body.name.trim();
@@ -119,13 +119,16 @@ pub fn create_location(
 /// GET /api/v1/locations — List all check locations (public)
 #[get("/locations")]
 pub fn list_locations(db: &State<Arc<Db>>) -> Json<Vec<CheckLocation>> {
-    let conn = db.conn.lock().unwrap();
-    let mut stmt = conn.prepare(
+    let conn = db.conn();
+    let mut stmt = match conn.prepare(
         "SELECT id, name, region, is_active, last_seen_at, created_at FROM check_locations ORDER BY created_at ASC"
-    ).unwrap();
+    ) {
+        Ok(s) => s,
+        Err(_) => return Json(Vec::new()),
+    };
 
     let stale_min = stale_threshold_minutes();
-    let locations = stmt.query_map([], |row| {
+    let locations = match stmt.query_map([], |row| {
         let is_active = row.get::<_, i32>(3)? != 0;
         let last_seen_at: Option<String> = row.get(4)?;
         let health_status = CheckLocation::compute_health(is_active, &last_seen_at, stale_min);
@@ -138,7 +141,10 @@ pub fn list_locations(db: &State<Arc<Db>>) -> Json<Vec<CheckLocation>> {
             health_status,
             created_at: row.get(5)?,
         })
-    }).unwrap().filter_map(|r| r.ok()).collect();
+    }) {
+        Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
+        Err(_) => Vec::new(),
+    };
 
     Json(locations)
 }
@@ -149,7 +155,7 @@ pub fn get_location(
     id: &str,
     db: &State<Arc<Db>>,
 ) -> Result<Json<CheckLocation>, (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
     let stale_min = stale_threshold_minutes();
     let location = conn.query_row(
         "SELECT id, name, region, is_active, last_seen_at, created_at FROM check_locations WHERE id = ?1",
@@ -182,7 +188,7 @@ pub fn delete_location(
     token: ManageToken,
     db: &State<Arc<Db>>,
 ) -> Result<Json<serde_json::Value>, (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
     verify_admin_key(&conn, &token.0)?;
 
     let deleted = conn.execute(
@@ -210,7 +216,7 @@ pub async fn submit_probe(
     let mut consensus_monitor_ids: Vec<String> = Vec::new();
 
     let (accepted, rejected, errors) = {
-        let conn = db.conn.lock().unwrap();
+        let conn = db.conn();
         let location_id = verify_probe_key(&conn, &token.0)?;
 
         if body.results.is_empty() {
@@ -335,7 +341,7 @@ pub fn monitor_consensus(
     monitor_id: &str,
     db: &State<Arc<Db>>,
 ) -> Result<Json<ConsensusStatus>, (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
 
     // Verify monitor exists
     let exists: bool = conn.query_row(
@@ -379,7 +385,7 @@ pub fn monitor_location_status(
     monitor_id: &str,
     db: &State<Arc<Db>>,
 ) -> Result<Json<Vec<MonitorLocationStatus>>, (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
 
     // Verify monitor exists
     let exists: bool = conn.query_row(

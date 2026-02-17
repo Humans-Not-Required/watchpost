@@ -78,7 +78,7 @@ pub fn monitor_uptime_badge(
     label: Option<&str>,
     db: &State<Arc<Db>>,
 ) -> Result<(ContentType, String), (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
     get_monitor_from_db(&conn, id)
         .map_err(|_| (Status::NotFound, Json(serde_json::json!({"error": "Monitor not found", "code": "NOT_FOUND"}))))?;
 
@@ -119,7 +119,7 @@ pub fn monitor_status_badge(
     label: Option<&str>,
     db: &State<Arc<Db>>,
 ) -> Result<(ContentType, String), (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
     let monitor = get_monitor_from_db(&conn, id)
         .map_err(|_| (Status::NotFound, Json(serde_json::json!({"error": "Monitor not found", "code": "NOT_FOUND"}))))?;
 

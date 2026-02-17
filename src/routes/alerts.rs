@@ -15,7 +15,7 @@ pub fn set_alert_rules(
     token: ManageToken,
     db: &State<Arc<Db>>,
 ) -> Result<Json<AlertRule>, (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
     verify_manage_key(&conn, id, &token.0)?;
 
     let data = input.into_inner();
@@ -49,7 +49,7 @@ pub fn set_alert_rules(
            escalation_after_minutes = excluded.escalation_after_minutes,
            updated_at = datetime('now')",
         params![id, data.repeat_interval_minutes, data.max_repeats, data.escalation_after_minutes],
-    ).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
+    ).map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"}))))?;
 
     let rule = conn.query_row(
         "SELECT monitor_id, repeat_interval_minutes, max_repeats, escalation_after_minutes, created_at, updated_at
@@ -63,7 +63,7 @@ pub fn set_alert_rules(
             created_at: row.get(4)?,
             updated_at: row.get(5)?,
         }),
-    ).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
+    ).map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"}))))?;
 
     Ok(Json(rule))
 }
@@ -74,7 +74,7 @@ pub fn get_alert_rules(
     token: ManageToken,
     db: &State<Arc<Db>>,
 ) -> Result<Json<AlertRule>, (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
     verify_manage_key(&conn, id, &token.0)?;
 
     let rule = conn.query_row(
@@ -103,13 +103,13 @@ pub fn delete_alert_rules(
     token: ManageToken,
     db: &State<Arc<Db>>,
 ) -> Result<Json<serde_json::Value>, (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
     verify_manage_key(&conn, id, &token.0)?;
 
     let changed = conn.execute(
         "DELETE FROM alert_rules WHERE monitor_id = ?1",
         params![id],
-    ).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
+    ).map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"}))))?;
 
     if changed == 0 {
         return Err((Status::NotFound, Json(serde_json::json!({
@@ -131,7 +131,7 @@ pub fn get_alert_log(
     token: ManageToken,
     db: &State<Arc<Db>>,
 ) -> Result<Json<Vec<AlertLogEntry>>, (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
     verify_manage_key(&conn, id, &token.0)?;
 
     let limit = limit.unwrap_or(50).min(200);
@@ -140,7 +140,7 @@ pub fn get_alert_log(
         let mut stmt = conn.prepare(
             "SELECT id, monitor_id, incident_id, channel_id, alert_type, event, sent_at
              FROM alert_log WHERE monitor_id = ?1 AND sent_at > ?2 ORDER BY sent_at DESC LIMIT ?3"
-        ).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
+        ).map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"}))))?;
 
         let rows = stmt.query_map(params![id, after_ts, limit], |row| Ok(AlertLogEntry {
             id: row.get(0)?,
@@ -150,13 +150,13 @@ pub fn get_alert_log(
             alert_type: row.get(4)?,
             event: row.get(5)?,
             sent_at: row.get(6)?,
-        })).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
+        })).map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"}))))?;
         rows.filter_map(|r| r.ok()).collect()
     } else {
         let mut stmt = conn.prepare(
             "SELECT id, monitor_id, incident_id, channel_id, alert_type, event, sent_at
              FROM alert_log WHERE monitor_id = ?1 ORDER BY sent_at DESC LIMIT ?2"
-        ).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
+        ).map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"}))))?;
 
         let rows = stmt.query_map(params![id, limit], |row| Ok(AlertLogEntry {
             id: row.get(0)?,
@@ -166,7 +166,7 @@ pub fn get_alert_log(
             alert_type: row.get(4)?,
             event: row.get(5)?,
             sent_at: row.get(6)?,
-        })).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
+        })).map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"}))))?;
         rows.filter_map(|r| r.ok()).collect()
     };
 

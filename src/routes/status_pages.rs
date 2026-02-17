@@ -116,7 +116,7 @@ pub fn create_status_page(
         }
     }
 
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
 
     // Check slug uniqueness
     let slug_exists: bool = conn.query_row(
@@ -163,7 +163,7 @@ pub fn create_status_page(
             input.is_public as i32,
             &manage_key_hash,
         ],
-    ).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
+    ).map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"}))))?;
 
     let page = StatusPage {
         id,
@@ -188,7 +188,7 @@ pub fn create_status_page(
 
 #[get("/status-pages")]
 pub fn list_status_pages(db: &State<Arc<Db>>) -> Result<Json<Vec<StatusPage>>, (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
 
     let mut stmt = conn.prepare(
         "SELECT sp.id, sp.slug, sp.title, sp.description, sp.logo_url, sp.custom_domain, sp.is_public, sp.created_at, sp.updated_at,
@@ -196,7 +196,7 @@ pub fn list_status_pages(db: &State<Arc<Db>>) -> Result<Json<Vec<StatusPage>>, (
          FROM status_pages sp
          WHERE sp.is_public = 1
          ORDER BY sp.title"
-    ).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
+    ).map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"}))))?;
 
     let pages: Vec<StatusPage> = stmt.query_map([], |row| {
         Ok(StatusPage {
@@ -211,7 +211,7 @@ pub fn list_status_pages(db: &State<Arc<Db>>) -> Result<Json<Vec<StatusPage>>, (
             created_at: row.get(7)?,
             updated_at: row.get(8)?,
         })
-    }).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?
+    }).map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"}))))?
     .filter_map(|r| r.ok())
     .collect();
 
@@ -225,7 +225,7 @@ pub fn get_status_page_detail(
     slug_or_id: &str,
     db: &State<Arc<Db>>,
 ) -> Result<Json<StatusPageDetail>, (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
 
     let (page, _hash) = get_status_page(&conn, slug_or_id)?;
 
@@ -239,14 +239,14 @@ pub fn get_status_page_detail(
          INNER JOIN status_page_monitors spm ON spm.monitor_id = m.id
          WHERE spm.status_page_id = ?1
          ORDER BY m.group_name NULLS LAST, m.name"
-    ).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
+    ).map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"}))))?;
 
     let monitors: Vec<StatusMonitor> = stmt.query_map(params![&page.id], |row| {
         let id: String = row.get(0)?;
         let tags_str: String = row.get::<_, String>(5).unwrap_or_default();
         let group_name: Option<String> = row.get::<_, Option<String>>(6).unwrap_or(None);
         Ok((id, row.get(1)?, row.get(2)?, row.get::<_, String>(3)?, row.get::<_, Option<String>>(4)?, tags_str, group_name))
-    }).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?
+    }).map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"}))))?
     .filter_map(|r| r.ok())
     .map(|(id, name, url, status, last_checked, tags_str, group_name)| {
         let total_24h: u32 = conn.query_row(
@@ -326,7 +326,7 @@ pub fn update_status_page(
     token: ManageToken,
     db: &State<Arc<Db>>,
 ) -> Result<Json<StatusPage>, (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
     let page = verify_page_key(&conn, slug_or_id, &token.0)?;
     let input = body.into_inner();
 
@@ -394,7 +394,7 @@ pub fn update_status_page(
             new_is_public as i32,
             &page.id,
         ],
-    ).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
+    ).map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"}))))?;
 
     let (updated, _) = get_status_page(&conn, &page.id)?;
     Ok(Json(updated))
@@ -408,11 +408,11 @@ pub fn delete_status_page(
     token: ManageToken,
     db: &State<Arc<Db>>,
 ) -> Result<Json<serde_json::Value>, (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
     let page = verify_page_key(&conn, slug_or_id, &token.0)?;
 
     conn.execute("DELETE FROM status_pages WHERE id = ?1", params![&page.id])
-        .map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
+        .map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"}))))?;
 
     Ok(Json(serde_json::json!({
         "message": "Status page deleted",
@@ -430,7 +430,7 @@ pub fn add_page_monitors(
     token: ManageToken,
     db: &State<Arc<Db>>,
 ) -> Result<Json<serde_json::Value>, (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
     let page = verify_page_key(&conn, slug_or_id, &token.0)?;
     let input = body.into_inner();
 
@@ -473,9 +473,9 @@ pub fn add_page_monitors(
         ) {
             Ok(n) if n > 0 => added += 1,
             Ok(_) => skipped += 1,
-            Err(e) => errors.push(serde_json::json!({
+            Err(_) => errors.push(serde_json::json!({
                 "monitor_id": mid,
-                "error": e.to_string()
+                "error": "Internal server error"
             })),
         }
     }
@@ -501,13 +501,13 @@ pub fn remove_page_monitor(
     token: ManageToken,
     db: &State<Arc<Db>>,
 ) -> Result<Json<serde_json::Value>, (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
     let page = verify_page_key(&conn, slug_or_id, &token.0)?;
 
     let deleted = conn.execute(
         "DELETE FROM status_page_monitors WHERE status_page_id = ?1 AND monitor_id = ?2",
         params![&page.id, monitor_id],
-    ).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
+    ).map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"}))))?;
 
     if deleted == 0 {
         return Err((Status::NotFound, Json(serde_json::json!({
@@ -529,7 +529,7 @@ pub fn list_page_monitors(
     slug_or_id: &str,
     db: &State<Arc<Db>>,
 ) -> Result<Json<Vec<StatusMonitor>>, (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
     let (page, _) = get_status_page(&conn, slug_or_id)?;
 
     let mut stmt = conn.prepare(
@@ -538,14 +538,14 @@ pub fn list_page_monitors(
          INNER JOIN status_page_monitors spm ON spm.monitor_id = m.id
          WHERE spm.status_page_id = ?1
          ORDER BY m.group_name NULLS LAST, m.name"
-    ).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
+    ).map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"}))))?;
 
     let monitors: Vec<StatusMonitor> = stmt.query_map(params![&page.id], |row| {
         let id: String = row.get(0)?;
         let tags_str: String = row.get::<_, String>(5).unwrap_or_default();
         let group_name: Option<String> = row.get::<_, Option<String>>(6).unwrap_or(None);
         Ok((id, row.get(1)?, row.get(2)?, row.get::<_, String>(3)?, row.get::<_, Option<String>>(4)?, tags_str, group_name))
-    }).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?
+    }).map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"}))))?
     .filter_map(|r| r.ok())
     .map(|(id, name, url, status, last_checked, tags_str, group_name)| {
         let total_24h: u32 = conn.query_row(

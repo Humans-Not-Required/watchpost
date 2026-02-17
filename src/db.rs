@@ -6,6 +6,15 @@ pub struct Db {
 }
 
 impl Db {
+    /// Get a database connection with mutex poison recovery.
+    /// If a previous request panicked while holding the lock, this recovers
+    /// gracefully instead of propagating the panic to all subsequent requests.
+    pub fn conn(&self) -> std::sync::MutexGuard<'_, Connection> {
+        self.conn.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+impl Db {
     pub fn new(path: &str) -> Result<Self> {
         let conn = Connection::open(path)?;
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;")?;

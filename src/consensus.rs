@@ -40,7 +40,7 @@ pub async fn evaluate_and_apply(
     let consensus: ConsensusResult;
 
     {
-        let conn = db.conn.lock().unwrap();
+        let conn = db.conn();
 
         // Get monitor info (returns None if monitor doesn't exist or has no consensus configured)
         let monitor_info: Option<(String, String, u32, String)> = conn.query_row(
@@ -246,7 +246,7 @@ pub fn get_consensus_status(
     db: &Db,
     monitor_id: &str,
 ) -> Option<crate::models::ConsensusStatus> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
 
     // Get monitor consensus_threshold
     let threshold: u32 = conn.query_row(

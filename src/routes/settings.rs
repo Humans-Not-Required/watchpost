@@ -45,7 +45,7 @@ pub(crate) fn branding_is_empty(b: &StatusPageBranding) -> bool {
 
 #[get("/settings")]
 pub fn get_settings(db: &State<Arc<Db>>) -> Result<Json<SettingsResponse>, (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
     Ok(Json(SettingsResponse {
         title: get_setting(&conn, "branding_title"),
         description: get_setting(&conn, "branding_description"),
@@ -59,7 +59,7 @@ pub fn update_settings(
     token: ManageToken,
     db: &State<Arc<Db>>,
 ) -> Result<Json<SettingsResponse>, (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
 
     let stored_hash: String = conn.query_row(
         "SELECT value FROM settings WHERE key = 'admin_key_hash'",
@@ -77,7 +77,7 @@ pub fn update_settings(
             delete_setting(&conn, "branding_title").ok();
         } else {
             set_setting(&conn, "branding_title", title)
-                .map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
+                .map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"}))))?;
         }
     }
     if let Some(ref desc) = body.description {
@@ -85,7 +85,7 @@ pub fn update_settings(
             delete_setting(&conn, "branding_description").ok();
         } else {
             set_setting(&conn, "branding_description", desc)
-                .map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
+                .map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"}))))?;
         }
     }
     if let Some(ref logo) = body.logo_url {
@@ -93,7 +93,7 @@ pub fn update_settings(
             delete_setting(&conn, "branding_logo_url").ok();
         } else {
             set_setting(&conn, "branding_logo_url", logo)
-                .map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
+                .map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"}))))?;
         }
     }
 

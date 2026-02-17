@@ -16,7 +16,7 @@ pub fn add_dependency(
     db: &State<Arc<Db>>,
     auth_header: ManageToken,
 ) -> Result<(Status, Json<serde_json::Value>), (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
     verify_manage_key(&conn, id, &auth_header.0)?;
 
     let depends_on_id = &body.depends_on_id;
@@ -77,8 +77,8 @@ pub fn add_dependency(
     conn.execute(
         "INSERT INTO monitor_dependencies (id, monitor_id, depends_on_id) VALUES (?1, ?2, ?3)",
         params![dep_id, id, depends_on_id],
-    ).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({
-        "error": format!("Failed to create dependency: {}", e), "code": "INTERNAL_ERROR"
+    ).map_err(|_| (Status::InternalServerError, Json(serde_json::json!({
+        "error": "Internal server error", "code": "INTERNAL_ERROR"
     }))))?;
 
     // Fetch the created dependency with joined info
@@ -87,7 +87,7 @@ pub fn add_dependency(
             "error": "Failed to read created dependency", "code": "INTERNAL_ERROR"
         }))))?;
 
-    Ok((Status::Created, Json(serde_json::to_value(&dep).unwrap())))
+    Ok((Status::Created, Json(serde_json::to_value(&dep).unwrap_or_default())))
 }
 
 /// List all dependencies for a monitor (public).
@@ -96,7 +96,7 @@ pub fn list_dependencies(
     id: &str,
     db: &State<Arc<Db>>,
 ) -> Result<Json<Vec<MonitorDependency>>, (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
 
     // Check monitor exists
     let exists: bool = conn
@@ -115,7 +115,7 @@ pub fn list_dependencies(
          JOIN monitors m ON m.id = d.depends_on_id
          WHERE d.monitor_id = ?1
          ORDER BY d.created_at ASC"
-    ).unwrap();
+    ).map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"}))))?;
 
     let deps: Vec<MonitorDependency> = stmt.query_map(params![id], |row| {
         Ok(MonitorDependency {
@@ -126,7 +126,7 @@ pub fn list_dependencies(
             depends_on_status: row.get(4)?,
             created_at: row.get(5)?,
         })
-    }).unwrap().filter_map(|r| r.ok()).collect();
+    }).map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"}))))?.filter_map(|r| r.ok()).collect();
 
     Ok(Json(deps))
 }
@@ -139,7 +139,7 @@ pub fn remove_dependency(
     db: &State<Arc<Db>>,
     auth_header: ManageToken,
 ) -> Result<Json<serde_json::Value>, (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
     verify_manage_key(&conn, id, &auth_header.0)?;
 
     let deleted = conn.execute(
@@ -162,7 +162,7 @@ pub fn list_dependents(
     id: &str,
     db: &State<Arc<Db>>,
 ) -> Result<Json<Vec<MonitorDependency>>, (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
 
     let exists: bool = conn
         .query_row("SELECT COUNT(*) FROM monitors WHERE id = ?1", params![id], |r| r.get::<_, i64>(0))
@@ -180,7 +180,7 @@ pub fn list_dependents(
          JOIN monitors m ON m.id = d.monitor_id
          WHERE d.depends_on_id = ?1
          ORDER BY d.created_at ASC"
-    ).unwrap();
+    ).map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"}))))?;
 
     let deps: Vec<MonitorDependency> = stmt.query_map(params![id], |row| {
         Ok(MonitorDependency {
@@ -191,7 +191,7 @@ pub fn list_dependents(
             depends_on_status: row.get(4)?,
             created_at: row.get(5)?,
         })
-    }).unwrap().filter_map(|r| r.ok()).collect();
+    }).map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"}))))?.filter_map(|r| r.ok()).collect();
 
     Ok(Json(deps))
 }
@@ -212,13 +212,16 @@ fn has_circular_dependency(conn: &rusqlite::Connection, from_id: &str, target_id
             continue;
         }
         // Get all monitors that `current` depends on
-        let mut stmt = conn.prepare(
+        let mut stmt = match conn.prepare(
             "SELECT depends_on_id FROM monitor_dependencies WHERE monitor_id = ?1"
-        ).unwrap();
-        let deps: Vec<String> = stmt.query_map(params![current], |row| row.get(0))
-            .unwrap()
-            .filter_map(|r| r.ok())
-            .collect();
+        ) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        let deps: Vec<String> = match stmt.query_map(params![current], |row| row.get(0)) {
+            Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
+            Err(_) => continue,
+        };
         queue.extend(deps);
     }
     false

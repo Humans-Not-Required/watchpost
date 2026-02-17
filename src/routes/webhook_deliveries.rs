@@ -40,7 +40,7 @@ pub fn list_webhook_deliveries(
     token: ManageToken,
     db: &State<Arc<Db>>,
 ) -> Result<Json<WebhookDeliveriesListResponse>, (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
     verify_manage_key(&conn, monitor_id, &token.0)?;
 
     let limit = limit.unwrap_or(50).clamp(1, 200);

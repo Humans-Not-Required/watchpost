@@ -15,12 +15,12 @@ pub fn get_incidents(
     after: Option<i64>,
     db: &State<Arc<Db>>,
 ) -> Result<Json<Vec<Incident>>, (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
     get_monitor_from_db(&conn, id)
         .map_err(|_| (Status::NotFound, Json(serde_json::json!({"error": "Monitor not found", "code": "NOT_FOUND"}))))?;
 
     let limit = limit.unwrap_or(20).min(100);
-    let err_map = |e: rusqlite::Error| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()})));
+    let err_map = |_: rusqlite::Error| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"})));
 
     let row_to_inc = |row: &rusqlite::Row| -> rusqlite::Result<Incident> {
         Ok(Incident {
@@ -70,7 +70,7 @@ pub fn acknowledge_incident(
     token: ManageToken,
     db: &State<Arc<Db>>,
 ) -> Result<Json<serde_json::Value>, (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
 
     let monitor_id: String = conn.query_row(
         "SELECT monitor_id FROM incidents WHERE id = ?1",
@@ -84,7 +84,7 @@ pub fn acknowledge_incident(
     conn.execute(
         "UPDATE incidents SET acknowledgement = ?1, acknowledged_by = ?2, acknowledged_at = datetime('now') WHERE id = ?3",
         params![data.note, data.actor, id],
-    ).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
+    ).map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"}))))?;
 
     Ok(Json(serde_json::json!({"message": "Incident acknowledged"})))
 }
@@ -96,7 +96,7 @@ pub fn get_incident(
     id: &str,
     db: &State<Arc<Db>>,
 ) -> Result<Json<serde_json::Value>, (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
 
     let incident: Incident = conn.query_row(
         "SELECT id, monitor_id, started_at, resolved_at, cause, acknowledgement, acknowledged_by, acknowledged_at, seq
@@ -137,7 +137,7 @@ pub fn create_incident_note(
     token: ManageToken,
     db: &State<Arc<Db>>,
 ) -> Result<(Status, Json<IncidentNote>), (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
 
     // Find incident and verify manage_key against its monitor
     let monitor_id: String = conn.query_row(
@@ -184,7 +184,7 @@ pub fn create_incident_note(
     conn.execute(
         "INSERT INTO incident_notes (id, incident_id, content, author) VALUES (?1, ?2, ?3, ?4)",
         params![note_id, id, content, author],
-    ).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
+    ).map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"}))))?;
 
     let note = conn.query_row(
         "SELECT id, incident_id, content, author, created_at FROM incident_notes WHERE id = ?1",
@@ -196,7 +196,7 @@ pub fn create_incident_note(
             author: row.get(3)?,
             created_at: row.get(4)?,
         }),
-    ).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
+    ).map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"}))))?;
 
     Ok((Status::Created, Json(note)))
 }
@@ -207,7 +207,7 @@ pub fn list_incident_notes(
     limit: Option<u32>,
     db: &State<Arc<Db>>,
 ) -> Result<Json<Vec<IncidentNote>>, (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
 
     // Verify incident exists
     conn.query_row(
@@ -222,7 +222,7 @@ pub fn list_incident_notes(
         "SELECT id, incident_id, content, author, created_at
          FROM incident_notes WHERE incident_id = ?1
          ORDER BY created_at ASC LIMIT ?2"
-    ).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
+    ).map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"}))))?;
 
     let notes: Vec<IncidentNote> = stmt.query_map(params![id, limit], |row| {
         Ok(IncidentNote {
@@ -233,7 +233,7 @@ pub fn list_incident_notes(
             created_at: row.get(4)?,
         })
     })
-    .map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?
+    .map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"}))))?
     .filter_map(|r| r.ok())
     .collect();
 

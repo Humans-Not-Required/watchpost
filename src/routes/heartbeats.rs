@@ -14,12 +14,12 @@ pub fn get_heartbeats(
     after: Option<i64>,
     db: &State<Arc<Db>>,
 ) -> Result<Json<Vec<Heartbeat>>, (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
     get_monitor_from_db(&conn, id)
         .map_err(|_| (Status::NotFound, Json(serde_json::json!({"error": "Monitor not found", "code": "NOT_FOUND"}))))?;
 
     let limit = limit.unwrap_or(50).min(200);
-    let err_map = |e: rusqlite::Error| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()})));
+    let err_map = |_: rusqlite::Error| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"})));
 
     let row_to_hb = |row: &rusqlite::Row| -> rusqlite::Result<Heartbeat> {
         Ok(Heartbeat {
@@ -67,7 +67,7 @@ pub fn get_uptime(
     id: &str,
     db: &State<Arc<Db>>,
 ) -> Result<Json<UptimeStats>, (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
     get_monitor_from_db(&conn, id)
         .map_err(|_| (Status::NotFound, Json(serde_json::json!({"error": "Monitor not found", "code": "NOT_FOUND"}))))?;
 

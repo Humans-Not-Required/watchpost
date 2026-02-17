@@ -15,7 +15,7 @@ pub fn create_notification(
     token: ManageToken,
     db: &State<Arc<Db>>,
 ) -> Result<Json<NotificationChannel>, (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
     verify_manage_key(&conn, id, &token.0)?;
 
     let data = input.into_inner();
@@ -29,7 +29,7 @@ pub fn create_notification(
     conn.execute(
         "INSERT INTO notification_channels (id, monitor_id, name, channel_type, config) VALUES (?1, ?2, ?3, ?4, ?5)",
         params![nid, id, data.name, data.channel_type, data.config.to_string()],
-    ).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
+    ).map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"}))))?;
 
     Ok(Json(NotificationChannel {
         id: nid,
@@ -48,12 +48,12 @@ pub fn list_notifications(
     token: ManageToken,
     db: &State<Arc<Db>>,
 ) -> Result<Json<Vec<NotificationChannel>>, (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
     verify_manage_key(&conn, id, &token.0)?;
 
     let mut stmt = conn.prepare(
         "SELECT id, monitor_id, name, channel_type, config, is_enabled, created_at FROM notification_channels WHERE monitor_id = ?1"
-    ).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
+    ).map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"}))))?;
 
     let channels = stmt.query_map(params![id], |row| {
         let config_str: String = row.get(4)?;
@@ -66,7 +66,7 @@ pub fn list_notifications(
             is_enabled: row.get(5)?,
             created_at: row.get(6)?,
         })
-    }).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?
+    }).map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"}))))?
     .filter_map(|r| r.ok())
     .collect();
 
@@ -79,7 +79,7 @@ pub fn delete_notification(
     token: ManageToken,
     db: &State<Arc<Db>>,
 ) -> Result<Json<serde_json::Value>, (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
 
     let monitor_id: String = conn.query_row(
         "SELECT monitor_id FROM notification_channels WHERE id = ?1",
@@ -90,7 +90,7 @@ pub fn delete_notification(
     verify_manage_key(&conn, &monitor_id, &token.0)?;
 
     conn.execute("DELETE FROM notification_channels WHERE id = ?1", params![id])
-        .map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
+        .map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"}))))?;
 
     Ok(Json(serde_json::json!({"message": "Notification channel deleted"})))
 }
@@ -108,7 +108,7 @@ pub fn update_notification(
     token: ManageToken,
     db: &State<Arc<Db>>,
 ) -> Result<Json<serde_json::Value>, (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
 
     let monitor_id: String = conn.query_row(
         "SELECT monitor_id FROM notification_channels WHERE id = ?1",
@@ -123,13 +123,13 @@ pub fn update_notification(
         conn.execute(
             "UPDATE notification_channels SET is_enabled = ?1 WHERE id = ?2",
             params![enabled, id],
-        ).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
+        ).map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"}))))?;
     }
     if let Some(name) = &data.name {
         conn.execute(
             "UPDATE notification_channels SET name = ?1 WHERE id = ?2",
             params![name, id],
-        ).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
+        ).map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"}))))?;
     }
 
     Ok(Json(serde_json::json!({"message": "Notification channel updated"})))

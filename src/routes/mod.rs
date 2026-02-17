@@ -69,7 +69,7 @@ impl RateLimiter {
     }
 
     pub fn check(&self, key: &str) -> bool {
-        let mut windows = self.windows.lock().unwrap();
+        let mut windows = self.windows.lock().unwrap_or_else(|e| e.into_inner());
         let now = Instant::now();
         let entry = windows.entry(key.to_string()).or_insert((now, 0));
         if now.duration_since(entry.0).as_secs() >= self.window_secs {

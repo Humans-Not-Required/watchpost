@@ -118,7 +118,7 @@ pub fn create_monitor(
         }
     }
 
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
     conn.execute(
         "INSERT INTO monitors (id, name, url, monitor_type, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, manage_key_hash, is_public, confirmation_threshold, tags, response_time_threshold_ms, follow_redirects, group_name, dns_record_type, dns_expected, sla_target, sla_period_days, consensus_threshold)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
@@ -146,13 +146,13 @@ pub fn create_monitor(
             sla_period_days,
             consensus_threshold,
         ],
-    ).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({
-        "error": format!("DB error: {}", e), "code": "INTERNAL_ERROR"
+    ).map_err(|_| (Status::InternalServerError, Json(serde_json::json!({
+        "error": "Internal server error", "code": "INTERNAL_ERROR"
     }))))?;
 
-    let monitor = get_monitor_from_db(&conn, &id).map_err(|e| {
+    let monitor = get_monitor_from_db(&conn, &id).map_err(|_| {
         (Status::InternalServerError, Json(serde_json::json!({
-            "error": format!("DB error: {}", e), "code": "INTERNAL_ERROR"
+            "error": "Internal server error", "code": "INTERNAL_ERROR"
         })))
     })?;
 
@@ -190,7 +190,7 @@ pub fn bulk_create_monitors(
     let total = data.monitors.len();
     let mut created = Vec::new();
     let mut errors = Vec::new();
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
 
     for (idx, monitor_data) in data.monitors.into_iter().enumerate() {
         if !rate_limiter.check(&client_ip.0) {
@@ -318,13 +318,13 @@ pub fn bulk_create_monitors(
                             api_base: format!("/api/v1/monitors/{}", id),
                         });
                     }
-                    Err(e) => {
-                        errors.push(BulkError { index: idx, error: format!("DB read error: {}", e), code: "INTERNAL_ERROR".into() });
+                    Err(_) => {
+                        errors.push(BulkError { index: idx, error: "Internal server error".into(), code: "INTERNAL_ERROR".into() });
                     }
                 }
             }
-            Err(e) => {
-                errors.push(BulkError { index: idx, error: format!("DB error: {}", e), code: "INTERNAL_ERROR".into() });
+            Err(_) => {
+                errors.push(BulkError { index: idx, error: "Internal server error".into(), code: "INTERNAL_ERROR".into() });
             }
         }
     }
@@ -343,7 +343,7 @@ pub fn export_monitor(
     db: &State<Arc<Db>>,
     token: ManageToken,
 ) -> Result<Json<ExportedMonitor>, (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
     verify_manage_key(&conn, id, &token.0)?;
 
     let monitor = get_monitor_from_db(&conn, id).map_err(|_| {
@@ -380,7 +380,7 @@ pub fn export_monitor(
 
 #[get("/monitors?<search>&<status>&<tag>&<group>")]
 pub fn list_monitors(search: Option<&str>, status: Option<&str>, tag: Option<&str>, group: Option<&str>, db: &State<Arc<Db>>) -> Result<Json<Vec<Monitor>>, (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
 
     let mut sql = String::from(
         "SELECT id, name, url, method, interval_seconds, timeout_ms, expected_status, body_contains, headers, is_public, is_paused, current_status, last_checked_at, confirmation_threshold, created_at, updated_at, tags, response_time_threshold_ms, follow_redirects, group_name, monitor_type, dns_record_type, dns_expected, sla_target, sla_period_days, consensus_threshold
@@ -426,12 +426,12 @@ pub fn list_monitors(search: Option<&str>, status: Option<&str>, tag: Option<&st
     sql.push_str(" ORDER BY group_name NULLS LAST, name");
 
     let mut stmt = conn.prepare(&sql)
-        .map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
+        .map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"}))))?;
     let params_vec: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|v| v.as_ref()).collect();
 
     let monitors = stmt.query_map(params_vec.as_slice(), |row| {
         Ok(row_to_monitor(row))
-    }).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?
+    }).map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"}))))?
     .filter_map(|r| r.ok())
     .collect();
 
@@ -442,7 +442,7 @@ pub fn list_monitors(search: Option<&str>, status: Option<&str>, tag: Option<&st
 
 #[get("/monitors/<id>")]
 pub fn get_monitor(id: &str, db: &State<Arc<Db>>) -> Result<Json<Monitor>, (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
     let monitor = get_monitor_from_db(&conn, id)
         .map_err(|_| (Status::NotFound, Json(serde_json::json!({
             "error": "Monitor not found", "code": "NOT_FOUND"
@@ -459,7 +459,7 @@ pub fn update_monitor(
     token: ManageToken,
     db: &State<Arc<Db>>,
 ) -> Result<Json<serde_json::Value>, (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
     verify_manage_key(&conn, id, &token.0)?;
 
     let mut data = input.into_inner();
@@ -635,7 +635,7 @@ pub fn update_monitor(
 
     let params_vec: Vec<&dyn rusqlite::types::ToSql> = values.iter().map(|v| v.as_ref()).collect();
     conn.execute(&sql, params_vec.as_slice())
-        .map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
+        .map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"}))))?;
 
     Ok(Json(serde_json::json!({"message": "Monitor updated"})))
 }
@@ -648,11 +648,11 @@ pub fn delete_monitor(
     token: ManageToken,
     db: &State<Arc<Db>>,
 ) -> Result<Json<serde_json::Value>, (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
     verify_manage_key(&conn, id, &token.0)?;
 
     conn.execute("DELETE FROM monitors WHERE id = ?1", params![id])
-        .map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
+        .map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"}))))?;
 
     Ok(Json(serde_json::json!({"message": "Monitor deleted"})))
 }
@@ -665,10 +665,10 @@ pub fn pause_monitor(
     token: ManageToken,
     db: &State<Arc<Db>>,
 ) -> Result<Json<serde_json::Value>, (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
     verify_manage_key(&conn, id, &token.0)?;
     conn.execute("UPDATE monitors SET is_paused = 1, updated_at = datetime('now') WHERE id = ?1", params![id])
-        .map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
+        .map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"}))))?;
     Ok(Json(serde_json::json!({"message": "Monitor paused"})))
 }
 
@@ -678,9 +678,9 @@ pub fn resume_monitor(
     token: ManageToken,
     db: &State<Arc<Db>>,
 ) -> Result<Json<serde_json::Value>, (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
     verify_manage_key(&conn, id, &token.0)?;
     conn.execute("UPDATE monitors SET is_paused = 0, updated_at = datetime('now') WHERE id = ?1", params![id])
-        .map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
+        .map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"}))))?;
     Ok(Json(serde_json::json!({"message": "Monitor resumed"})))
 }

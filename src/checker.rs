@@ -28,7 +28,7 @@ fn probe_stale_minutes() -> u32 {
 /// Check for stale probe locations and auto-disable them.
 /// Returns the number of locations disabled.
 pub fn disable_stale_locations(db: &Db, stale_minutes: u32) -> usize {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
     conn.execute(
         "UPDATE check_locations SET is_active = 0 WHERE is_active = 1 AND last_seen_at IS NOT NULL AND last_seen_at < datetime('now', ?1)",
         params![format!("-{} minutes", stale_minutes)],
@@ -38,7 +38,7 @@ pub fn disable_stale_locations(db: &Db, stale_minutes: u32) -> usize {
 
 /// Prune old heartbeats. Returns the number of rows deleted.
 pub fn prune_heartbeats(db: &Db, days: u32) -> usize {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
     conn.execute(
         "DELETE FROM heartbeats WHERE checked_at < datetime('now', ?1)",
         params![format!("-{} days", days)],
@@ -174,7 +174,7 @@ pub async fn run_checker(db: Arc<Db>, broadcaster: Arc<EventBroadcaster>, shutdo
 
         // Find the next monitor due for a check
         let monitor = {
-            let conn = db.conn.lock().unwrap();
+            let conn = db.conn();
             conn.query_row(
                 "SELECT id, name, url, method, timeout_ms, expected_status, body_contains, headers, confirmation_threshold, consecutive_failures, current_status, interval_seconds, response_time_threshold_ms, follow_redirects, COALESCE(monitor_type, 'http'), COALESCE(dns_record_type, 'A'), dns_expected, consensus_threshold
                  FROM monitors
@@ -530,7 +530,7 @@ async fn process_check_result_heartbeat_only(
     result: CheckResult,
 ) {
     {
-        let conn = db.conn.lock().unwrap();
+        let conn = db.conn();
 
         // Write heartbeat
         let hb_id = uuid::Uuid::new_v4().to_string();
@@ -596,7 +596,7 @@ async fn process_check_result(
 
     {
         // ── Scoped DB lock ──────────────────────────────────────────────
-        let conn = db.conn.lock().unwrap();
+        let conn = db.conn();
 
         // Write heartbeat
         let hb_id = uuid::Uuid::new_v4().to_string();
@@ -869,7 +869,7 @@ fn resolve_transition(
 
 /// Log a notification to the alert_log table.
 fn log_alert(db: &Db, monitor_id: &str, payload: &WebhookPayload, alert_type: &str) {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
     let id = uuid::Uuid::new_v4().to_string();
     let incident_id = payload.incident.as_ref().map(|i| i.id.clone());
     let _ = conn.execute(
@@ -893,7 +893,7 @@ async fn process_repeat_notifications(
     }
 
     let (repeat_interval, max_repeats, escalation_after) = {
-        let conn = db.conn.lock().unwrap();
+        let conn = db.conn();
         match conn.query_row(
             "SELECT repeat_interval_minutes, max_repeats, escalation_after_minutes
              FROM alert_rules WHERE monitor_id = ?1",
@@ -907,7 +907,7 @@ async fn process_repeat_notifications(
 
     // Get the open incident
     let (incident_id, incident_cause, incident_started, is_acked) = {
-        let conn = db.conn.lock().unwrap();
+        let conn = db.conn();
         match conn.query_row(
             "SELECT id, cause, started_at, CASE WHEN acknowledgement IS NOT NULL THEN 1 ELSE 0 END
              FROM incidents WHERE monitor_id = ?1 AND resolved_at IS NULL
@@ -930,7 +930,7 @@ async fn process_repeat_notifications(
     // ── Repeat notifications ─────────────────────────────────────────────
     if repeat_interval > 0 {
         let (repeat_count, last_repeat_at) = {
-            let conn = db.conn.lock().unwrap();
+            let conn = db.conn();
             let count: i64 = conn.query_row(
                 "SELECT COUNT(*) FROM alert_log
                  WHERE monitor_id = ?1 AND incident_id = ?2 AND alert_type IN ('initial', 'repeat')",
@@ -1003,7 +1003,7 @@ async fn process_repeat_notifications(
         if incident_age_minutes >= escalation_after as i64 {
             // Check if we already sent an escalation for this incident
             let already_escalated = {
-                let conn = db.conn.lock().unwrap();
+                let conn = db.conn();
                 let count: i64 = conn.query_row(
                     "SELECT COUNT(*) FROM alert_log
                      WHERE monitor_id = ?1 AND incident_id = ?2 AND alert_type = 'escalation'",

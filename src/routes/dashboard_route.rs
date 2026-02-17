@@ -20,7 +20,7 @@ fn is_admin(conn: &rusqlite::Connection, token: &Option<String>) -> bool {
 
 #[get("/dashboard")]
 pub fn dashboard(token: OptionalManageToken, db: &State<Arc<Db>>) -> Result<Json<DashboardOverview>, (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
     let admin = is_admin(&conn, &token.0);
 
     let total_monitors: u32 = conn.query_row("SELECT COUNT(*) FROM monitors", [], |r| r.get(0)).unwrap_or(0);
@@ -69,7 +69,7 @@ pub fn dashboard(token: OptionalManageToken, db: &State<Arc<Db>>) -> Result<Json
             "SELECT i.id, i.monitor_id, m.name, i.started_at, i.resolved_at, i.cause \
              FROM incidents i JOIN monitors m ON i.monitor_id = m.id \
              ORDER BY i.started_at DESC LIMIT 10"
-        ).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
+        ).map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"}))))?;
         let rows: Vec<DashboardIncident> = stmt.query_map([], |row| {
             Ok(DashboardIncident {
                 id: row.get(0)?,
@@ -79,7 +79,7 @@ pub fn dashboard(token: OptionalManageToken, db: &State<Arc<Db>>) -> Result<Json
                 resolved_at: row.get(4)?,
                 cause: row.get(5)?,
             })
-        }).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?
+        }).map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"}))))?
         .filter_map(|r| r.ok())
         .collect();
         rows
@@ -94,7 +94,7 @@ pub fn dashboard(token: OptionalManageToken, db: &State<Arc<Db>>) -> Result<Json
              WHERE h.status = 'up' AND h.checked_at > datetime('now', '-24 hours') \
              GROUP BY m.id \
              ORDER BY avg_ms DESC LIMIT 5"
-        ).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
+        ).map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"}))))?;
         let rows: Vec<SlowMonitor> = stmt.query_map([], |row| {
             Ok(SlowMonitor {
                 id: row.get(0)?,
@@ -102,7 +102,7 @@ pub fn dashboard(token: OptionalManageToken, db: &State<Arc<Db>>) -> Result<Json
                 avg_response_ms: row.get(2)?,
                 current_status: row.get(3)?,
             })
-        }).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?
+        }).map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"}))))?
         .filter_map(|r| r.ok())
         .collect();
         rows
@@ -129,7 +129,7 @@ pub fn dashboard(token: OptionalManageToken, db: &State<Arc<Db>>) -> Result<Json
 
 #[get("/admin/verify")]
 pub fn admin_verify(token: OptionalManageToken, db: &State<Arc<Db>>) -> Result<Json<serde_json::Value>, (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
     if is_admin(&conn, &token.0) {
         Ok(Json(serde_json::json!({"valid": true})))
     } else {

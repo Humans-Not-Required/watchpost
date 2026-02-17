@@ -14,7 +14,7 @@ pub fn create_maintenance_window(
     db: &State<Arc<Db>>,
     token: ManageToken,
 ) -> Result<Json<crate::models::MaintenanceWindow>, (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
     verify_manage_key(&conn, monitor_id, &token.0)?;
 
     let data = input.into_inner();
@@ -47,8 +47,8 @@ pub fn create_maintenance_window(
     conn.execute(
         "INSERT INTO maintenance_windows (id, monitor_id, title, starts_at, ends_at) VALUES (?1, ?2, ?3, ?4, ?5)",
         params![id, monitor_id, data.title.trim(), data.starts_at, data.ends_at],
-    ).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({
-        "error": format!("DB error: {}", e), "code": "INTERNAL_ERROR"
+    ).map_err(|_| (Status::InternalServerError, Json(serde_json::json!({
+        "error": "Internal server error", "code": "INTERNAL_ERROR"
     }))))?;
 
     let active = is_time_in_window(&now, &data.starts_at, &data.ends_at);
@@ -69,7 +69,7 @@ pub fn list_maintenance_windows(
     monitor_id: &str,
     db: &State<Arc<Db>>,
 ) -> Result<Json<Vec<crate::models::MaintenanceWindow>>, (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
 
     let _: String = conn.query_row(
         "SELECT id FROM monitors WHERE id = ?1", params![monitor_id], |r| r.get(0)
@@ -81,7 +81,7 @@ pub fn list_maintenance_windows(
 
     let mut stmt = conn.prepare(
         "SELECT id, monitor_id, title, starts_at, ends_at, created_at FROM maintenance_windows WHERE monitor_id = ?1 ORDER BY starts_at DESC"
-    ).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?;
+    ).map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"}))))?;
 
     let windows: Vec<crate::models::MaintenanceWindow> = stmt.query_map(params![monitor_id], |row| {
         let starts_at: String = row.get(3)?;
@@ -95,7 +95,7 @@ pub fn list_maintenance_windows(
             active: is_time_in_window(&now, &starts_at, &ends_at),
             created_at: row.get(5)?,
         })
-    }).map_err(|e| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()}))))?
+    }).map_err(|_| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"}))))?
     .filter_map(|r| r.ok())
     .collect();
 
@@ -108,7 +108,7 @@ pub fn delete_maintenance_window(
     db: &State<Arc<Db>>,
     token: ManageToken,
 ) -> Result<Json<serde_json::Value>, (Status, Json<serde_json::Value>)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
 
     let monitor_id: String = conn.query_row(
         "SELECT monitor_id FROM maintenance_windows WHERE id = ?1", params![id], |r| r.get(0)
@@ -119,8 +119,8 @@ pub fn delete_maintenance_window(
     verify_manage_key(&conn, &monitor_id, &token.0)?;
 
     conn.execute("DELETE FROM maintenance_windows WHERE id = ?1", params![id])
-        .map_err(|e| (Status::InternalServerError, Json(serde_json::json!({
-            "error": format!("DB error: {}", e), "code": "INTERNAL_ERROR"
+        .map_err(|_| (Status::InternalServerError, Json(serde_json::json!({
+            "error": "Internal server error", "code": "INTERNAL_ERROR"
         }))))?;
 
     Ok(Json(serde_json::json!({"message": "Maintenance window deleted"})))
@@ -134,7 +134,7 @@ fn is_time_in_window(now: &str, starts_at: &str, ends_at: &str) -> bool {
 /// Check if a monitor currently has an active maintenance window.
 /// Used by the checker to suppress incident creation.
 pub fn is_in_maintenance(db: &Db, monitor_id: &str) -> bool {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
     let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let count: i64 = conn.query_row(
         "SELECT COUNT(*) FROM maintenance_windows WHERE monitor_id = ?1 AND starts_at <= ?2 AND ends_at > ?2",

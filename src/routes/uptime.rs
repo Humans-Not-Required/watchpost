@@ -13,8 +13,8 @@ pub fn uptime_history(
     db: &State<Arc<Db>>,
 ) -> Result<Json<Vec<UptimeHistoryDay>>, (Status, Json<serde_json::Value>)> {
     let days = days.unwrap_or(30).clamp(1, 90);
-    let conn = db.conn.lock().unwrap();
-    let err_map = |e: rusqlite::Error| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()})));
+    let conn = db.conn();
+    let err_map = |_: rusqlite::Error| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"})));
 
     let mut stmt = conn.prepare(
         "SELECT date(checked_at) as day, \
@@ -54,8 +54,8 @@ pub fn monitor_uptime_history(
     db: &State<Arc<Db>>,
 ) -> Result<Json<Vec<UptimeHistoryDay>>, (Status, Json<serde_json::Value>)> {
     let days = days.unwrap_or(30).clamp(1, 90);
-    let conn = db.conn.lock().unwrap();
-    let err_map = |e: rusqlite::Error| (Status::InternalServerError, Json(serde_json::json!({"error": e.to_string()})));
+    let conn = db.conn();
+    let err_map = |_: rusqlite::Error| (Status::InternalServerError, Json(serde_json::json!({"error": "Internal server error"})));
 
     get_monitor_from_db(&conn, id)
         .map_err(|_| (Status::NotFound, Json(serde_json::json!({"error": "Monitor not found", "code": "NOT_FOUND"}))))?;

@@ -47,7 +47,7 @@ pub struct WebhookChannel {
 
 /// Fetch enabled webhook channels for a monitor.
 pub fn get_webhook_channels(db: &Db, monitor_id: &str) -> Vec<WebhookChannel> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
     let mut stmt = match conn.prepare(
         "SELECT config FROM notification_channels WHERE monitor_id = ?1 AND channel_type = 'webhook' AND is_enabled = 1"
     ) {
@@ -236,7 +236,7 @@ struct DeliveryLogEntry<'a> {
 
 /// Log a single webhook delivery attempt to the database.
 fn log_webhook_delivery(db: &Db, entry: &DeliveryLogEntry<'_>) {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
     let id = uuid::Uuid::new_v4().to_string();
     let seq: i64 = conn
         .query_row(
@@ -311,7 +311,7 @@ pub fn get_smtp_config() -> &'static Option<SmtpConfig> {
 
 /// Fetch enabled email addresses for a monitor.
 pub fn get_email_addresses(db: &Db, monitor_id: &str) -> Vec<String> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn();
     let mut stmt = match conn.prepare(
         "SELECT config FROM notification_channels WHERE monitor_id = ?1 AND channel_type = 'email' AND is_enabled = 1"
     ) {
