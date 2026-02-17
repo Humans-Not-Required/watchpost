@@ -4,6 +4,7 @@ use crate::sse::{EventBroadcaster, SseEvent};
 use rusqlite::params;
 
 /// Per-location latest heartbeat data used for consensus evaluation.
+#[allow(dead_code)]
 struct LocationHeartbeat {
     location_id: Option<String>,
     status: String,
@@ -12,6 +13,7 @@ struct LocationHeartbeat {
 }
 
 /// Result of consensus evaluation.
+#[allow(dead_code)]
 pub struct ConsensusResult {
     pub effective_status: String,
     pub up_count: u32,

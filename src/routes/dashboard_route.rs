@@ -2,7 +2,6 @@ use rocket::{get, serde::json::Json, State, http::Status};
 use crate::db::Db;
 use crate::models::{DashboardOverview, StatusCounts, DashboardIncident, SlowMonitor};
 use crate::auth::{OptionalManageToken, hash_key};
-use crate::routes::settings::get_setting;
 use rusqlite::params;
 use std::sync::Arc;
 
