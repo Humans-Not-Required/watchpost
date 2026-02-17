@@ -86,6 +86,7 @@ fn test_client_with_db() -> (Client, String) {
             watchpost::routes::list_dependents,
         ])
         .mount("/", rocket::routes![
+            watchpost::routes::root_llms_txt,
             watchpost::routes::skills_index,
             watchpost::routes::skills_skill_md,
         ])
@@ -481,6 +482,16 @@ fn test_notification_invalid_type() {
 fn test_llms_txt() {
     let client = test_client();
     let resp = client.get("/api/v1/llms.txt").dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body = resp.into_string().unwrap();
+    assert!(body.contains("Watchpost"));
+    assert!(body.contains("POST /api/v1/monitors"));
+}
+
+#[test]
+fn test_root_llms_txt() {
+    let client = test_client();
+    let resp = client.get("/llms.txt").dispatch();
     assert_eq!(resp.status(), Status::Ok);
     let body = resp.into_string().unwrap();
     assert!(body.contains("Watchpost"));

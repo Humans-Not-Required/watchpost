@@ -140,6 +140,7 @@ fn rocket() -> _ {
 
     // Well-known skills discovery (mounted at root, outside /api/v1)
     build = build.mount("/", routes![
+        routes::root_llms_txt,
         routes::skills_index,
         routes::skills_skill_md,
     ]);

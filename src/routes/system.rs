@@ -19,6 +19,12 @@ pub fn llms_txt() -> (rocket::http::ContentType, &'static str) {
     (rocket::http::ContentType::Plain, include_str!("../../static/llms.txt"))
 }
 
+/// Root-level /llms.txt for standard discoverability (outside /api/v1 mount)
+#[get("/llms.txt")]
+pub fn root_llms_txt() -> (rocket::http::ContentType, &'static str) {
+    (rocket::http::ContentType::Plain, include_str!("../../static/llms.txt"))
+}
+
 // ── OpenAPI Spec ──
 
 #[get("/openapi.json")]
