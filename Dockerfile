@@ -19,6 +19,11 @@ RUN cargo build --release
 
 # Stage 3: Runtime
 FROM debian:bookworm-slim AS runtime
+
+LABEL org.opencontainers.image.source="https://github.com/Humans-Not-Required/watchpost"
+LABEL org.opencontainers.image.description="Uptime monitoring and status pages for AI agents"
+LABEL org.opencontainers.image.licenses="MIT"
+
 RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 
