@@ -543,6 +543,25 @@ The React dashboard provides:
 - **Dark/light theme** — system preference detection, manual toggle, localStorage persistence
 - **Mobile responsive** — hamburger menu, touch-friendly
 
+## Python SDK
+
+A complete zero-dependency Python client library is available in [`sdk/python/`](sdk/python/):
+
+```python
+from watchpost import Watchpost
+
+wp = Watchpost("http://localhost:3007")
+mon = wp.create_monitor("My API", "https://api.example.com/health")
+print(f"Up? {wp.is_up(mon['id'])}")
+```
+
+- Python 3.8+ (stdlib only, no pip install)
+- Typed error hierarchy
+- 77 integration tests
+- Full API coverage (60+ endpoints)
+
+See [`sdk/python/README.md`](sdk/python/README.md) for complete documentation.
+
 ## License
 
 MIT
