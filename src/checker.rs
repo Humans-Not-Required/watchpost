@@ -390,8 +390,8 @@ async fn execute_tcp_check(monitor: &MonitorCheck) -> CheckResult {
 
 /// Execute a DNS resolution check.
 async fn execute_dns_check(monitor: &MonitorCheck) -> CheckResult {
-    use trust_dns_resolver::TokioAsyncResolver;
-    use trust_dns_resolver::config::{ResolverConfig, ResolverOpts};
+    use hickory_resolver::TokioAsyncResolver;
+    use hickory_resolver::config::{ResolverConfig, ResolverOpts};
 
     let start = std::time::Instant::now();
 
@@ -468,12 +468,12 @@ async fn execute_dns_check(monitor: &MonitorCheck) -> CheckResult {
 
 /// Perform DNS lookup for a specific record type, returning resolved values as strings.
 async fn dns_lookup(
-    resolver: &trust_dns_resolver::TokioAsyncResolver,
+    resolver: &hickory_resolver::TokioAsyncResolver,
     hostname: &str,
     record_type: &str,
 ) -> Result<Vec<String>, String> {
-    use trust_dns_resolver::proto::rr::RecordType;
-    use trust_dns_resolver::Name;
+    use hickory_resolver::proto::rr::RecordType;
+    use hickory_resolver::Name;
 
     let name = Name::from_ascii(hostname).map_err(|e| format!("Invalid hostname: {}", e))?;
 
