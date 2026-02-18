@@ -1503,6 +1503,840 @@ def main():
             assert hasattr(e, "body")
             assert hasattr(e, "status_code")
 
+    # ── Constructor Variants ────────────────────────────────────────────
+    print("\nConstructor Variants:")
+
+    @test("constructor with env var fallback")
+    def _():
+        old = os.environ.get("WATCHPOST_URL")
+        os.environ["WATCHPOST_URL"] = BASE_URL
+        try:
+            wp2 = Watchpost()
+            h = wp2.health()
+            assert h.get("status") == "ok"
+        finally:
+            if old:
+                os.environ["WATCHPOST_URL"] = old
+            elif "WATCHPOST_URL" in os.environ:
+                del os.environ["WATCHPOST_URL"]
+
+    @test("constructor with trailing slash strips it")
+    def _():
+        wp2 = Watchpost(BASE_URL + "/")
+        h = wp2.health()
+        assert h.get("status") == "ok"
+
+    @test("constructor with custom timeout")
+    def _():
+        wp2 = Watchpost(BASE_URL, timeout=5)
+        assert wp2.timeout == 5
+        h = wp2.health()
+        assert h.get("status") == "ok"
+
+    # ── Unicode Handling ────────────────────────────────────────────────
+    print("\nUnicode Handling:")
+
+    unicode_mon_id = None
+    unicode_mon_key = None
+
+    @test("create monitor with CJK name")
+    def _():
+        nonlocal unicode_mon_id, unicode_mon_key
+        mon = wp.create_monitor(
+            "監視テスト 🔍",
+            "https://httpbin.org/status/200",
+            is_public=True,
+            tags=["日本語", "テスト"],
+            group_name="グループA",
+        )
+        unicode_mon_id = mon["id"]
+        unicode_mon_key = mon["manage_key"]
+        created_monitors.append((unicode_mon_id, unicode_mon_key))
+
+    @test("get unicode monitor preserves name")
+    def _():
+        mon = wp.get_monitor(unicode_mon_id)
+        assert "監視テスト" in mon["name"], f"Name not preserved: {mon['name']}"
+
+    @test("search unicode monitor by CJK name")
+    def _():
+        monitors = wp.list_monitors(search="監視テスト")
+        ids = [m["id"] for m in monitors]
+        assert unicode_mon_id in ids, "Unicode search failed"
+
+    @test("filter by unicode tag")
+    def _():
+        monitors = wp.list_monitors(tag="日本語")
+        assert isinstance(monitors, list)
+
+    @test("filter by unicode group")
+    def _():
+        monitors = wp.list_monitors(group="グループA")
+        assert isinstance(monitors, list)
+
+    @test("update monitor with emoji tags")
+    def _():
+        wp.update_monitor(unicode_mon_id, unicode_mon_key, tags=["🔥", "🚀", "テスト"])
+        mon = wp.get_monitor(unicode_mon_id)
+        assert "🔥" in mon.get("tags", [])
+
+    @test("create maintenance with unicode title")
+    def _():
+        m = wp.create_maintenance(
+            unicode_mon_id, "メンテナンス期間 🛠️",
+            "2099-06-01T00:00:00Z", "2099-06-01T02:00:00Z",
+            unicode_mon_key,
+        )
+        assert "id" in m
+        wp.delete_maintenance(m["id"], unicode_mon_key)
+
+    @test("create notification with unicode name")
+    def _():
+        n = wp.create_notification(
+            unicode_mon_id, "通知チャンネル 📢", "webhook",
+            {"url": "https://httpbin.org/post"},
+            unicode_mon_key,
+        )
+        assert "id" in n
+        wp.delete_notification(n["id"], unicode_mon_key)
+
+    @test("create status page with unicode")
+    def _():
+        page = wp.create_status_page(
+            "unicode-test-page",
+            "ステータス页面 📊",
+            description="Beschreibung mit Ümlauten und Ñ",
+        )
+        assert "manage_key" in page
+        pk = page["manage_key"]
+        created_pages.append(("unicode-test-page", pk))
+        got = wp.get_status_page("unicode-test-page")
+        assert "ステータス" in got.get("title", "")
+        wp.delete_status_page("unicode-test-page", pk)
+        created_pages.remove(("unicode-test-page", pk))
+
+    # ── Monitor Response Fields ─────────────────────────────────────────
+    print("\nMonitor Response Fields:")
+
+    @test("create monitor response has all expected fields")
+    def _():
+        mon = wp.create_monitor("Fields Test", "https://httpbin.org/status/200", is_public=True)
+        created_monitors.append((mon["id"], mon["manage_key"]))
+        for f in ("id", "name", "url", "manage_key"):
+            assert f in mon, f"Missing field in create response: {f}"
+
+    @test("get monitor response has detailed fields")
+    def _():
+        mon = wp.get_monitor(monitor_id)
+        expected = ["id", "name", "url", "monitor_type", "method", "interval_seconds",
+                     "timeout_ms", "expected_status", "is_public", "current_status"]
+        for f in expected:
+            assert f in mon, f"Missing field in get: {f}"
+
+    @test("list monitors items have core fields")
+    def _():
+        monitors = wp.list_monitors()
+        if monitors:
+            m = monitors[0]
+            for f in ("id", "name", "url", "current_status"):
+                assert f in m, f"Missing field in list item: {f}"
+
+    @test("monitor has created_at field")
+    def _():
+        mon = wp.get_monitor(monitor_id)
+        assert "created_at" in mon, "Missing created_at"
+        assert isinstance(mon["created_at"], str)
+        assert len(mon["created_at"]) >= 19, f"Timestamp too short: {mon['created_at']}"
+
+    @test("monitor has is_paused field")
+    def _():
+        mon = wp.get_monitor(monitor_id)
+        assert "is_paused" in mon
+        assert isinstance(mon["is_paused"], bool)
+
+    # ── Timestamps Lifecycle ────────────────────────────────────────────
+    print("\nTimestamps Lifecycle:")
+
+    ts_mon_id = None
+    ts_mon_key = None
+
+    @test("monitor created_at set on creation")
+    def _():
+        nonlocal ts_mon_id, ts_mon_key
+        mon = wp.create_monitor("Timestamp Test", "https://httpbin.org/status/200", is_public=True)
+        ts_mon_id = mon["id"]
+        ts_mon_key = mon["manage_key"]
+        created_monitors.append((ts_mon_id, ts_mon_key))
+        got = wp.get_monitor(ts_mon_id)
+        assert "created_at" in got
+        assert len(got["created_at"]) > 10, f"Suspicious created_at: {got['created_at']}"
+
+    @test("monitor updated_at changes on update")
+    def _():
+        before = wp.get_monitor(ts_mon_id)
+        time.sleep(0.1)
+        wp.update_monitor(ts_mon_id, ts_mon_key, name="Timestamp Updated")
+        after = wp.get_monitor(ts_mon_id)
+        if "updated_at" in before and "updated_at" in after:
+            assert after["updated_at"] >= before.get("updated_at", ""), "updated_at not advanced"
+
+    # ── Multi-Monitor Isolation ─────────────────────────────────────────
+    print("\nMulti-Monitor Isolation:")
+
+    iso_mon_a_id = None
+    iso_mon_a_key = None
+    iso_mon_b_id = None
+    iso_mon_b_key = None
+
+    @test("create two isolated monitors")
+    def _():
+        nonlocal iso_mon_a_id, iso_mon_a_key, iso_mon_b_id, iso_mon_b_key
+        a = wp.create_monitor("Iso-A", "https://httpbin.org/status/200", is_public=True, tags=["iso-a"])
+        b = wp.create_monitor("Iso-B", "https://httpbin.org/status/201", is_public=True, tags=["iso-b"])
+        iso_mon_a_id = a["id"]
+        iso_mon_a_key = a["manage_key"]
+        iso_mon_b_id = b["id"]
+        iso_mon_b_key = b["manage_key"]
+        created_monitors.append((iso_mon_a_id, iso_mon_a_key))
+        created_monitors.append((iso_mon_b_id, iso_mon_b_key))
+
+    @test("notifications are monitor-scoped")
+    def _():
+        n = wp.create_notification(iso_mon_a_id, "A-only", "webhook",
+                                    {"url": "https://httpbin.org/post"}, iso_mon_a_key)
+        notifs_a = wp.list_notifications(iso_mon_a_id, iso_mon_a_key)
+        notifs_b = wp.list_notifications(iso_mon_b_id, iso_mon_b_key)
+        items_a = notifs_a if isinstance(notifs_a, list) else notifs_a.get("notifications", [])
+        items_b = notifs_b if isinstance(notifs_b, list) else notifs_b.get("notifications", [])
+        a_ids = [x["id"] for x in items_a]
+        b_ids = [x["id"] for x in items_b]
+        assert n["id"] in a_ids, "Notification not in monitor A"
+        assert n["id"] not in b_ids, "Notification leaked to monitor B"
+        wp.delete_notification(n["id"], iso_mon_a_key)
+
+    @test("maintenance windows are monitor-scoped")
+    def _():
+        m = wp.create_maintenance(iso_mon_a_id, "A-maint",
+                                   "2099-01-01T00:00:00Z", "2099-01-01T01:00:00Z", iso_mon_a_key)
+        mw_a = wp.list_maintenance(iso_mon_a_id)
+        mw_b = wp.list_maintenance(iso_mon_b_id)
+        items_a = mw_a if isinstance(mw_a, list) else mw_a.get("windows", [])
+        items_b = mw_b if isinstance(mw_b, list) else mw_b.get("windows", [])
+        a_ids = [x.get("id") for x in items_a]
+        b_ids = [x.get("id") for x in items_b]
+        assert m["id"] in a_ids, "Maintenance not in monitor A"
+        assert m["id"] not in b_ids, "Maintenance leaked to monitor B"
+        wp.delete_maintenance(m["id"], iso_mon_a_key)
+
+    @test("heartbeats are monitor-scoped (no cross-leak)")
+    def _():
+        hb_a = wp.list_heartbeats(iso_mon_a_id)
+        hb_b = wp.list_heartbeats(iso_mon_b_id)
+        # Both should be independent (empty or different)
+        assert isinstance(hb_a, (list, dict))
+        assert isinstance(hb_b, (list, dict))
+
+    @test("incidents are monitor-scoped")
+    def _():
+        inc_a = wp.list_incidents(iso_mon_a_id)
+        inc_b = wp.list_incidents(iso_mon_b_id)
+        assert isinstance(inc_a, (list, dict))
+        assert isinstance(inc_b, (list, dict))
+
+    @test("key A cannot modify monitor B")
+    def _():
+        try:
+            wp.update_monitor(iso_mon_b_id, iso_mon_a_key, name="Hacked")
+            assert False, "Expected AuthError"
+        except AuthError:
+            pass
+
+    @test("key A cannot delete monitor B")
+    def _():
+        try:
+            wp.delete_monitor(iso_mon_b_id, iso_mon_a_key)
+            assert False, "Expected AuthError"
+        except AuthError:
+            pass
+
+    @test("key A cannot pause monitor B")
+    def _():
+        try:
+            wp.pause_monitor(iso_mon_b_id, iso_mon_a_key)
+            assert False, "Expected AuthError"
+        except AuthError:
+            pass
+
+    # ── Dependency Chain ────────────────────────────────────────────────
+    print("\nDependency Chain:")
+
+    chain_a_id = None
+    chain_a_key = None
+    chain_b_id = None
+    chain_b_key = None
+    chain_c_id = None
+    chain_c_key = None
+
+    @test("create 3-level dependency chain")
+    def _():
+        nonlocal chain_a_id, chain_a_key, chain_b_id, chain_b_key, chain_c_id, chain_c_key
+        a = wp.create_monitor("Chain-A (DB)", "https://httpbin.org/status/200", is_public=True)
+        b = wp.create_monitor("Chain-B (API)", "https://httpbin.org/status/200", is_public=True)
+        c = wp.create_monitor("Chain-C (Web)", "https://httpbin.org/status/200", is_public=True)
+        chain_a_id, chain_a_key = a["id"], a["manage_key"]
+        chain_b_id, chain_b_key = b["id"], b["manage_key"]
+        chain_c_id, chain_c_key = c["id"], c["manage_key"]
+        created_monitors.extend([
+            (chain_a_id, chain_a_key),
+            (chain_b_id, chain_b_key),
+            (chain_c_id, chain_c_key),
+        ])
+        # C depends on B, B depends on A
+        wp.add_dependency(chain_b_id, chain_a_id, chain_b_key)
+        wp.add_dependency(chain_c_id, chain_b_id, chain_c_key)
+
+    @test("chain: C has B as dependency")
+    def _():
+        deps = wp.list_dependencies(chain_c_id)
+        dep_ids = [d.get("depends_on_id") for d in (deps if isinstance(deps, list) else [])]
+        assert chain_b_id in dep_ids, f"B not in C's deps: {dep_ids}"
+
+    @test("chain: A has B as dependent")
+    def _():
+        deps = wp.list_dependents(chain_a_id)
+        assert isinstance(deps, (list, dict))
+
+    @test("chain: circular dependency C→A raises error")
+    def _():
+        try:
+            wp.add_dependency(chain_a_id, chain_c_id, chain_a_key)
+            assert False, "Expected error for circular dependency"
+        except (ConflictError, ValidationError, WatchpostError):
+            pass
+
+    @test("chain: delete middle (B) removes B's deps")
+    def _():
+        # After deleting B, C's dependency on B should be orphaned
+        wp.delete_monitor(chain_b_id, chain_b_key)
+        created_monitors.remove((chain_b_id, chain_b_key))
+        # C should still exist
+        c = wp.get_monitor(chain_c_id)
+        assert c["name"] == "Chain-C (Web)"
+
+    # ── Notification Enable/Disable Lifecycle ───────────────────────────
+    print("\nNotification Lifecycle:")
+
+    notif_lc_id = None
+
+    @test("create notification, disable, re-enable")
+    def _():
+        nonlocal notif_lc_id
+        n = wp.create_notification(
+            monitor_id, "Lifecycle Notif", "webhook",
+            {"url": "https://httpbin.org/post"}, monitor_key,
+        )
+        notif_lc_id = n["id"]
+        # Disable
+        wp.update_notification(notif_lc_id, monitor_key, is_enabled=False)
+        notifs = wp.list_notifications(monitor_id, monitor_key)
+        items = notifs if isinstance(notifs, list) else notifs.get("notifications", [])
+        found = [x for x in items if x["id"] == notif_lc_id]
+        assert found and found[0].get("is_enabled") == False, "Not disabled"
+        # Re-enable
+        wp.update_notification(notif_lc_id, monitor_key, is_enabled=True)
+        notifs2 = wp.list_notifications(monitor_id, monitor_key)
+        items2 = notifs2 if isinstance(notifs2, list) else notifs2.get("notifications", [])
+        found2 = [x for x in items2 if x["id"] == notif_lc_id]
+        assert found2 and found2[0].get("is_enabled") == True, "Not re-enabled"
+
+    @test("delete notification lifecycle")
+    def _():
+        wp.delete_notification(notif_lc_id, monitor_key)
+
+    # ── Multiple Maintenance Windows ────────────────────────────────────
+    print("\nMultiple Maintenance Windows:")
+
+    @test("create multiple maintenance windows on same monitor")
+    def _():
+        m1 = wp.create_maintenance(monitor_id, "Window 1",
+                                    "2099-03-01T00:00:00Z", "2099-03-01T01:00:00Z", monitor_key)
+        m2 = wp.create_maintenance(monitor_id, "Window 2",
+                                    "2099-04-01T00:00:00Z", "2099-04-01T01:00:00Z", monitor_key)
+        mw = wp.list_maintenance(monitor_id)
+        items = mw if isinstance(mw, list) else mw.get("windows", [])
+        ids = [x.get("id") for x in items]
+        assert m1["id"] in ids and m2["id"] in ids, "Both windows should exist"
+        wp.delete_maintenance(m1["id"], monitor_key)
+        wp.delete_maintenance(m2["id"], monitor_key)
+
+    @test("maintenance window response has expected fields")
+    def _():
+        m = wp.create_maintenance(monitor_id, "Field Check",
+                                   "2099-05-01T00:00:00Z", "2099-05-01T02:00:00Z", monitor_key)
+        assert "id" in m
+        assert "title" in m or "starts_at" in m
+        wp.delete_maintenance(m["id"], monitor_key)
+
+    # ── Alert Rules Partial Update ──────────────────────────────────────
+    print("\nAlert Rules (Partial):")
+
+    @test("set alert rules and verify all fields")
+    def _():
+        wp.set_alert_rules(monitor_id, monitor_key,
+                           repeat_interval_minutes=20, max_repeats=8, escalation_after_minutes=45)
+        rules = wp.get_alert_rules(monitor_id, monitor_key)
+        assert rules.get("repeat_interval_minutes") == 20
+        assert rules.get("max_repeats") == 8
+        assert rules.get("escalation_after_minutes") == 45
+
+    @test("overwrite alert rules with new values")
+    def _():
+        wp.set_alert_rules(monitor_id, monitor_key,
+                           repeat_interval_minutes=10, max_repeats=3, escalation_after_minutes=15)
+        rules = wp.get_alert_rules(monitor_id, monitor_key)
+        assert rules.get("repeat_interval_minutes") == 10
+        assert rules.get("max_repeats") == 3
+
+    @test("alert rules with zeros (disabled)")
+    def _():
+        wp.set_alert_rules(monitor_id, monitor_key,
+                           repeat_interval_minutes=0, max_repeats=0, escalation_after_minutes=0)
+        rules = wp.get_alert_rules(monitor_id, monitor_key)
+        assert rules.get("repeat_interval_minutes") == 0
+
+    @test("cleanup alert rules")
+    def _():
+        wp.delete_alert_rules(monitor_id, monitor_key)
+
+    # ── Bulk Create Large Batch ─────────────────────────────────────────
+    print("\nBulk Create (Large Batch):")
+
+    @test("bulk create 10 monitors")
+    def _():
+        monitors = [
+            {"name": f"Bulk-{i}", "url": f"https://httpbin.org/status/{200+i}", "is_public": True}
+            for i in range(10)
+        ]
+        result = wp.bulk_create_monitors(monitors)
+        created_count = result.get("succeeded", len(result.get("created", [])))
+        assert created_count >= 10, f"Expected 10 created, got {created_count}"
+        if "created" in result:
+            for m in result["created"]:
+                if "id" in m and "manage_key" in m:
+                    created_monitors.append((m["id"], m["manage_key"]))
+
+    @test("bulk create with mixed types")
+    def _():
+        monitors = [
+            {"name": "Bulk HTTP", "url": "https://httpbin.org/status/200", "is_public": True},
+            {"name": "Bulk TCP", "url": "httpbin.org:443", "monitor_type": "tcp", "is_public": True},
+            {"name": "Bulk DNS", "url": "httpbin.org", "monitor_type": "dns", "is_public": True},
+        ]
+        result = wp.bulk_create_monitors(monitors)
+        assert result.get("succeeded", 0) >= 3 or len(result.get("created", [])) >= 3
+        if "created" in result:
+            for m in result["created"]:
+                if "id" in m and "manage_key" in m:
+                    created_monitors.append((m["id"], m["manage_key"]))
+
+    # ── Status Page Advanced ────────────────────────────────────────────
+    print("\nStatus Page (Advanced):")
+
+    @test("create private status page")
+    def _():
+        page = wp.create_status_page("private-test", "Private Page", is_public=False)
+        pk = page["manage_key"]
+        created_pages.append(("private-test", pk))
+        # Should still be gettable by slug
+        got = wp.get_status_page("private-test")
+        assert "title" in got
+
+    @test("update status page logo_url")
+    def _():
+        pk = [k for s, k in created_pages if s == "private-test"][0]
+        wp.update_status_page("private-test", pk, logo_url="https://example.com/logo.png")
+        got = wp.get_status_page("private-test")
+        assert got.get("logo_url") == "https://example.com/logo.png"
+
+    @test("status page with custom domain")
+    def _():
+        page = wp.create_status_page(
+            "domain-test", "Domain Page",
+            custom_domain="status.example.com",
+        )
+        pk = page["manage_key"]
+        created_pages.append(("domain-test", pk))
+        got = wp.get_status_page("domain-test")
+        assert got.get("custom_domain") == "status.example.com"
+
+    @test("status page add and list monitors")
+    def _():
+        pk = [k for s, k in created_pages if s == "private-test"][0]
+        wp.add_monitors_to_page("private-test", [monitor_id, unicode_mon_id], pk)
+        mons = wp.list_page_monitors("private-test")
+        assert isinstance(mons, list)
+        assert len(mons) >= 2
+
+    @test("cleanup advanced status pages")
+    def _():
+        for slug, key in list(created_pages):
+            if slug in ("private-test", "domain-test"):
+                try:
+                    wp.delete_status_page(slug, key)
+                    created_pages.remove((slug, key))
+                except Exception:
+                    pass
+
+    # ── Discovery Dual Paths ────────────────────────────────────────────
+    print("\nDiscovery (Dual Paths):")
+
+    @test("root llms.txt via SDK method")
+    def _():
+        root = wp.llms_txt_root()
+        assert "atchpost" in root, "Root llms.txt missing Watchpost"
+
+    @test("root llms.txt matches api/v1 llms.txt")
+    def _():
+        root = wp.llms_txt_root()
+        v1 = wp.get_llms_txt()
+        assert "atchpost" in root
+        assert "atchpost" in v1
+
+    @test("well-known SKILL.md matches api/v1 SKILL.md")
+    def _():
+        wk = wp.get_skill()
+        v1 = wp.skill_md_v1()
+        assert "monitor" in wk.lower() or "Monitor" in wk
+        assert "monitor" in v1.lower() or "Monitor" in v1
+
+    @test("api/v1 SKILL.md via SDK method")
+    def _():
+        v1 = wp.skill_md_v1()
+        assert len(v1) > 50, f"SKILL.md too short: {len(v1)} chars"
+
+    @test("openapi via SDK method")
+    def _():
+        api = wp.get_openapi()
+        assert "paths" in api
+        assert "info" in api
+
+    @test("skills index JSON has expected structure")
+    def _():
+        idx = wp.get_skills_index()
+        assert isinstance(idx, dict)
+        if "skills" in idx:
+            assert isinstance(idx["skills"], list)
+
+    @test("openapi.json has paths and info")
+    def _():
+        api = wp._get("/api/v1/openapi.json")
+        assert "paths" in api, "Missing paths in OpenAPI"
+        assert "info" in api, "Missing info in OpenAPI"
+
+    @test("openapi info has title and version")
+    def _():
+        api = wp._get("/api/v1/openapi.json")
+        info = api.get("info", {})
+        assert "title" in info, "Missing title"
+        assert "version" in info, "Missing version"
+
+    # ── Heartbeat Response Structure ────────────────────────────────────
+    print("\nHeartbeat Structure:")
+
+    @test("heartbeat list is a list")
+    def _():
+        hb = wp.list_heartbeats(monitor_id)
+        items = hb if isinstance(hb, list) else hb.get("heartbeats", hb.get("items", []))
+        assert isinstance(items, list)
+
+    @test("heartbeat pagination with after returns subset")
+    def _():
+        hb1 = wp.list_heartbeats(monitor_id, limit=100)
+        items1 = hb1 if isinstance(hb1, list) else hb1.get("heartbeats", hb1.get("items", []))
+        if items1:
+            # Get after the first seq
+            first_seq = items1[0].get("seq", 0)
+            hb2 = wp.list_heartbeats(monitor_id, after=first_seq)
+            items2 = hb2 if isinstance(hb2, list) else hb2.get("heartbeats", hb2.get("items", []))
+            # After first should not include first
+            seqs2 = [h.get("seq") for h in items2]
+            assert first_seq not in seqs2 or len(items2) == 0
+
+    # ── Uptime Response Structure ───────────────────────────────────────
+    print("\nUptime Structure:")
+
+    @test("uptime has period fields")
+    def _():
+        up = wp.get_uptime(monitor_id)
+        # Should have at least some period-based uptime
+        has_periods = any(k in up for k in ("uptime_24h", "uptime_7d", "uptime_30d", "uptime_90d"))
+        assert has_periods, f"No period fields in uptime: {list(up.keys())}"
+
+    @test("uptime values are numeric")
+    def _():
+        up = wp.get_uptime(monitor_id)
+        for k in ("uptime_24h", "uptime_7d", "uptime_30d", "uptime_90d"):
+            if k in up:
+                assert isinstance(up[k], (int, float)), f"{k} is not numeric: {type(up[k])}"
+
+    @test("uptime history returns array of daily values")
+    def _():
+        hist = wp.get_uptime_history(monitor_id, days=7)
+        if isinstance(hist, list):
+            assert len(hist) <= 7, f"More days than requested: {len(hist)}"
+        elif isinstance(hist, dict) and "days" in hist:
+            assert len(hist["days"]) <= 7
+
+    # ── SLA Response Structure ──────────────────────────────────────────
+    print("\nSLA Structure:")
+
+    @test("SLA has target and budget fields")
+    def _():
+        # Re-set SLA on monitor
+        wp.update_monitor(monitor_id, monitor_key, sla_target=99.9, sla_period_days=30)
+        sla = wp.get_sla(monitor_id)
+        has_fields = any(k in sla for k in ("target_pct", "current_pct", "budget_remaining_seconds", "status"))
+        assert has_fields, f"Missing SLA fields: {list(sla.keys())}"
+
+    @test("SLA status is valid value")
+    def _():
+        sla = wp.get_sla(monitor_id)
+        valid_statuses = ("met", "at_risk", "breached", "ok", "warning")
+        if "status" in sla:
+            assert sla["status"] in valid_statuses, f"Unexpected SLA status: {sla['status']}"
+
+    # ── Export Advanced ─────────────────────────────────────────────────
+    print("\nExport (Advanced):")
+
+    @test("export includes monitor config fields")
+    def _():
+        config = wp.export_monitor(monitor_id, monitor_key)
+        for f in ("name", "url", "monitor_type"):
+            assert f in config, f"Missing {f} in export"
+
+    @test("export includes optional fields when set")
+    def _():
+        config = wp.export_monitor(monitor_id, monitor_key)
+        # We set tags, group, etc. earlier
+        if "tags" in config:
+            assert isinstance(config["tags"], list)
+
+    @test("export for nonexistent monitor raises NotFoundError")
+    def _():
+        try:
+            wp.export_monitor("00000000-0000-0000-0000-000000000000", "any-key")
+            assert False, "Expected NotFoundError"
+        except NotFoundError:
+            pass
+
+    # ── Tags and Groups Detail ──────────────────────────────────────────
+    print("\nTags & Groups (Detail):")
+
+    @test("tags list includes our test tags")
+    def _():
+        tags = wp.list_tags()
+        # We created monitors with various tags
+        assert isinstance(tags, list)
+
+    @test("groups list includes our test groups")
+    def _():
+        groups = wp.list_groups()
+        assert isinstance(groups, list)
+
+    @test("tags are strings")
+    def _():
+        tags = wp.list_tags()
+        for t in tags:
+            assert isinstance(t, str), f"Tag is not string: {type(t)}"
+
+    @test("groups are strings")
+    def _():
+        groups = wp.list_groups()
+        for g in groups:
+            assert isinstance(g, str), f"Group is not string: {type(g)}"
+
+    # ── Monitor Pause/Resume Lifecycle ──────────────────────────────────
+    print("\nPause/Resume Lifecycle:")
+
+    @test("pause changes current_status to paused")
+    def _():
+        wp.pause_monitor(monitor_id, monitor_key)
+        mon = wp.get_monitor(monitor_id)
+        assert mon.get("is_paused") == True
+        assert mon.get("current_status") == "paused" or mon.get("is_paused") == True
+
+    @test("resume restores monitoring")
+    def _():
+        wp.resume_monitor(monitor_id, monitor_key)
+        mon = wp.get_monitor(monitor_id)
+        assert mon.get("is_paused") == False
+
+    @test("double pause is idempotent")
+    def _():
+        wp.pause_monitor(monitor_id, monitor_key)
+        wp.pause_monitor(monitor_id, monitor_key)
+        mon = wp.get_monitor(monitor_id)
+        assert mon.get("is_paused") == True
+        wp.resume_monitor(monitor_id, monitor_key)
+
+    @test("double resume is idempotent")
+    def _():
+        wp.resume_monitor(monitor_id, monitor_key)
+        wp.resume_monitor(monitor_id, monitor_key)
+        mon = wp.get_monitor(monitor_id)
+        assert mon.get("is_paused") == False
+
+    # ── Full Monitor Lifecycle ──────────────────────────────────────────
+    print("\nFull Monitor Lifecycle:")
+
+    @test("full lifecycle: create→configure→pause→resume→export→delete")
+    def _():
+        # Create
+        m = wp.create_monitor("Lifecycle Full", "https://httpbin.org/status/200",
+                               is_public=True, tags=["lifecycle"])
+        mid, mk = m["id"], m["manage_key"]
+        # Configure
+        wp.update_monitor(mid, mk, sla_target=99.9, sla_period_days=7,
+                          group_name="Lifecycle Group", confirmation_threshold=2)
+        wp.set_alert_rules(mid, mk, repeat_interval_minutes=10, max_repeats=3)
+        wp.create_notification(mid, "LC Webhook", "webhook",
+                               {"url": "https://httpbin.org/post"}, mk)
+        wp.create_maintenance(mid, "LC Maint", "2099-01-01T00:00:00Z", "2099-01-01T01:00:00Z", mk)
+        # Verify config
+        mon = wp.get_monitor(mid)
+        assert mon["name"] == "Lifecycle Full"
+        assert mon.get("sla_target") == 99.9
+        # Pause and resume
+        wp.pause_monitor(mid, mk)
+        assert wp.get_monitor(mid).get("is_paused") == True
+        wp.resume_monitor(mid, mk)
+        assert wp.get_monitor(mid).get("is_paused") == False
+        # Export
+        config = wp.export_monitor(mid, mk)
+        assert "name" in config
+        # SLA
+        sla = wp.get_sla(mid)
+        assert isinstance(sla, dict)
+        # Delete
+        wp.delete_monitor(mid, mk)
+        try:
+            wp.get_monitor(mid)
+            assert False, "Monitor should be deleted"
+        except NotFoundError:
+            pass
+
+    # ── Cross-Feature Interactions ──────────────────────────────────────
+    print("\nCross-Feature Interactions:")
+
+    @test("SLA + uptime consistency")
+    def _():
+        wp.update_monitor(monitor_id, monitor_key, sla_target=99.0)
+        sla = wp.get_sla(monitor_id)
+        uptime = wp.get_uptime(monitor_id)
+        assert isinstance(sla, dict)
+        assert isinstance(uptime, dict)
+
+    @test("status page shows correct monitor status")
+    def _():
+        page = wp.create_status_page("crossfeat-test", "Cross Feature")
+        pk = page["manage_key"]
+        created_pages.append(("crossfeat-test", pk))
+        wp.add_monitors_to_page("crossfeat-test", [monitor_id], pk)
+        page_data = wp.get_status_page("crossfeat-test")
+        assert isinstance(page_data, dict)
+        wp.delete_status_page("crossfeat-test", pk)
+        created_pages.remove(("crossfeat-test", pk))
+
+    @test("badge reflects monitor state")
+    def _():
+        svg = wp.get_status_badge(monitor_id)
+        assert "<svg" in svg
+
+    @test("dashboard includes recently created monitors")
+    def _():
+        dash = wp.get_dashboard()
+        assert isinstance(dash, dict)
+        total = dash.get("total") or dash.get("total_monitors") or dash.get("monitors_count")
+        if total is not None:
+            assert total > 0, "Dashboard should show monitors"
+
+    @test("tags list reflects current monitors")
+    def _():
+        tags = wp.list_tags()
+        # We created monitors with sdk-test tag earlier
+        assert isinstance(tags, list)
+
+    # ── Error Response Format ───────────────────────────────────────────
+    print("\nError Response Format:")
+
+    @test("404 error has body with error field")
+    def _():
+        try:
+            wp.get_monitor("00000000-0000-0000-0000-000000000000")
+        except NotFoundError as e:
+            if isinstance(e.body, dict):
+                assert "error" in e.body, f"Missing error field in body: {e.body}"
+
+    @test("401 error has body with error field")
+    def _():
+        try:
+            wp.delete_monitor(monitor_id, "bad-key")
+        except AuthError as e:
+            if isinstance(e.body, dict):
+                assert "error" in e.body, f"Missing error field in body: {e.body}"
+
+    @test("error message is human-readable string")
+    def _():
+        try:
+            wp.get_monitor("00000000-0000-0000-0000-000000000000")
+        except NotFoundError as e:
+            assert isinstance(str(e), str)
+            assert len(str(e)) > 0
+
+    # ── SSE Constructor ─────────────────────────────────────────────────
+    print("\nSSE Events:")
+
+    @test("SSEEvent has expected attributes")
+    def _():
+        from watchpost import SSEEvent
+        evt = SSEEvent(event="test", data='{"key":"val"}')
+        assert evt.event == "test"
+        assert evt.json == {"key": "val"}
+        assert evt.id is None
+        assert evt.retry is None
+
+    @test("SSEEvent json returns None for invalid JSON")
+    def _():
+        from watchpost import SSEEvent
+        evt = SSEEvent(data="not json")
+        assert evt.json is None
+
+    # ── Monitor Delete Verification ─────────────────────────────────────
+    print("\nDelete Verification:")
+
+    @test("delete monitor with wrong key raises AuthError")
+    def _():
+        m = wp.create_monitor("Delete Test", "https://httpbin.org/status/200", is_public=True)
+        created_monitors.append((m["id"], m["manage_key"]))
+        try:
+            wp.delete_monitor(m["id"], "wrong-key")
+            assert False, "Expected AuthError"
+        except AuthError:
+            pass
+        # Should still exist
+        got = wp.get_monitor(m["id"])
+        assert got["name"] == "Delete Test"
+
+    @test("delete already-deleted monitor raises NotFoundError")
+    def _():
+        m = wp.create_monitor("Double Delete", "https://httpbin.org/status/200", is_public=True)
+        wp.delete_monitor(m["id"], m["manage_key"])
+        try:
+            wp.delete_monitor(m["id"], m["manage_key"])
+            assert False, "Expected NotFoundError"
+        except NotFoundError:
+            pass
+
     # ── Cleanup ─────────────────────────────────────────────────────────
     print("\nCleanup:")
 

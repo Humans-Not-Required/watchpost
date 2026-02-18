@@ -1006,16 +1006,28 @@ class Watchpost:
     # ------------------------------------------------------------------
 
     def get_llms_txt(self) -> str:
-        """Get the llms.txt agent integration guide."""
+        """Get the llms.txt agent integration guide (API v1 path)."""
         return self._get("/api/v1/llms.txt", raw=True).decode()
+
+    def llms_txt_root(self) -> str:
+        """Get the llms.txt from root path."""
+        return self._get("/llms.txt", raw=True).decode()
 
     def get_skills_index(self) -> Dict:
         """Get the well-known skills discovery index."""
         return self._get("/.well-known/skills/index.json")
 
     def get_skill(self) -> str:
-        """Get the SKILL.md integration guide."""
+        """Get the SKILL.md integration guide (well-known path)."""
         return self._get("/.well-known/skills/watchpost/SKILL.md", raw=True).decode()
+
+    def skill_md_v1(self) -> str:
+        """Get the SKILL.md via API v1 path."""
+        return self._get("/api/v1/skills/SKILL.md", raw=True).decode()
+
+    def get_openapi(self) -> Dict:
+        """Get the OpenAPI specification."""
+        return self._get("/api/v1/openapi.json")
 
     # ------------------------------------------------------------------
     # Convenience helpers
