@@ -33,7 +33,7 @@ pub use notifications::{create_notification, list_notifications, delete_notifica
 pub use maintenance::{create_maintenance_window, list_maintenance_windows, delete_maintenance_window, is_in_maintenance};
 pub use tags::{list_tags, list_groups};
 pub use settings::{get_settings, update_settings};
-pub use system::{health, llms_txt, root_llms_txt, openapi_spec, skills_index, skills_skill_md, spa_fallback};
+pub use system::{health, llms_txt, root_llms_txt, openapi_spec, skills_index, skills_skill_md, api_skills_skill_md, spa_fallback};
 pub use badges::{monitor_uptime_badge, monitor_status_badge};
 pub use sla::monitor_sla;
 pub use stream::{global_events, monitor_events};

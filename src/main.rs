@@ -113,6 +113,7 @@ fn rocket() -> _ {
             routes::list_dependencies,
             routes::remove_dependency,
             routes::list_dependents,
+            routes::api_skills_skill_md,
         ])
         .register("/", catchers![
             catchers::bad_request,
