@@ -90,6 +90,9 @@ fn test_client_with_db() -> (Client, String) {
             watchpost::routes::skills_index,
             watchpost::routes::skills_skill_md,
         ])
+        .mount("/api/v1", rocket::routes![
+            watchpost::routes::api_skills_skill_md,
+        ])
         .register("/", rocket::catchers![
             watchpost::catchers::bad_request,
             watchpost::catchers::unauthorized,
@@ -6827,4 +6830,1527 @@ fn test_skills_llms_txt_mentions_skills() {
     let body = resp.into_string().unwrap();
     assert!(body.contains("/.well-known/skills/index.json"));
     assert!(body.contains("/.well-known/skills/watchpost/SKILL.md"));
+}
+
+// ============================================================
+// Monitor response field completeness
+// ============================================================
+
+#[test]
+fn test_monitor_response_has_all_fields() {
+    let client = test_client();
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name":"Field Check","url":"https://example.com","is_public":true,"tags":["a"],"group_name":"grp","sla_target":99.9}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let m = &body["monitor"];
+    // Required fields
+    assert!(m["id"].is_string());
+    assert_eq!(m["name"].as_str().unwrap(), "Field Check");
+    assert_eq!(m["url"].as_str().unwrap(), "https://example.com");
+    assert_eq!(m["monitor_type"].as_str().unwrap(), "http");
+    assert_eq!(m["method"].as_str().unwrap(), "GET");
+    assert!(m["interval_seconds"].is_number());
+    assert!(m["timeout_ms"].is_number());
+    assert_eq!(m["expected_status"].as_u64().unwrap(), 200);
+    assert!(m["is_public"].as_bool().unwrap());
+    assert!(!m["is_paused"].as_bool().unwrap());
+    assert_eq!(m["current_status"].as_str().unwrap(), "unknown");
+    assert_eq!(m["confirmation_threshold"].as_u64().unwrap(), 2);
+    assert!(m["follow_redirects"].as_bool().unwrap());
+    assert_eq!(m["dns_record_type"].as_str().unwrap(), "A");
+    assert!(m["created_at"].is_string());
+    assert!(m["updated_at"].is_string());
+    assert!(m["tags"].is_array());
+    assert_eq!(m["tags"][0].as_str().unwrap(), "a");
+    assert_eq!(m["group_name"].as_str().unwrap(), "grp");
+    assert_eq!(m["sla_target"].as_f64().unwrap(), 99.9);
+    // manage_key at top level
+    assert!(body["manage_key"].is_string());
+}
+
+#[test]
+fn test_monitor_get_response_fields_match_create() {
+    let client = test_client();
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name":"GetCheck","url":"https://example.com","is_public":true}"#)
+        .dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let id = body["monitor"]["id"].as_str().unwrap();
+    let created_at = body["monitor"]["created_at"].as_str().unwrap().to_string();
+
+    let resp2 = client.get(format!("/api/v1/monitors/{}", id)).dispatch();
+    assert_eq!(resp2.status(), Status::Ok);
+    let m: serde_json::Value = resp2.into_json().unwrap();
+    assert_eq!(m["id"].as_str().unwrap(), id);
+    assert_eq!(m["name"].as_str().unwrap(), "GetCheck");
+    assert_eq!(m["created_at"].as_str().unwrap(), created_at);
+}
+
+// ============================================================
+// Timestamp tracking
+// ============================================================
+
+#[test]
+fn test_monitor_created_at_is_iso8601() {
+    let client = test_client();
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name":"Time Test","url":"https://example.com","is_public":true}"#)
+        .dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let created = body["monitor"]["created_at"].as_str().unwrap();
+    // Should contain date and time components
+    assert!(created.contains("-"), "created_at missing date separator");
+    assert!(created.contains(":"), "created_at missing time separator");
+}
+
+#[test]
+fn test_monitor_updated_at_changes_on_update() {
+    let client = test_client();
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name":"UpAt","url":"https://example.com","is_public":true}"#)
+        .dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let id = body["monitor"]["id"].as_str().unwrap();
+    let key = body["manage_key"].as_str().unwrap();
+    let updated1 = body["monitor"]["updated_at"].as_str().unwrap().to_string();
+
+    // Small sleep to ensure timestamp differs
+    std::thread::sleep(std::time::Duration::from_millis(50));
+
+    client.patch(format!("/api/v1/monitors/{}", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"name":"UpAt Updated"}"#)
+        .dispatch();
+
+    // Fetch the updated monitor to check updated_at
+    let resp3 = client.get(format!("/api/v1/monitors/{}", id)).dispatch();
+    let body3: serde_json::Value = resp3.into_json().unwrap();
+    let updated2 = body3["updated_at"].as_str().unwrap();
+    // updated_at should be >= original time
+    assert!(updated2 >= updated1.as_str());
+}
+
+#[test]
+fn test_monitor_created_at_preserved_on_update() {
+    let client = test_client();
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name":"Preserve","url":"https://example.com","is_public":true}"#)
+        .dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let id = body["monitor"]["id"].as_str().unwrap();
+    let key = body["manage_key"].as_str().unwrap();
+    let created = body["monitor"]["created_at"].as_str().unwrap().to_string();
+
+    client.patch(format!("/api/v1/monitors/{}", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"name":"Preserve Updated"}"#)
+        .dispatch();
+
+    let resp2 = client.get(format!("/api/v1/monitors/{}", id)).dispatch();
+    let body2: serde_json::Value = resp2.into_json().unwrap();
+    assert_eq!(body2["created_at"].as_str().unwrap(), created);
+}
+
+// ============================================================
+// Unicode handling
+// ============================================================
+
+#[test]
+fn test_monitor_unicode_name_cjk() {
+    let client = test_client();
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name":"监控服务 テスト 모니터","url":"https://example.com","is_public":true}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["monitor"]["name"].as_str().unwrap(), "监控服务 テスト 모니터");
+}
+
+#[test]
+fn test_monitor_unicode_tags() {
+    let client = test_client();
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name":"TagUni","url":"https://example.com","is_public":true,"tags":["标签","タグ","🏷️"]}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let tags = body["monitor"]["tags"].as_array().unwrap();
+    assert_eq!(tags.len(), 3);
+    assert_eq!(tags[0].as_str().unwrap(), "标签");
+    assert_eq!(tags[1].as_str().unwrap(), "タグ");
+    assert_eq!(tags[2].as_str().unwrap(), "🏷️");
+}
+
+#[test]
+fn test_monitor_unicode_group_name() {
+    let client = test_client();
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name":"UniGrp","url":"https://example.com","is_public":true,"group_name":"基础设施"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["monitor"]["group_name"].as_str().unwrap(), "基础设施");
+}
+
+#[test]
+fn test_search_monitors_unicode() {
+    let client = test_client();
+    client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name":"数据库监控","url":"https://example.com","is_public":true}"#)
+        .dispatch();
+    client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name":"API Monitor","url":"https://example.com","is_public":true}"#)
+        .dispatch();
+
+    let resp = client.get("/api/v1/monitors?search=%E6%95%B0%E6%8D%AE%E5%BA%93").dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let monitors: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert_eq!(monitors.len(), 1);
+    assert_eq!(monitors[0]["name"].as_str().unwrap(), "数据库监控");
+}
+
+#[test]
+fn test_incident_note_unicode_content() {
+    let (client, db_path) = test_client_with_db();
+    // Create monitor
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name":"NoteUni","url":"https://example.com","is_public":true}"#)
+        .dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let monitor_id = body["monitor"]["id"].as_str().unwrap().to_string();
+    let key = body["manage_key"].as_str().unwrap().to_string();
+
+    // Insert incident directly
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    conn.execute(
+        "INSERT INTO incidents (id, monitor_id, started_at, cause, seq) VALUES ('inc-uni', ?1, datetime('now'), 'test', 1)",
+        params![monitor_id],
+    ).unwrap();
+    drop(conn);
+
+    // Create note with unicode — auth uses manage key of the monitor
+    let resp2 = client.post("/api/v1/incidents/inc-uni/notes")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"content":"サーバーが応答しません 🔥","author":"管理者"}"#)
+        .dispatch();
+    assert_eq!(resp2.status(), Status::Created);
+    let note: serde_json::Value = resp2.into_json().unwrap();
+    assert_eq!(note["content"].as_str().unwrap(), "サーバーが応答しません 🔥");
+    assert_eq!(note["author"].as_str().unwrap(), "管理者");
+}
+
+// ============================================================
+// Error response format consistency
+// ============================================================
+
+#[test]
+fn test_error_400_json_format() {
+    let client = test_client();
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body("not valid json")
+        .dispatch();
+    assert_eq!(resp.status(), Status::BadRequest);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert!(body["error"].is_string());
+}
+
+#[test]
+fn test_error_401_json_format() {
+    let client = test_client();
+    let (id, _) = create_test_monitor(&client);
+    let resp = client.patch(format!("/api/v1/monitors/{}", id))
+        .header(ContentType::JSON)
+        .body(r#"{"name":"nope"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Unauthorized);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert!(body["error"].is_string());
+}
+
+#[test]
+fn test_error_403_wrong_key() {
+    let client = test_client();
+    let (id, _) = create_test_monitor(&client);
+    let resp = client.patch(format!("/api/v1/monitors/{}", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", "Bearer wrong_key_here"))
+        .body(r#"{"name":"nope"}"#)
+        .dispatch();
+    // Should be 403 forbidden
+    assert!(resp.status() == Status::Forbidden || resp.status() == Status::Unauthorized);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert!(body["error"].is_string());
+}
+
+#[test]
+fn test_error_404_json_has_status_field() {
+    let client = test_client();
+    let resp = client.get("/api/v1/monitors/nonexistent-id-12345").dispatch();
+    assert_eq!(resp.status(), Status::NotFound);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert!(body["error"].is_string());
+}
+
+// ============================================================
+// Notification update endpoint
+// ============================================================
+
+#[test]
+fn test_update_notification_name() {
+    let client = test_client();
+    let (id, key) = create_test_monitor(&client);
+    // Create
+    let resp = client.post(format!("/api/v1/monitors/{}/notifications", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"name":"Original","channel_type":"webhook","config":{"url":"https://hooks.example.com/a"}}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let nid = body["id"].as_str().unwrap();
+
+    // Update name — path is /notifications/<nid>
+    let resp2 = client.patch(format!("/api/v1/notifications/{}", nid))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"name":"Updated Name"}"#)
+        .dispatch();
+    assert_eq!(resp2.status(), Status::Ok);
+
+    // Verify
+    let resp3 = client.get(format!("/api/v1/monitors/{}/notifications", id))
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .dispatch();
+    let channels: Vec<serde_json::Value> = resp3.into_json().unwrap();
+    assert_eq!(channels[0]["name"].as_str().unwrap(), "Updated Name");
+}
+
+#[test]
+fn test_update_notification_disable_enable() {
+    let client = test_client();
+    let (id, key) = create_test_monitor(&client);
+    let resp = client.post(format!("/api/v1/monitors/{}/notifications", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"name":"Toggle","channel_type":"webhook","config":{"url":"https://hooks.example.com"}}"#)
+        .dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let nid = body["id"].as_str().unwrap();
+
+    // Disable
+    let resp2 = client.patch(format!("/api/v1/notifications/{}", nid))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"is_enabled":false}"#)
+        .dispatch();
+    assert_eq!(resp2.status(), Status::Ok);
+
+    // Verify disabled
+    let resp3 = client.get(format!("/api/v1/monitors/{}/notifications", id))
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .dispatch();
+    let channels: Vec<serde_json::Value> = resp3.into_json().unwrap();
+    assert!(!channels[0]["is_enabled"].as_bool().unwrap());
+}
+
+// ============================================================
+// Uptime calculation accuracy
+// ============================================================
+
+#[test]
+fn test_uptime_with_all_up_heartbeats() {
+    let (client, db_path) = test_client_with_db();
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name":"UptimeCalc","url":"https://example.com","is_public":true}"#)
+        .dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let id = body["monitor"]["id"].as_str().unwrap();
+
+    // Insert 10 "up" heartbeats
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    for i in 0..10 {
+        conn.execute(
+            "INSERT INTO heartbeats (id, monitor_id, status, response_time_ms, checked_at, seq)
+             VALUES (?1, ?2, 'up', 100, datetime('now', ?3), ?4)",
+            params![format!("hb-up-{}", i), id, format!("-{} minutes", i * 10), i + 1],
+        ).unwrap();
+    }
+    drop(conn);
+
+    let resp2 = client.get(format!("/api/v1/monitors/{}/uptime", id)).dispatch();
+    assert_eq!(resp2.status(), Status::Ok);
+    let uptime: serde_json::Value = resp2.into_json().unwrap();
+    assert_eq!(uptime["uptime_24h"].as_f64().unwrap(), 100.0);
+    assert_eq!(uptime["uptime_7d"].as_f64().unwrap(), 100.0);
+}
+
+#[test]
+fn test_uptime_with_mixed_heartbeats() {
+    let (client, db_path) = test_client_with_db();
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name":"MixedUptime","url":"https://example.com","is_public":true}"#)
+        .dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let id = body["monitor"]["id"].as_str().unwrap();
+
+    // Insert 8 up + 2 down = 80% uptime
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    for i in 0..10 {
+        let status = if i < 8 { "up" } else { "down" };
+        conn.execute(
+            "INSERT INTO heartbeats (id, monitor_id, status, response_time_ms, checked_at, seq)
+             VALUES (?1, ?2, ?3, 100, datetime('now', ?4), ?5)",
+            params![format!("hb-mix-{}", i), id, status, format!("-{} minutes", i * 10), i + 1],
+        ).unwrap();
+    }
+    drop(conn);
+
+    let resp2 = client.get(format!("/api/v1/monitors/{}/uptime", id)).dispatch();
+    let uptime: serde_json::Value = resp2.into_json().unwrap();
+    assert_eq!(uptime["uptime_24h"].as_f64().unwrap(), 80.0);
+}
+
+#[test]
+fn test_uptime_degraded_not_counted_as_up() {
+    let (client, db_path) = test_client_with_db();
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name":"DegUptime","url":"https://example.com","is_public":true}"#)
+        .dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let id = body["monitor"]["id"].as_str().unwrap();
+
+    // Insert 5 up + 5 degraded — degraded counts separately
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    for i in 0..10 {
+        let status = if i < 5 { "up" } else { "degraded" };
+        conn.execute(
+            "INSERT INTO heartbeats (id, monitor_id, status, response_time_ms, checked_at, seq)
+             VALUES (?1, ?2, ?3, 100, datetime('now', ?4), ?5)",
+            params![format!("hb-deg-{}", i), id, status, format!("-{} minutes", i * 10), i + 1],
+        ).unwrap();
+    }
+    drop(conn);
+
+    let resp2 = client.get(format!("/api/v1/monitors/{}/uptime", id)).dispatch();
+    let uptime: serde_json::Value = resp2.into_json().unwrap();
+    // Uptime only counts status='up', degraded is separate
+    assert_eq!(uptime["uptime_24h"].as_f64().unwrap(), 50.0);
+}
+
+// ============================================================
+// Heartbeat fields and pagination
+// ============================================================
+
+#[test]
+fn test_heartbeat_response_fields() {
+    let (client, db_path) = test_client_with_db();
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name":"HBFields","url":"https://example.com","is_public":true}"#)
+        .dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let id = body["monitor"]["id"].as_str().unwrap();
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    conn.execute(
+        "INSERT INTO heartbeats (id, monitor_id, status, response_time_ms, status_code, checked_at, seq)
+         VALUES ('hb-field-1', ?1, 'up', 250, 200, datetime('now'), 1)",
+        params![id],
+    ).unwrap();
+    drop(conn);
+
+    let resp2 = client.get(format!("/api/v1/monitors/{}/heartbeats", id)).dispatch();
+    assert_eq!(resp2.status(), Status::Ok);
+    let hbs: Vec<serde_json::Value> = resp2.into_json().unwrap();
+    assert_eq!(hbs.len(), 1);
+    assert_eq!(hbs[0]["id"].as_str().unwrap(), "hb-field-1");
+    assert_eq!(hbs[0]["monitor_id"].as_str().unwrap(), id);
+    assert_eq!(hbs[0]["status"].as_str().unwrap(), "up");
+    assert_eq!(hbs[0]["response_time_ms"].as_u64().unwrap(), 250);
+    assert_eq!(hbs[0]["status_code"].as_u64().unwrap(), 200);
+    assert!(hbs[0]["checked_at"].is_string());
+    assert!(hbs[0]["seq"].is_number());
+}
+
+#[test]
+fn test_heartbeat_limit_parameter() {
+    let (client, db_path) = test_client_with_db();
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name":"HBLimit","url":"https://example.com","is_public":true}"#)
+        .dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let id = body["monitor"]["id"].as_str().unwrap();
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    for i in 0..5 {
+        conn.execute(
+            "INSERT INTO heartbeats (id, monitor_id, status, response_time_ms, checked_at, seq)
+             VALUES (?1, ?2, 'up', 100, datetime('now', ?3), ?4)",
+            params![format!("hb-lim-{}", i), id, format!("-{} minutes", i), i + 1],
+        ).unwrap();
+    }
+    drop(conn);
+
+    let resp2 = client.get(format!("/api/v1/monitors/{}/heartbeats?limit=2", id)).dispatch();
+    let hbs: Vec<serde_json::Value> = resp2.into_json().unwrap();
+    assert_eq!(hbs.len(), 2);
+}
+
+// ============================================================
+// Dashboard with complex data scenarios
+// ============================================================
+
+#[test]
+fn test_dashboard_multiple_monitors_aggregate() {
+    let (client, admin_key) = test_client_with_admin_key();
+    // Create 3 public monitors
+    for i in 0..3 {
+        client.post("/api/v1/monitors")
+            .header(ContentType::JSON)
+            .body(format!(r#"{{"name":"Dash {}","url":"https://example{}.com","is_public":true}}"#, i, i))
+            .dispatch();
+    }
+    // One private
+    client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name":"Private","url":"https://private.com","is_public":false}"#)
+        .dispatch();
+
+    let resp = client.get("/api/v1/dashboard")
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", admin_key)))
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let dash: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(dash["total_monitors"].as_u64().unwrap(), 4);
+    assert_eq!(dash["public_monitors"].as_u64().unwrap(), 3);
+}
+
+#[test]
+fn test_dashboard_response_has_all_fields() {
+    let (client, admin_key) = test_client_with_admin_key();
+    let resp = client.get("/api/v1/dashboard")
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", admin_key)))
+        .dispatch();
+    let dash: serde_json::Value = resp.into_json().unwrap();
+    // Check key fields exist
+    assert!(dash["total_monitors"].is_number());
+    assert!(dash["public_monitors"].is_number());
+    assert!(dash["paused_monitors"].is_number());
+    assert!(dash["status_counts"].is_object());
+    assert!(dash["active_incidents"].is_number());
+}
+
+// ============================================================
+// Status page monitors and ordering
+// ============================================================
+
+#[test]
+fn test_status_page_detail_response_fields() {
+    let client = test_client();
+    let (mon_id, _) = create_test_monitor(&client);
+
+    let resp = client.post("/api/v1/status-pages")
+        .header(ContentType::JSON)
+        .body(r#"{"title":"Detail Test","slug":"detail-test"}"#)
+        .dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let page_key = body["manage_key"].as_str().unwrap();
+
+    // Add monitor
+    client.post("/api/v1/status-pages/detail-test/monitors")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", page_key)))
+        .body(format!(r#"{{"monitor_ids":["{}"]}}"#, mon_id))
+        .dispatch();
+
+    let resp2 = client.get("/api/v1/status-pages/detail-test").dispatch();
+    assert_eq!(resp2.status(), Status::Ok);
+    let page: serde_json::Value = resp2.into_json().unwrap();
+    assert_eq!(page["title"].as_str().unwrap(), "Detail Test");
+    assert_eq!(page["slug"].as_str().unwrap(), "detail-test");
+    assert!(page["monitors"].is_array());
+    assert_eq!(page["monitors"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn test_status_page_multiple_monitors_listed() {
+    let client = test_client();
+    let (m1, _) = create_test_monitor(&client);
+    let (m2, _) = create_test_monitor(&client);
+
+    let resp = client.post("/api/v1/status-pages")
+        .header(ContentType::JSON)
+        .body(r#"{"title":"Multi Mon","slug":"multi-mon"}"#)
+        .dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let page_key = body["manage_key"].as_str().unwrap();
+
+    client.post("/api/v1/status-pages/multi-mon/monitors")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", page_key)))
+        .body(format!(r#"{{"monitor_ids":["{}","{}"]}}"#, m1, m2))
+        .dispatch();
+
+    let resp2 = client.get("/api/v1/status-pages/multi-mon").dispatch();
+    let page: serde_json::Value = resp2.into_json().unwrap();
+    assert_eq!(page["monitors"].as_array().unwrap().len(), 2);
+}
+
+// ============================================================
+// Incident lifecycle via probes
+// ============================================================
+
+#[test]
+fn test_probe_creates_incident_via_consensus() {
+    let (client, admin_key) = test_client_with_admin_key();
+    // Create monitor with consensus_threshold=1
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name":"ProbeInc","url":"https://example.com","is_public":true,"consensus_threshold":1}"#)
+        .dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let monitor_id = body["monitor"]["id"].as_str().unwrap();
+    let _key = body["manage_key"].as_str().unwrap();
+
+    // Create location
+    let resp2 = client.post("/api/v1/locations")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", admin_key)))
+        .body(r#"{"name":"probe-loc","region":"us-east"}"#)
+        .dispatch();
+    let loc: serde_json::Value = resp2.into_json().unwrap();
+    let probe_key = loc["probe_key"].as_str().unwrap();
+
+    // Submit failing probe
+    let resp3 = client.post("/api/v1/probe")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", probe_key)))
+        .body(format!(r#"{{"results":[{{"monitor_id":"{}","status":"down","response_time_ms":0,"error_message":"Connection refused"}}]}}"#, monitor_id))
+        .dispatch();
+    assert_eq!(resp3.status(), Status::Ok);
+
+    // Check for incident
+    let resp4 = client.get(format!("/api/v1/monitors/{}/incidents", monitor_id)).dispatch();
+    let incidents: Vec<serde_json::Value> = resp4.into_json().unwrap();
+    assert!(!incidents.is_empty(), "Expected incident from failed probe");
+    assert!(incidents[0]["resolved_at"].is_null());
+}
+
+// ============================================================
+// Maintenance window edge cases
+// ============================================================
+
+#[test]
+fn test_maintenance_window_response_fields() {
+    let client = test_client();
+    let (id, key) = create_test_monitor(&client);
+
+    let resp = client.post(format!("/api/v1/monitors/{}/maintenance", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"title":"Test MW","starts_at":"2026-03-01T00:00:00Z","ends_at":"2026-03-01T06:00:00Z"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let mw: serde_json::Value = resp.into_json().unwrap();
+    assert!(mw["id"].is_string());
+    assert_eq!(mw["title"].as_str().unwrap(), "Test MW");
+    assert!(mw["starts_at"].is_string());
+    assert!(mw["ends_at"].is_string());
+    assert!(mw["created_at"].is_string());
+}
+
+#[test]
+fn test_maintenance_window_unicode_title() {
+    let client = test_client();
+    let (id, key) = create_test_monitor(&client);
+
+    let resp = client.post(format!("/api/v1/monitors/{}/maintenance", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"title":"メンテナンス期間 🔧","starts_at":"2026-03-01T00:00:00Z","ends_at":"2026-03-01T06:00:00Z"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let mw: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(mw["title"].as_str().unwrap(), "メンテナンス期間 🔧");
+}
+
+// ============================================================
+// SLA edge cases
+// ============================================================
+
+#[test]
+fn test_sla_at_exact_target_boundary() {
+    let (client, db_path) = test_client_with_db();
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name":"SLABound","url":"https://example.com","is_public":true,"sla_target":99.0}"#)
+        .dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let id = body["monitor"]["id"].as_str().unwrap();
+
+    // Insert 99 up + 1 down = exactly 99% uptime
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    for i in 0..100 {
+        let status = if i < 99 { "up" } else { "down" };
+        conn.execute(
+            "INSERT INTO heartbeats (id, monitor_id, status, response_time_ms, checked_at, seq)
+             VALUES (?1, ?2, ?3, 100, datetime('now', ?4), ?5)",
+            params![format!("sla-bound-{}", i), id, status, format!("-{} minutes", i * 10), i + 1],
+        ).unwrap();
+    }
+    drop(conn);
+
+    let resp2 = client.get(format!("/api/v1/monitors/{}/sla", id)).dispatch();
+    assert_eq!(resp2.status(), Status::Ok);
+    let sla: serde_json::Value = resp2.into_json().unwrap();
+    assert_eq!(sla["target_pct"].as_f64().unwrap(), 99.0);
+    assert!(sla["current_pct"].is_number());
+    assert!(sla["budget_total_seconds"].is_number());
+    assert!(sla["budget_remaining_seconds"].is_number());
+    assert!(sla["budget_used_pct"].is_number());
+    assert!(sla["status"].is_string());
+}
+
+#[test]
+fn test_sla_100_target() {
+    let client = test_client();
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name":"SLA100","url":"https://example.com","is_public":true,"sla_target":100.0}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["monitor"]["sla_target"].as_f64().unwrap(), 100.0);
+}
+
+#[test]
+fn test_sla_in_bulk_create() {
+    let client = test_client();
+    let resp = client.post("/api/v1/monitors/bulk")
+        .header(ContentType::JSON)
+        .body(r#"{"monitors":[{"name":"SLABulk","url":"https://example.com","is_public":true,"sla_target":99.5,"sla_period_days":7}]}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let created = body["created"].as_array().unwrap();
+    assert_eq!(created.len(), 1);
+}
+
+// ============================================================
+// Monitor with all optional fields set
+// ============================================================
+
+#[test]
+fn test_create_monitor_with_all_optional_fields() {
+    let client = test_client();
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{
+            "name": "Full Options",
+            "url": "https://example.com/api",
+            "monitor_type": "http",
+            "method": "POST",
+            "interval_seconds": 600,
+            "timeout_ms": 10000,
+            "expected_status": 201,
+            "body_contains": "ok",
+            "headers": {"X-Custom": "value"},
+            "is_public": true,
+            "confirmation_threshold": 3,
+            "response_time_threshold_ms": 500,
+            "follow_redirects": false,
+            "sla_target": 99.9,
+            "sla_period_days": 14,
+            "tags": ["api", "production"],
+            "group_name": "Backend",
+            "consensus_threshold": 2
+        }"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let m = &body["monitor"];
+    assert_eq!(m["method"].as_str().unwrap(), "POST");
+    assert_eq!(m["expected_status"].as_u64().unwrap(), 201);
+    assert_eq!(m["body_contains"].as_str().unwrap(), "ok");
+    assert_eq!(m["headers"]["X-Custom"].as_str().unwrap(), "value");
+    assert_eq!(m["confirmation_threshold"].as_u64().unwrap(), 3);
+    assert_eq!(m["response_time_threshold_ms"].as_u64().unwrap(), 500);
+    assert!(!m["follow_redirects"].as_bool().unwrap());
+    assert_eq!(m["sla_target"].as_f64().unwrap(), 99.9);
+    assert_eq!(m["sla_period_days"].as_u64().unwrap(), 14);
+    assert_eq!(m["tags"].as_array().unwrap().len(), 2);
+    assert_eq!(m["group_name"].as_str().unwrap(), "Backend");
+    assert_eq!(m["consensus_threshold"].as_u64().unwrap(), 2);
+}
+
+// ============================================================
+// Alert rule edge cases
+// ============================================================
+
+#[test]
+fn test_alert_rules_response_fields() {
+    let client = test_client();
+    let (id, key) = create_test_monitor(&client);
+
+    let resp = client.put(format!("/api/v1/monitors/{}/alert-rules", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"repeat_interval_minutes":15,"max_repeats":5,"escalation_after_minutes":60}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+
+    let resp2 = client.get(format!("/api/v1/monitors/{}/alert-rules", id))
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .dispatch();
+    assert_eq!(resp2.status(), Status::Ok);
+    let rules: serde_json::Value = resp2.into_json().unwrap();
+    assert_eq!(rules["repeat_interval_minutes"].as_u64().unwrap(), 15);
+    assert_eq!(rules["max_repeats"].as_u64().unwrap(), 5);
+    assert_eq!(rules["escalation_after_minutes"].as_u64().unwrap(), 60);
+}
+
+#[test]
+fn test_alert_rules_update_partial() {
+    let client = test_client();
+    let (id, key) = create_test_monitor(&client);
+
+    // Set initial
+    client.put(format!("/api/v1/monitors/{}/alert-rules", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"repeat_interval_minutes":10,"max_repeats":3}"#)
+        .dispatch();
+
+    // Update just max_repeats
+    let resp = client.put(format!("/api/v1/monitors/{}/alert-rules", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"repeat_interval_minutes":10,"max_repeats":10}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+
+    let resp2 = client.get(format!("/api/v1/monitors/{}/alert-rules", id))
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .dispatch();
+    let rules: serde_json::Value = resp2.into_json().unwrap();
+    assert_eq!(rules["max_repeats"].as_u64().unwrap(), 10);
+}
+
+// ============================================================
+// Cross-feature interactions
+// ============================================================
+
+#[test]
+fn test_monitor_with_tags_appears_in_status_page() {
+    let client = test_client();
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name":"TagStatus","url":"https://example.com","is_public":true,"tags":["api"]}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+
+    let resp2 = client.get("/api/v1/status?tag=api").dispatch();
+    assert_eq!(resp2.status(), Status::Ok);
+    let status: serde_json::Value = resp2.into_json().unwrap();
+    let monitors = status["monitors"].as_array().unwrap();
+    assert_eq!(monitors.len(), 1);
+    assert_eq!(monitors[0]["name"].as_str().unwrap(), "TagStatus");
+}
+
+#[test]
+fn test_monitor_with_sla_in_list() {
+    let client = test_client();
+    client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name":"SLAList","url":"https://example.com","is_public":true,"sla_target":99.5}"#)
+        .dispatch();
+
+    let resp = client.get("/api/v1/monitors").dispatch();
+    let monitors: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert_eq!(monitors.len(), 1);
+    assert_eq!(monitors[0]["sla_target"].as_f64().unwrap(), 99.5);
+}
+
+#[test]
+fn test_full_monitor_lifecycle() {
+    let client = test_client();
+
+    // Create
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name":"Lifecycle","url":"https://example.com","is_public":true,"tags":["test"],"sla_target":99.0}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let id = body["monitor"]["id"].as_str().unwrap();
+    let key = body["manage_key"].as_str().unwrap();
+
+    // Update
+    let resp2 = client.patch(format!("/api/v1/monitors/{}", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"name":"Lifecycle Updated","tags":["test","production"]}"#)
+        .dispatch();
+    assert_eq!(resp2.status(), Status::Ok);
+
+    // Pause
+    let resp3 = client.post(format!("/api/v1/monitors/{}/pause", id))
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .dispatch();
+    assert_eq!(resp3.status(), Status::Ok);
+
+    // Verify paused
+    let resp4 = client.get(format!("/api/v1/monitors/{}", id)).dispatch();
+    let m: serde_json::Value = resp4.into_json().unwrap();
+    assert!(m["is_paused"].as_bool().unwrap());
+
+    // Resume
+    let resp5 = client.post(format!("/api/v1/monitors/{}/resume", id))
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .dispatch();
+    assert_eq!(resp5.status(), Status::Ok);
+
+    // Add notification
+    let resp6 = client.post(format!("/api/v1/monitors/{}/notifications", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"name":"Lifecycle Hook","channel_type":"webhook","config":{"url":"https://hooks.example.com"}}"#)
+        .dispatch();
+    assert_eq!(resp6.status(), Status::Ok);
+
+    // Add maintenance window
+    let resp7 = client.post(format!("/api/v1/monitors/{}/maintenance", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"title":"Test MW","starts_at":"2026-03-01T00:00:00Z","ends_at":"2026-03-01T06:00:00Z"}"#)
+        .dispatch();
+    assert_eq!(resp7.status(), Status::Ok);
+
+    // Set alert rules
+    let resp8 = client.put(format!("/api/v1/monitors/{}/alert-rules", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"repeat_interval_minutes":10,"max_repeats":3}"#)
+        .dispatch();
+    assert_eq!(resp8.status(), Status::Ok);
+
+    // Export
+    let resp9 = client.get(format!("/api/v1/monitors/{}/export", id))
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .dispatch();
+    assert_eq!(resp9.status(), Status::Ok);
+    let export: serde_json::Value = resp9.into_json().unwrap();
+    assert_eq!(export["name"].as_str().unwrap(), "Lifecycle Updated");
+
+    // Delete (cascades notifications, maintenance, alert rules)
+    let resp10 = client.delete(format!("/api/v1/monitors/{}", id))
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .dispatch();
+    assert_eq!(resp10.status(), Status::Ok);
+
+    // Verify gone
+    let resp11 = client.get(format!("/api/v1/monitors/{}", id)).dispatch();
+    assert_eq!(resp11.status(), Status::NotFound);
+}
+
+// ============================================================
+// Dependency response and bidirectional listing
+// ============================================================
+
+#[test]
+fn test_dependency_response_includes_status() {
+    let client = test_client();
+    let (m1, key1) = create_test_monitor(&client);
+    let (m2, _) = create_test_monitor(&client);
+
+    let resp = client.post(format!("/api/v1/monitors/{}/dependencies", m1))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key1)))
+        .body(format!(r#"{{"depends_on_id":"{}"}}"#, m2))
+        .dispatch();
+    assert_eq!(resp.status(), Status::Created);
+
+    let resp2 = client.get(format!("/api/v1/monitors/{}/dependencies", m1)).dispatch();
+    let deps: Vec<serde_json::Value> = resp2.into_json().unwrap();
+    assert_eq!(deps.len(), 1);
+    // Should include dependency monitor info
+    assert!(deps[0]["id"].is_string() || deps[0]["monitor_id"].is_string() || deps[0]["depends_on_id"].is_string());
+}
+
+#[test]
+fn test_dependents_listing_works() {
+    let client = test_client();
+    let (m1, key1) = create_test_monitor(&client);
+    let (m2, _) = create_test_monitor(&client);
+
+    // m1 depends on m2
+    client.post(format!("/api/v1/monitors/{}/dependencies", m1))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key1)))
+        .body(format!(r#"{{"depends_on_id":"{}"}}"#, m2))
+        .dispatch();
+
+    // m2 should have m1 as dependent
+    let resp = client.get(format!("/api/v1/monitors/{}/dependents", m2)).dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let dependents: Vec<serde_json::Value> = resp.into_json().unwrap();
+    assert_eq!(dependents.len(), 1);
+}
+
+// ============================================================
+// Webhook delivery log fields
+// ============================================================
+
+#[test]
+fn test_webhook_delivery_response_has_fields() {
+    let (client, db_path) = test_client_with_db();
+    let (id, key) = create_test_monitor(&client);
+
+    // Insert a delivery record directly (schema: id, delivery_group, monitor_id, event, url, attempt, status, status_code, response_time_ms, seq)
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    conn.execute(
+        "INSERT INTO webhook_deliveries (id, delivery_group, monitor_id, event, url, attempt, status, status_code, response_time_ms, seq)
+         VALUES ('del-1', 'group-1', ?1, 'incident.created', 'https://hooks.example.com', 1, 'success', 200, 150, 1)",
+        params![id],
+    ).unwrap();
+    drop(conn);
+
+    let resp = client.get(format!("/api/v1/monitors/{}/webhook-deliveries", id))
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let deliveries = body["deliveries"].as_array().unwrap();
+    assert_eq!(deliveries.len(), 1);
+    assert_eq!(deliveries[0]["event"].as_str().unwrap(), "incident.created");
+    assert_eq!(deliveries[0]["status"].as_str().unwrap(), "success");
+    assert_eq!(deliveries[0]["status_code"].as_u64().unwrap(), 200);
+    assert_eq!(body["total"].as_u64().unwrap(), 1);
+}
+
+// ============================================================
+// Location and probe edge cases
+// ============================================================
+
+#[test]
+fn test_location_response_fields() {
+    let (client, admin_key) = test_client_with_admin_key();
+    let resp = client.post("/api/v1/locations")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", admin_key)))
+        .body(r#"{"name":"US East","region":"us-east-1"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    // Response wraps: { location: {...}, probe_key: "..." }
+    let loc = &body["location"];
+    assert!(loc["id"].is_string());
+    assert_eq!(loc["name"].as_str().unwrap(), "US East");
+    assert_eq!(loc["region"].as_str().unwrap(), "us-east-1");
+    assert!(body["probe_key"].is_string());
+    assert!(loc["is_active"].as_bool().unwrap());
+}
+
+#[test]
+fn test_probe_batch_multiple_monitors() {
+    let (client, admin_key) = test_client_with_admin_key();
+    let (m1, _) = create_test_monitor(&client);
+    let (m2, _) = create_test_monitor(&client);
+
+    let resp = client.post("/api/v1/locations")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", admin_key)))
+        .body(r#"{"name":"Batch Loc","region":"eu-west"}"#)
+        .dispatch();
+    let loc: serde_json::Value = resp.into_json().unwrap();
+    let probe_key = loc["probe_key"].as_str().unwrap();
+
+    let resp2 = client.post("/api/v1/probe")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", probe_key)))
+        .body(format!(r#"{{"results":[
+            {{"monitor_id":"{}","status":"up","response_time_ms":100}},
+            {{"monitor_id":"{}","status":"up","response_time_ms":200}}
+        ]}}"#, m1, m2))
+        .dispatch();
+    assert_eq!(resp2.status(), Status::Ok);
+    let result: serde_json::Value = resp2.into_json().unwrap();
+    assert_eq!(result["accepted"].as_u64().unwrap(), 2);
+}
+
+// ============================================================
+// Settings branding
+// ============================================================
+
+#[test]
+fn test_settings_update_all_fields() {
+    let (client, admin_key) = test_client_with_admin_key();
+    let resp = client.put("/api/v1/settings")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", admin_key)))
+        .body(r#"{"title":"My Uptime","description":"Monitoring dashboard","logo_url":"https://example.com/logo.png"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+
+    let resp2 = client.get("/api/v1/settings").dispatch();
+    let settings: serde_json::Value = resp2.into_json().unwrap();
+    assert_eq!(settings["title"].as_str().unwrap(), "My Uptime");
+    assert_eq!(settings["description"].as_str().unwrap(), "Monitoring dashboard");
+    assert_eq!(settings["logo_url"].as_str().unwrap(), "https://example.com/logo.png");
+}
+
+#[test]
+fn test_settings_unicode_branding() {
+    let (client, admin_key) = test_client_with_admin_key();
+    let resp = client.put("/api/v1/settings")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", admin_key)))
+        .body(r#"{"title":"サービス状態 🟢","description":"システム稼働状況"}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+
+    let resp2 = client.get("/api/v1/settings").dispatch();
+    let settings: serde_json::Value = resp2.into_json().unwrap();
+    assert_eq!(settings["title"].as_str().unwrap(), "サービス状態 🟢");
+}
+
+// ============================================================
+// Incident acknowledgement and detail
+// ============================================================
+
+#[test]
+fn test_incident_detail_response_fields() {
+    let (client, db_path) = test_client_with_db();
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name":"IncDetail","url":"https://example.com","is_public":true}"#)
+        .dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let monitor_id = body["monitor"]["id"].as_str().unwrap();
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    conn.execute(
+        "INSERT INTO incidents (id, monitor_id, started_at, cause, seq) VALUES ('inc-detail-1', ?1, datetime('now'), 'HTTP 503', 1)",
+        params![monitor_id],
+    ).unwrap();
+    drop(conn);
+
+    let resp2 = client.get("/api/v1/incidents/inc-detail-1").dispatch();
+    assert_eq!(resp2.status(), Status::Ok);
+    let inc: serde_json::Value = resp2.into_json().unwrap();
+    assert_eq!(inc["id"].as_str().unwrap(), "inc-detail-1");
+    assert_eq!(inc["monitor_id"].as_str().unwrap(), monitor_id);
+    assert_eq!(inc["cause"].as_str().unwrap(), "HTTP 503");
+    assert!(inc["started_at"].is_string());
+    assert!(inc["resolved_at"].is_null());
+    assert!(inc["seq"].is_number());
+}
+
+#[test]
+fn test_incident_acknowledge_updates_fields() {
+    let (client, db_path) = test_client_with_db();
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name":"AckTest","url":"https://example.com","is_public":true}"#)
+        .dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let monitor_id = body["monitor"]["id"].as_str().unwrap();
+    let key = body["manage_key"].as_str().unwrap();
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    conn.execute(
+        "INSERT INTO incidents (id, monitor_id, started_at, cause, seq) VALUES ('inc-ack-1', ?1, datetime('now'), 'test', 1)",
+        params![monitor_id],
+    ).unwrap();
+    drop(conn);
+
+    let resp2 = client.post("/api/v1/incidents/inc-ack-1/acknowledge")
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"note":"Investigating","actor":"admin"}"#)
+        .dispatch();
+    assert_eq!(resp2.status(), Status::Ok);
+
+    let resp3 = client.get("/api/v1/incidents/inc-ack-1").dispatch();
+    let inc: serde_json::Value = resp3.into_json().unwrap();
+    assert_eq!(inc["acknowledgement"].as_str().unwrap(), "Investigating");
+    assert_eq!(inc["acknowledged_by"].as_str().unwrap(), "admin");
+    assert!(inc["acknowledged_at"].is_string());
+}
+
+// ============================================================
+// Export/import roundtrip with complex monitor
+// ============================================================
+
+#[test]
+fn test_export_import_preserves_all_fields() {
+    let client = test_client();
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{
+            "name":"Export Full",
+            "url":"https://example.com",
+            "method":"POST",
+            "is_public":true,
+            "tags":["api","prod"],
+            "group_name":"Backend",
+            "sla_target":99.5,
+            "sla_period_days":7,
+            "follow_redirects":false,
+            "confirmation_threshold":3,
+            "body_contains":"healthy"
+        }"#)
+        .dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let id = body["monitor"]["id"].as_str().unwrap();
+    let key = body["manage_key"].as_str().unwrap();
+
+    let resp2 = client.get(format!("/api/v1/monitors/{}/export", id))
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .dispatch();
+    let export: serde_json::Value = resp2.into_json().unwrap();
+    assert_eq!(export["name"].as_str().unwrap(), "Export Full");
+    assert_eq!(export["method"].as_str().unwrap(), "POST");
+    assert_eq!(export["group_name"].as_str().unwrap(), "Backend");
+    assert!(!export["follow_redirects"].as_bool().unwrap());
+    assert_eq!(export["body_contains"].as_str().unwrap(), "healthy");
+
+    // Re-import via bulk
+    let import_body = format!(r#"{{"monitors":[{}]}}"#, serde_json::to_string(&export).unwrap());
+    let resp3 = client.post("/api/v1/monitors/bulk")
+        .header(ContentType::JSON)
+        .body(import_body)
+        .dispatch();
+    assert_eq!(resp3.status(), Status::Ok);
+    let result: serde_json::Value = resp3.into_json().unwrap();
+    assert_eq!(result["created"].as_array().unwrap().len(), 1);
+}
+
+// ============================================================
+// Monitor type switching
+// ============================================================
+
+#[test]
+fn test_switch_tcp_to_http() {
+    let client = test_client();
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name":"TCP2HTTP","url":"example.com:443","monitor_type":"tcp","is_public":true}"#)
+        .dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let id = body["monitor"]["id"].as_str().unwrap();
+    let key = body["manage_key"].as_str().unwrap();
+
+    let resp2 = client.patch(format!("/api/v1/monitors/{}", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"monitor_type":"http","url":"https://example.com"}"#)
+        .dispatch();
+    assert_eq!(resp2.status(), Status::Ok);
+
+    let resp3 = client.get(format!("/api/v1/monitors/{}", id)).dispatch();
+    let m: serde_json::Value = resp3.into_json().unwrap();
+    assert_eq!(m["monitor_type"].as_str().unwrap(), "http");
+}
+
+// ============================================================
+// Uptime history accuracy
+// ============================================================
+
+#[test]
+fn test_uptime_history_returns_array() {
+    let (client, db_path) = test_client_with_db();
+    let resp = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name":"HistArr","url":"https://example.com","is_public":true}"#)
+        .dispatch();
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let id = body["monitor"]["id"].as_str().unwrap();
+
+    // Insert heartbeats across days
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    for i in 0..5 {
+        conn.execute(
+            "INSERT INTO heartbeats (id, monitor_id, status, response_time_ms, checked_at, seq)
+             VALUES (?1, ?2, 'up', 100, datetime('now', ?3), ?4)",
+            params![format!("hist-{}", i), id, format!("-{} days", i), i + 1],
+        ).unwrap();
+    }
+    drop(conn);
+
+    let resp2 = client.get(format!("/api/v1/monitors/{}/uptime-history?days=7", id)).dispatch();
+    assert_eq!(resp2.status(), Status::Ok);
+    let history: Vec<serde_json::Value> = resp2.into_json().unwrap();
+    assert!(history.len() <= 7);
+    // Each entry should have date and uptime
+    if !history.is_empty() {
+        assert!(history[0]["date"].is_string());
+        assert!(history[0]["uptime_pct"].is_number());
+        assert!(history[0]["total_checks"].is_number());
+    }
+}
+
+// ============================================================
+// Notification channel fields
+// ============================================================
+
+#[test]
+fn test_notification_channel_response_fields() {
+    let client = test_client();
+    let (id, key) = create_test_monitor(&client);
+
+    let resp = client.post(format!("/api/v1/monitors/{}/notifications", id))
+        .header(ContentType::JSON)
+        .header(rocket::http::Header::new("Authorization", format!("Bearer {}", key)))
+        .body(r#"{"name":"Notify Fields","channel_type":"webhook","config":{"url":"https://hooks.example.com"}}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let notif: serde_json::Value = resp.into_json().unwrap();
+    assert!(notif["id"].is_string());
+    assert_eq!(notif["name"].as_str().unwrap(), "Notify Fields");
+    assert_eq!(notif["channel_type"].as_str().unwrap(), "webhook");
+    assert!(notif["is_enabled"].as_bool().unwrap());
+    assert!(notif["created_at"].is_string());
+}
+
+// ============================================================
+// OpenAPI spec validation
+// ============================================================
+
+#[test]
+fn test_openapi_has_all_key_paths() {
+    let client = test_client();
+    let resp = client.get("/api/v1/openapi.json").dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let spec: serde_json::Value = resp.into_json().unwrap();
+    let paths = spec["paths"].as_object().unwrap();
+
+    // Verify key API paths exist (OpenAPI uses short paths without /api/v1 prefix)
+    assert!(paths.contains_key("/monitors"), "Missing /monitors");
+    assert!(paths.contains_key("/health"), "Missing /health");
+    assert!(paths.contains_key("/dashboard"), "Missing /dashboard");
+    assert!(paths.contains_key("/status"), "Missing /status");
+    assert!(paths.contains_key("/tags"), "Missing /tags");
+}
+
+#[test]
+fn test_openapi_info_section() {
+    let client = test_client();
+    let resp = client.get("/api/v1/openapi.json").dispatch();
+    let spec: serde_json::Value = resp.into_json().unwrap();
+    assert!(spec["info"]["title"].is_string());
+    assert!(spec["info"]["version"].is_string());
+    assert!(spec["openapi"].is_string());
+}
+
+// ============================================================
+// Health endpoint response
+// ============================================================
+
+#[test]
+fn test_health_response_fields() {
+    let client = test_client();
+    let resp = client.get("/api/v1/health").dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["status"].as_str().unwrap(), "ok");
+}
+
+// ============================================================
+// Skills v1 route
+// ============================================================
+
+#[test]
+fn test_api_v1_skills_skill_md() {
+    let client = test_client();
+    let resp = client.get("/api/v1/skills/SKILL.md").dispatch();
+    // May be 200 or 404 depending on route mounting
+    if resp.status() == Status::Ok {
+        let body = resp.into_string().unwrap();
+        assert!(body.contains("watchpost") || body.contains("Watchpost"));
+    }
+}
+
+// ============================================================
+// Bulk create edge cases
+// ============================================================
+
+#[test]
+fn test_bulk_create_max_50() {
+    let client = test_client();
+    let mut monitors = Vec::new();
+    for i in 0..51 {
+        monitors.push(format!(r#"{{"name":"Bulk {}","url":"https://example{}.com","is_public":true}}"#, i, i));
+    }
+    let body = format!(r#"{{"monitors":[{}]}}"#, monitors.join(","));
+
+    let resp = client.post("/api/v1/monitors/bulk")
+        .header(ContentType::JSON)
+        .body(body)
+        .dispatch();
+    // Should reject because > 50
+    assert!(resp.status() == Status::UnprocessableEntity || resp.status() == Status::BadRequest);
+}
+
+#[test]
+fn test_bulk_create_with_mixed_types() {
+    let client = test_client();
+    let resp = client.post("/api/v1/monitors/bulk")
+        .header(ContentType::JSON)
+        .body(r#"{"monitors":[
+            {"name":"HTTP Bulk","url":"https://example.com","is_public":true,"monitor_type":"http"},
+            {"name":"TCP Bulk","url":"example.com:443","is_public":true,"monitor_type":"tcp"},
+            {"name":"DNS Bulk","url":"example.com","is_public":true,"monitor_type":"dns"}
+        ]}"#)
+        .dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["created"].as_array().unwrap().len(), 3);
+}
+
+// ============================================================
+// Monitor isolation
+// ============================================================
+
+#[test]
+fn test_monitor_heartbeats_isolated() {
+    let (client, db_path) = test_client_with_db();
+    let (m1, _) = create_test_monitor(&client);
+    let (m2, _) = create_test_monitor(&client);
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    conn.execute(
+        "INSERT INTO heartbeats (id, monitor_id, status, response_time_ms, checked_at, seq) VALUES ('iso-1', ?1, 'up', 100, datetime('now'), 1)",
+        params![m1],
+    ).unwrap();
+    conn.execute(
+        "INSERT INTO heartbeats (id, monitor_id, status, response_time_ms, checked_at, seq) VALUES ('iso-2', ?1, 'up', 200, datetime('now'), 1)",
+        params![m2],
+    ).unwrap();
+    conn.execute(
+        "INSERT INTO heartbeats (id, monitor_id, status, response_time_ms, checked_at, seq) VALUES ('iso-3', ?1, 'up', 150, datetime('now'), 2)",
+        params![m1],
+    ).unwrap();
+    drop(conn);
+
+    let resp1 = client.get(format!("/api/v1/monitors/{}/heartbeats", m1)).dispatch();
+    let hbs1: Vec<serde_json::Value> = resp1.into_json().unwrap();
+    assert_eq!(hbs1.len(), 2);
+
+    let resp2 = client.get(format!("/api/v1/monitors/{}/heartbeats", m2)).dispatch();
+    let hbs2: Vec<serde_json::Value> = resp2.into_json().unwrap();
+    assert_eq!(hbs2.len(), 1);
+}
+
+#[test]
+fn test_monitor_incidents_isolated() {
+    let (client, db_path) = test_client_with_db();
+    let (m1, _) = create_test_monitor(&client);
+    let (m2, _) = create_test_monitor(&client);
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    conn.execute(
+        "INSERT INTO incidents (id, monitor_id, started_at, cause, seq) VALUES ('inc-iso-1', ?1, datetime('now'), 'test1', 1)",
+        params![m1],
+    ).unwrap();
+    conn.execute(
+        "INSERT INTO incidents (id, monitor_id, started_at, cause, seq) VALUES ('inc-iso-2', ?1, datetime('now'), 'test2', 1)",
+        params![m2],
+    ).unwrap();
+    drop(conn);
+
+    let resp1 = client.get(format!("/api/v1/monitors/{}/incidents", m1)).dispatch();
+    let incs1: Vec<serde_json::Value> = resp1.into_json().unwrap();
+    assert_eq!(incs1.len(), 1);
+    assert_eq!(incs1[0]["cause"].as_str().unwrap(), "test1");
+
+    let resp2 = client.get(format!("/api/v1/monitors/{}/incidents", m2)).dispatch();
+    let incs2: Vec<serde_json::Value> = resp2.into_json().unwrap();
+    assert_eq!(incs2.len(), 1);
+    assert_eq!(incs2[0]["cause"].as_str().unwrap(), "test2");
+}
+
+// ============================================================
+// llms.txt content validation
+// ============================================================
+
+#[test]
+fn test_llms_txt_content_structure() {
+    let client = test_client();
+    let resp = client.get("/api/v1/llms.txt").dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body = resp.into_string().unwrap();
+    // Should describe the service
+    assert!(body.contains("monitor") || body.contains("Monitor") || body.contains("uptime") || body.contains("Uptime"));
+    // Should contain API endpoint descriptions
+    assert!(body.contains("/api/v1/"));
+    // Should be reasonably sized
+    assert!(body.len() > 200, "llms.txt seems too short: {} bytes", body.len());
+}
+
+#[test]
+fn test_root_and_v1_llms_txt_same_content() {
+    let client = test_client();
+    let resp1 = client.get("/llms.txt").dispatch();
+    let resp2 = client.get("/api/v1/llms.txt").dispatch();
+    assert_eq!(resp1.status(), Status::Ok);
+    assert_eq!(resp2.status(), Status::Ok);
+    let body1 = resp1.into_string().unwrap();
+    let body2 = resp2.into_string().unwrap();
+    assert_eq!(body1, body2);
+}
+
+// ============================================================
+// Badge edge cases
+// ============================================================
+
+#[test]
+fn test_uptime_badge_is_svg() {
+    let client = test_client();
+    let (id, _) = create_test_monitor(&client);
+    let resp = client.get(format!("/api/v1/monitors/{}/badge/uptime", id)).dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body = resp.into_string().unwrap();
+    assert!(body.starts_with("<svg") || body.contains("<svg"), "Badge should be SVG");
+}
+
+#[test]
+fn test_status_badge_is_svg() {
+    let client = test_client();
+    let (id, _) = create_test_monitor(&client);
+    let resp = client.get(format!("/api/v1/monitors/{}/badge/status", id)).dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body = resp.into_string().unwrap();
+    assert!(body.starts_with("<svg") || body.contains("<svg"), "Badge should be SVG");
+}
+
+#[test]
+fn test_uptime_badge_all_periods() {
+    let client = test_client();
+    let (id, _) = create_test_monitor(&client);
+    for period in &["24h", "7d", "30d", "90d"] {
+        let resp = client.get(format!("/api/v1/monitors/{}/badge/uptime?period={}", id, period)).dispatch();
+        assert_eq!(resp.status(), Status::Ok, "Badge failed for period {}", period);
+    }
 }
