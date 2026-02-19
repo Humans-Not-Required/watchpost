@@ -1303,6 +1303,23 @@ def main():
         status = wp.get_status(search="SDK", tag="updated-tag")
         assert isinstance(status, dict)
 
+    @test("status page ids= batch filter returns matching monitors")
+    def _():
+        # Use the monitor_id we already have from earlier in the test run
+        status = wp.get_status(ids=[monitor_id])
+        assert isinstance(status, dict)
+        monitors = status.get("monitors", [])
+        assert isinstance(monitors, list)
+        # The monitor should appear (it's public)
+        found = [m for m in monitors if m.get("id") == monitor_id]
+        assert len(found) == 1, f"Expected monitor {monitor_id} in ids= response, got {[m.get('id') for m in monitors]}"
+
+    @test("status page ids= with nonexistent id silently excludes")
+    def _():
+        status = wp.get_status(ids=["00000000-0000-0000-0000-000000000000"])
+        monitors = status.get("monitors", [])
+        assert not any(m.get("id") == "00000000-0000-0000-0000-000000000000" for m in monitors)
+
     # ── SLA Advanced ────────────────────────────────────────────────────
     print("\nSLA (Advanced):")
 

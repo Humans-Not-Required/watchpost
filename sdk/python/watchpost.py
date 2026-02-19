@@ -742,8 +742,20 @@ class Watchpost:
         status: Optional[str] = None,
         group: Optional[str] = None,
         tag: Optional[str] = None,
+        ids: Optional[List[str]] = None,
     ) -> Dict:
-        """Get public status page (includes branding if configured)."""
+        """Get public status page (includes branding if configured).
+
+        Args:
+            search: Filter by monitor name/URL substring.
+            status: Filter by status (up/down/degraded/unknown).
+            group: Filter by group name.
+            tag: Filter by tag.
+            ids: Batch status check — filter to specific monitor IDs.
+                 Non-existent and private IDs are silently excluded.
+                 Equivalent to calling N individual GET /monitors/:id
+                 requests in a single round trip.
+        """
         params: Dict[str, Any] = {}
         if search:
             params["search"] = search
@@ -753,6 +765,8 @@ class Watchpost:
             params["group"] = group
         if tag:
             params["tag"] = tag
+        if ids:
+            params["ids"] = ",".join(ids)
         return self._get("/api/v1/status", params=params)
 
     def get_dashboard(self, *, key: Optional[str] = None) -> Dict:
