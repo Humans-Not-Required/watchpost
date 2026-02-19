@@ -122,6 +122,7 @@ GET /api/v1/status?tag=prod — filter status page by tag
 GET /api/v1/monitors?search=keyword — filter by name/URL
 GET /api/v1/monitors?status=up — filter by status (up/down/degraded/unknown)
 GET /api/v1/status?search=keyword&status=down&group=Infrastructure — combined filters
+GET /api/v1/status?ids=id1,id2,id3 — batch status check: filter to specific monitors by ID. Returns only public monitors matching the given IDs. Non-existent and private IDs are silently excluded. Useful for agents that need to check multiple specific monitors without N round trips.
 
 ## Bulk Operations
 POST /api/v1/monitors/bulk — create up to 50 monitors at once

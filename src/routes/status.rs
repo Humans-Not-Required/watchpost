@@ -7,8 +7,12 @@ use std::sync::Arc;
 
 // ── Status Page ──
 
-#[get("/status?<search>&<status>&<tag>&<group>")]
-pub fn status_page(search: Option<&str>, status: Option<&str>, tag: Option<&str>, group: Option<&str>, db: &State<Arc<Db>>) -> Result<Json<StatusOverview>, (Status, Json<serde_json::Value>)> {
+/// GET /api/v1/status — public status page.
+///
+/// Supports `?ids=id1,id2,id3` to filter to specific monitors (batch status check).
+/// Also supports ?search=, ?status=, ?tag=, ?group= filters.
+#[get("/status?<search>&<status>&<tag>&<group>&<ids>")]
+pub fn status_page(search: Option<&str>, status: Option<&str>, tag: Option<&str>, group: Option<&str>, ids: Option<&str>, db: &State<Arc<Db>>) -> Result<Json<StatusOverview>, (Status, Json<serde_json::Value>)> {
     let conn = db.conn();
 
     let mut sql = String::from("SELECT id, name, url, current_status, last_checked_at, tags, group_name FROM monitors WHERE is_public = 1");
@@ -49,6 +53,26 @@ pub fn status_page(search: Option<&str>, status: Option<&str>, tag: Option<&str>
             sql.push_str(&format!(" AND group_name = ?{}", param_values.len()));
         }
     }
+    // ?ids=id1,id2,id3 — filter to specific monitors (batch status check)
+    if let Some(ids_str) = ids {
+        let id_list: Vec<String> = ids_str
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if !id_list.is_empty() {
+            let placeholders: Vec<String> = id_list
+                .iter()
+                .enumerate()
+                .map(|(i, _)| format!("?{}", param_values.len() + i + 1))
+                .collect();
+            sql.push_str(&format!(" AND id IN ({})", placeholders.join(",")));
+            for id_val in id_list {
+                param_values.push(Box::new(id_val));
+            }
+        }
+    }
+
     sql.push_str(" ORDER BY group_name NULLS LAST, name");
 
     let mut stmt = conn.prepare(&sql)

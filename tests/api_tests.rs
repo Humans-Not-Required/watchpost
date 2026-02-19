@@ -8354,3 +8354,107 @@ fn test_uptime_badge_all_periods() {
         assert_eq!(resp.status(), Status::Ok, "Badge failed for period {}", period);
     }
 }
+
+// --- Status page ?ids= batch filter tests ---
+
+#[test]
+fn test_status_page_ids_filter_single() {
+    let client = test_client();
+
+    // Create two public monitors
+    let r1 = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "IDS Monitor A", "url": "https://a.example.com", "is_public": true}"#)
+        .dispatch();
+    let m1: serde_json::Value = r1.into_json().unwrap();
+    let id1 = m1["monitor"]["id"].as_str().unwrap().to_string();
+
+    client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "IDS Monitor B", "url": "https://b.example.com", "is_public": true}"#)
+        .dispatch();
+
+    // Filter to just monitor A by ID
+    let resp = client.get(format!("/api/v1/status?ids={}", id1)).dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let monitors = body["monitors"].as_array().unwrap();
+    assert_eq!(monitors.len(), 1);
+    assert_eq!(monitors[0]["id"], id1);
+    assert_eq!(monitors[0]["name"], "IDS Monitor A");
+}
+
+#[test]
+fn test_status_page_ids_filter_multiple() {
+    let client = test_client();
+
+    let r1 = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Multi IDS A", "url": "https://ma.example.com", "is_public": true}"#)
+        .dispatch();
+    let m1: serde_json::Value = r1.into_json().unwrap();
+    let id1 = m1["monitor"]["id"].as_str().unwrap().to_string();
+
+    let r2 = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Multi IDS B", "url": "https://mb.example.com", "is_public": true}"#)
+        .dispatch();
+    let m2: serde_json::Value = r2.into_json().unwrap();
+    let id2 = m2["monitor"]["id"].as_str().unwrap().to_string();
+
+    // A third monitor that should NOT appear
+    client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Multi IDS C", "url": "https://mc.example.com", "is_public": true}"#)
+        .dispatch();
+
+    let resp = client.get(format!("/api/v1/status?ids={},{}", id1, id2)).dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let monitors = body["monitors"].as_array().unwrap();
+    assert_eq!(monitors.len(), 2, "Expected exactly 2 monitors");
+    let names: Vec<&str> = monitors.iter().map(|m| m["name"].as_str().unwrap()).collect();
+    assert!(names.contains(&"Multi IDS A"));
+    assert!(names.contains(&"Multi IDS B"));
+    assert!(!names.contains(&"Multi IDS C"));
+}
+
+#[test]
+fn test_status_page_ids_filter_nonexistent_ignored() {
+    let client = test_client();
+
+    let r1 = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "IDS Exist", "url": "https://exist.example.com", "is_public": true}"#)
+        .dispatch();
+    let m1: serde_json::Value = r1.into_json().unwrap();
+    let id1 = m1["monitor"]["id"].as_str().unwrap().to_string();
+
+    // Mix valid + invalid IDs — only valid ones returned, no error
+    let resp = client.get(format!("/api/v1/status?ids={},00000000-does-not-exist", id1)).dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let monitors = body["monitors"].as_array().unwrap();
+    assert_eq!(monitors.len(), 1);
+    assert_eq!(monitors[0]["id"], id1);
+}
+
+#[test]
+fn test_status_page_ids_private_monitor_excluded() {
+    let client = test_client();
+
+    // Create a private monitor
+    let r1 = client.post("/api/v1/monitors")
+        .header(ContentType::JSON)
+        .body(r#"{"name": "Private IDS", "url": "https://private.example.com", "is_public": false}"#)
+        .dispatch();
+    let m1: serde_json::Value = r1.into_json().unwrap();
+    let id1 = m1["monitor"]["id"].as_str().unwrap().to_string();
+
+    // ?ids= with a private monitor ID returns empty (respects is_public filter)
+    let resp = client.get(format!("/api/v1/status?ids={}", id1)).dispatch();
+    assert_eq!(resp.status(), Status::Ok);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    let monitors = body["monitors"].as_array().unwrap();
+    assert_eq!(monitors.len(), 0, "Private monitors should not appear in status page");
+}
