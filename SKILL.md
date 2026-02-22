@@ -363,6 +363,16 @@ GET /api/v1/status-pages/:slug_or_id/monitors — List monitors on a page (publi
 - The detail endpoint returns monitor status data (uptime, response time, incidents) same as the global status page
 
 
-## Skills Discovery
-GET /.well-known/skills/index.json — Skills discovery index (Cloudflare RFC). Lists available skills for progressive loading by compatible agents.
-GET /.well-known/skills/watchpost/SKILL.md — Integration skill with YAML frontmatter (agentskills.io format). Contains quick start, patterns, auth model, rate limits, and gotchas. Compatible with Claude Code, OpenAI Codex, VS Code Copilot, and other skills-compatible agents.
+## Service Discovery
+
+```
+GET /api/v1/health                               — health check
+GET /api/v1/openapi.json                         — OpenAPI spec
+GET /SKILL.md                                    — this file
+GET /llms.txt                                    — alias for SKILL.md
+GET /.well-known/skills/index.json               — machine-readable skill registry
+```
+
+## Source
+
+GitHub: https://github.com/Humans-Not-Required/watchpost

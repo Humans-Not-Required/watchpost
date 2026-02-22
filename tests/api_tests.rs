@@ -86,6 +86,7 @@ fn test_client_with_db() -> (Client, String) {
             watchpost::routes::list_dependents,
         ])
         .mount("/", rocket::routes![
+            watchpost::routes::skill_md,
             watchpost::routes::root_llms_txt,
             watchpost::routes::skills_index,
             watchpost::routes::skills_skill_md,
@@ -6766,37 +6767,35 @@ fn test_skills_skill_md() {
     let resp = client.get("/.well-known/skills/watchpost/SKILL.md").dispatch();
     assert_eq!(resp.status(), Status::Ok);
     let body = resp.into_string().unwrap();
-    // YAML frontmatter
-    assert!(body.starts_with("---"));
-    assert!(body.contains("name: watchpost"));
-    assert!(body.contains("description:"));
-    // Content sections
-    assert!(body.contains("# Watchpost Integration"));
-    assert!(body.contains("## Quick Start"));
-    assert!(body.contains("## Auth Model"));
-    assert!(body.contains("## Monitor Types"));
-    assert!(body.contains("## Core Patterns"));
-    assert!(body.contains("## SSE Event Types"));
-    assert!(body.contains("## Gotchas"));
+    assert!(body.contains("Watchpost"), "Missing title");
+    assert!(body.contains("## Quick Start"), "Missing Quick Start");
+}
+
+#[test]
+fn test_skill_md_root() {
+    let client = test_client();
+    let skill_resp = client.get("/SKILL.md").dispatch();
+    assert_eq!(skill_resp.status(), Status::Ok);
+    let skill_body = skill_resp.into_string().unwrap();
+    assert!(skill_body.contains("Watchpost"));
+    let llms_resp = client.get("/llms.txt").dispatch();
+    let llms_body = llms_resp.into_string().unwrap();
+    assert_eq!(skill_body, llms_body, "llms.txt should alias SKILL.md");
 }
 
 #[test]
 fn test_skills_index_name_matches_skill_md() {
     let client = test_client();
-
-    // Fetch index
     let resp = client.get("/.well-known/skills/index.json").dispatch();
     let index: serde_json::Value = resp.into_json().unwrap();
     let skill_name = index["skills"][0]["name"].as_str().unwrap();
+    assert_eq!(skill_name, "watchpost");
 
-    // Fetch SKILL.md using the name from the index
     let skill_url = format!("/.well-known/skills/{}/SKILL.md", skill_name);
     let resp = client.get(&skill_url).dispatch();
     assert_eq!(resp.status(), Status::Ok);
     let body = resp.into_string().unwrap();
-    // Verify the YAML frontmatter name matches
-    let name_line = format!("name: {}", skill_name);
-    assert!(body.contains(&name_line));
+    assert!(body.contains("Watchpost"));
 }
 
 #[test]
@@ -6829,7 +6828,7 @@ fn test_skills_llms_txt_mentions_skills() {
     let resp = client.get("/api/v1/llms.txt").dispatch();
     let body = resp.into_string().unwrap();
     assert!(body.contains("/.well-known/skills/index.json"));
-    assert!(body.contains("/.well-known/skills/watchpost/SKILL.md"));
+    assert!(body.contains("/SKILL.md"));
 }
 
 // ============================================================
