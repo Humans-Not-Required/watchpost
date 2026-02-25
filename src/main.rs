@@ -43,7 +43,17 @@ fn rocket() -> _ {
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("../frontend/dist"));
 
-    let mut build = rocket::build()
+    let addr = std::env::var("ROCKET_ADDRESS").unwrap_or_else(|_| "0.0.0.0".to_string());
+    let port: u16 = std::env::var("ROCKET_PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(8000);
+
+    let figment = rocket::Config::figment()
+        .merge(("address", addr))
+        .merge(("port", port));
+
+    let mut build = rocket::custom(figment)
         .attach(cors)
         .manage(database)
         .manage(rate_limiter)
