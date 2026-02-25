@@ -15,6 +15,7 @@ COPY Cargo.toml Cargo.lock ./
 COPY src/ src/
 COPY tests/ tests/
 COPY static/ static/
+COPY SKILL.md ./
 RUN cargo build --release
 
 # Stage 3: Runtime
